@@ -31,16 +31,27 @@ import { clientUrl } from "../constants/constant.js";
 app.use(express.json());
 
 // ==============================
-// CORS
+// CORS Configuration
 // ==============================
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:8080",
+  "https://chatty-app-sigma.vercel.app",
+];
+
 app.use(
   cors({
-    origin: [
-      clientUrl || "http://localhost:5173",
-      "http://localhost:8080",
-      "https://chatty-backend-2l2t.onrender.com",
-    ],
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
 
