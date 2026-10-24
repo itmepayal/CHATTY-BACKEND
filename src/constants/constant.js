@@ -27,3 +27,8 @@ export const geminiApiKey = process.env.GEMINI_API_KEY;
 
 export const RESET_TOKEN_BYTES = 32;
 export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+
+export const swaggerEnabled = process.env.SWAGGER_ENABLED === "true";
+
+export const swaggerServerUrl =
+  process.env.SWAGGER_SERVER_URL || `http://localhost:${port}/api/v1`;

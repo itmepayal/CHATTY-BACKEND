@@ -5,6 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "start": "node ./src/index.js",
     "dev": "nodemon ./src/index.js",
     "test": "node --test"
   },
@@ -14,9 +15,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
     "@google/genai": "^2.30.0",
-    "bcryptjs": "^5.0.2",
+    "bcryptjs": "^3.0.3",
     "cloudinary": "^2.6.1",
-    "cookie-parser": "^4.7.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
@@ -30,6 +31,8 @@
     "qrcode": "^1.5.4",
     "resend": "^6.34.1",
     "socket.io": "^4.8.1",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
     "ua-parser-js": "^2.0.10"
   },
   "devDependencies": {

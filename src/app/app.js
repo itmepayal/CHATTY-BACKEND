@@ -11,12 +11,22 @@ import {
 } from "../middlewares/errorHandler.middleware.js";
 
 // ==============================
-// Socket Io Initialize
+// Socket.IO Initialize
 // ==============================
 import { app } from "../lib/socket.js";
 
 // ==============================
-// Middleware to parse JSON request bodies
+// Swagger Configuration
+// ==============================
+import { setupSwagger } from "../config/swagger.js";
+
+// ==============================
+// Constants
+// ==============================
+import { clientUrl } from "../constants/constant.js";
+
+// ==============================
+// Middleware to parse JSON
 // ==============================
 app.use(express.json());
 
@@ -25,18 +35,24 @@ app.use(express.json());
 // ==============================
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: clientUrl || "http://localhost:5173",
     credentials: true,
   }),
 );
 
 // ==============================
-// Cookies Parses
+// Cookie Parser
 // ==============================
 app.use(cookieParser());
 
 // ==============================
-// Register Routes
+// Swagger Documentation
+// Register before application routes
+// ==============================
+setupSwagger(app);
+
+// ==============================
+// Register API Routes
 // ==============================
 app.use("/api/v1", router);
 
