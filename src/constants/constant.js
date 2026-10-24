@@ -16,13 +16,14 @@ export const refreshTokenExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN;
 
 export const salt = 15;
 
+const isProd = process.env.NODE_ENV === "production";
+
 export const options = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
+  secure: isProd,
+  sameSite: isProd ? "none" : "lax",
   maxAge: 24 * 60 * 60 * 1000,
 };
-
 export const geminiApiKey = process.env.GEMINI_API_KEY;
 
 export const RESET_TOKEN_BYTES = 32;

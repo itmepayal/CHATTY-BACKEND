@@ -5,7 +5,10 @@ import jwt from "jsonwebtoken";
 import Message from "../models/message.model.js";
 import Group from "../models/group.model.js";
 import User from "../models/users.model.js";
-import { accessToken as accessTokenSecret } from "../constants/constant.js";
+import {
+  accessToken as accessTokenSecret,
+  clientUrl,
+} from "../constants/constant.js";
 
 /* ---------- SERVER AND HTTP INITIALIZATION ---------- */
 const app = express();
@@ -14,7 +17,7 @@ const server = http.createServer(app);
 /* ---------- SOCKET.IO INITIALIZATION AND CORS ---------- */
 const io = new Server(server, {
   cors: {
-    origin: [process.env.CLIENT_URL || "http://localhost:5173"],
+    origin: clientUrl,
     credentials: true,
   },
 });
