@@ -32,6 +32,13 @@ const GroupMessageSchema = new mongoose.Schema(
       mimeType: { type: String },
       resourceType: { type: String },
     },
+    video: {
+      public_id: { type: String },
+      url: { type: String },
+      duration: { type: Number },
+      mimeType: { type: String },
+      resourceType: { type: String },
+    },
     clientId: { type: String },
     readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     silentReadBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
@@ -40,7 +47,13 @@ const GroupMessageSchema = new mongoose.Schema(
 );
 
 GroupMessageSchema.pre("validate", function (next) {
-  if (!this.text && !this.image?.url && !this.file?.url && !this.audio?.url) {
+  if (
+    !this.text &&
+    !this.image?.url &&
+    !this.file?.url &&
+    !this.audio?.url &&
+    !this.video?.url
+  ) {
     return next(new Error("Message must have text or an attachment."));
   }
   next();

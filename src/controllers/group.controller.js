@@ -21,6 +21,7 @@ import {
 const MAX_MEMBERS = 256;
 const MAX_TEXT = 2000;
 const MAX_VOICE_SECONDS = 300;
+const MAX_VIDEO_SECONDS = 60;
 
 const sid = (x) => String(x?._id ?? x);
 
@@ -59,7 +60,10 @@ const uploadImage = async (file) => {
   return { public_id: up.public_id, url: up.secure_url };
 };
 
-const uploadAttachment = async (file, { isVoice = false, duration } = {}) => {
+const uploadAttachment = async (
+  file,
+  { isVoice = false, isVideo = false, duration } = {},
+) => {
   const up = await uploadFileToCloudinary(file.path);
   if (!up?.public_id || !up?.secure_url) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Failed to upload attachment.");
@@ -76,6 +80,19 @@ const uploadAttachment = async (file, { isVoice = false, duration } = {}) => {
         public_id: up.public_id,
         url: up.secure_url,
         duration: Math.min(Math.max(seconds, 0), MAX_VOICE_SECONDS),
+        mimeType: file.mimetype.split(";")[0],
+        resourceType: up.resource_type,
+      },
+    };
+  }
+
+  if (isVideo && file.mimetype?.startsWith("video/")) {
+    const seconds = Math.round(Number(duration) || up.duration || 0);
+    return {
+      video: {
+        public_id: up.public_id,
+        url: up.secure_url,
+        duration: Math.min(Math.max(seconds, 0), MAX_VIDEO_SECONDS),
         mimeType: file.mimetype.split(";")[0],
         resourceType: up.resource_type,
       },
@@ -100,6 +117,8 @@ const deleteMedia = (m) => [
     deleteFileToCloudinary(m.file.public_id, m.file.resourceType || "raw"),
   m.audio?.public_id &&
     deleteFileToCloudinary(m.audio.public_id, m.audio.resourceType || "video"),
+  m.video?.public_id &&
+    deleteFileToCloudinary(m.video.public_id, m.video.resourceType || "video"),
 ];
 
 const loadGroup = (id) =>
@@ -154,6 +173,13 @@ const formatGroupMessage = (msg) => {
           url: msg.audio.url,
           duration: msg.audio.duration || 0,
           mimeType: msg.audio.mimeType,
+        }
+      : null,
+    video: msg.video?.url
+      ? {
+          url: msg.video.url,
+          duration: msg.video.duration || 0,
+          mimeType: msg.video.mimeType,
         }
       : null,
     clientId: msg.clientId,
@@ -226,9 +252,10 @@ const destroyGroup = async (group) => {
       { "image.public_id": { $exists: true, $ne: null } },
       { "file.public_id": { $exists: true, $ne: null } },
       { "audio.public_id": { $exists: true, $ne: null } },
+      { "video.public_id": { $exists: true, $ne: null } },
     ],
   })
-    .select("image file audio")
+    .select("image file audio video")
     .lean();
 
   await Promise.allSettled([
@@ -604,6 +631,7 @@ const groupController = {
         ? req.body.clientId
         : undefined;
     const isVoice = req.body.isVoice === "true" || req.body.isVoice === true;
+    const isVideo = req.body.isVideo === "true" || req.body.isVideo === true;
 
     if (!text && !req.file) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
@@ -618,6 +646,12 @@ const groupController = {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         "Voice message must be an audio file.",
+      );
+    }
+    if (isVideo && req.file && !req.file.mimetype?.startsWith("video/")) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Video message must be a video file.",
       );
     }
 
@@ -642,6 +676,7 @@ const groupController = {
     const attachment = req.file?.path
       ? await uploadAttachment(req.file, {
           isVoice,
+          isVideo,
           duration: req.body.duration,
         })
       : {};
