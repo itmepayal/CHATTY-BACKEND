@@ -1,8 +1,12 @@
 import multer from "multer";
 import path from "path";
 import crypto from "crypto";
+import fs from "fs";
 
 const MAX_SIZE = 10 * 1024 * 1024;
+
+const UPLOAD_DIR = path.resolve("public/upload");
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const BLOCKED_EXT = new Set([
   ".exe",
@@ -20,7 +24,10 @@ const BLOCKED_EXT = new Set([
 ]);
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "./public/upload"),
+  destination: (req, file, cb) => {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    cb(null, UPLOAD_DIR);
+  },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${crypto.randomUUID()}${ext}`);
