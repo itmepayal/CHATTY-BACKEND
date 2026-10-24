@@ -35,7 +35,11 @@ app.use(express.json());
 // ==============================
 app.use(
   cors({
-    origin: clientUrl || "http://localhost:5173",
+    origin: [
+      clientUrl || "http://localhost:5173",
+      "http://localhost:8080",
+      "https://chatty-backend-2l2t.onrender.com",
+    ],
     credentials: true,
   }),
 );
