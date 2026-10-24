@@ -18,6 +18,7 @@ import {
 import { assertCanMessage } from "../utils/chatguard.js";
 
 const MAX_VOICE_SECONDS = 300;
+const MAX_VIDEO_SECONDS = 60;
 
 const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
@@ -40,6 +41,15 @@ const formatAudio = (audio) =>
       }
     : null;
 
+const formatVideo = (video) =>
+  video?.url
+    ? {
+        url: video.url,
+        duration: video.duration || 0,
+        mimeType: video.mimeType,
+      }
+    : null;
+
 const formatMessage = (msg) => {
   const deleted = Boolean(msg.isDeleted);
 
@@ -54,6 +64,7 @@ const formatMessage = (msg) => {
         : null,
     file: deleted ? null : formatFile(msg.file),
     audio: deleted ? null : formatAudio(msg.audio),
+    video: deleted ? null : formatVideo(msg.video),
     clientId: msg.clientId,
     reactions: deleted
       ? []
@@ -69,8 +80,13 @@ const formatMessage = (msg) => {
   };
 };
 
-const processAttachment = async (file, { isVoice = false, duration } = {}) => {
-  if (!file?.path) return { image: null, file: null, audio: null };
+const processAttachment = async (
+  file,
+  { isVoice = false, isVideo = false, duration } = {},
+) => {
+  if (!file?.path) {
+    return { image: null, file: null, audio: null, video: null };
+  }
 
   const up = await uploadFileToCloudinary(file.path);
   if (!up?.public_id || !up?.secure_url) {
@@ -82,6 +98,7 @@ const processAttachment = async (file, { isVoice = false, duration } = {}) => {
       image: { url: up.secure_url, public_id: up.public_id },
       file: null,
       audio: null,
+      video: null,
     };
   }
 
@@ -90,6 +107,7 @@ const processAttachment = async (file, { isVoice = false, duration } = {}) => {
     return {
       image: null,
       file: null,
+      video: null,
       audio: {
         public_id: up.public_id,
         url: up.secure_url,
@@ -100,9 +118,26 @@ const processAttachment = async (file, { isVoice = false, duration } = {}) => {
     };
   }
 
+  if (isVideo && file.mimetype?.startsWith("video/")) {
+    const seconds = Math.round(Number(duration) || up.duration || 0);
+    return {
+      image: null,
+      file: null,
+      audio: null,
+      video: {
+        public_id: up.public_id,
+        url: up.secure_url,
+        duration: Math.min(Math.max(seconds, 0), MAX_VIDEO_SECONDS),
+        mimeType: file.mimetype.split(";")[0],
+        resourceType: up.resource_type,
+      },
+    };
+  }
+
   return {
     image: null,
     audio: null,
+    video: null,
     file: {
       public_id: up.public_id,
       url: up.secure_url,
@@ -275,7 +310,7 @@ const messageController = {
   }),
 
   sendMessage: asyncHandler(async (req, res) => {
-    const { text, clientId, isVoice, duration } = req.body;
+    const { text, clientId, isVoice, isVideo, duration } = req.body;
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
 
@@ -313,8 +348,10 @@ const messageController = {
       image: uploadedImage,
       file: uploadedFile,
       audio: uploadedAudio,
+      video: uploadedVideo,
     } = await processAttachment(req.file, {
       isVoice: isVoice === "true" || isVoice === true,
+      isVideo: isVideo === "true" || isVideo === true,
       duration,
     });
 
@@ -332,7 +369,8 @@ const messageController = {
         clientId: clientId || undefined,
         image: uploadedImage || undefined,
         file: uploadedFile || undefined,
-        audio: uploadedAudio || undefined, // NEW
+        audio: uploadedAudio || undefined,
+        video: uploadedVideo || undefined,
         status: seenNow ? "seen" : online ? "delivered" : "sent",
         deliveredAt: online ? now : undefined,
         seenAt: seenNow ? now : undefined,
@@ -608,12 +646,25 @@ const messageController = {
       }
     }
 
+    const videoId = message.video?.public_id;
+    if (videoId) {
+      try {
+        await deleteFileToCloudinary(
+          videoId,
+          message.video.resourceType || "video",
+        );
+      } catch (err) {
+        console.error("Cloudinary video delete failed:", err?.message || err);
+      }
+    }
+
     message.isDeleted = true;
     message.deletedAt = new Date();
     message.text = undefined;
     message.image = undefined;
     message.file = undefined;
     message.audio = undefined;
+    message.video = undefined;
     message.reactions = [];
     await message.save();
 

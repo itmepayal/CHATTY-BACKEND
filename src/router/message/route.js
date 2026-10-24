@@ -1,7 +1,9 @@
 import express from "express";
 import messageController from "../../controllers/messages.controller.js";
 import authMiddleware from "../../middlewares/authMidleware.middleware.js";
-import upload from "../../middlewares/multer.middleware.js";
+import upload, {
+  enforceTypeSizeLimit,
+} from "../../middlewares/multer.middleware.js";
 
 const router = express.Router();
 
@@ -13,7 +15,11 @@ router.route("/:id").get(messageController.getMessage);
 
 router
   .route("/send/:id")
-  .post(upload.single("image"), messageController.sendMessage);
+  .post(
+    upload.single("image"),
+    enforceTypeSizeLimit,
+    messageController.sendMessage,
+  );
 
 router.patch("/seen/:id", messageController.markMessagesSeen);
 

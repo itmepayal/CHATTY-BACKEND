@@ -3,7 +3,9 @@ import path from "path";
 import crypto from "crypto";
 import fs from "fs";
 
-const MAX_SIZE = 10 * 1024 * 1024;
+const MAX_SIZE = 50 * 1024 * 1024;
+const MAX_NORMAL_SIZE = 10 * 1024 * 1024;
+const MAX_MEDIA_SIZE = 50 * 1024 * 1024;
 
 const UPLOAD_DIR = path.resolve("public/upload");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -45,5 +47,24 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+export const enforceTypeSizeLimit = (req, res, next) => {
+  const file = req.file;
+  if (!file) return next();
+
+  const isMedia =
+    file.mimetype?.startsWith("video/") || file.mimetype?.startsWith("audio/");
+  const limit = isMedia ? MAX_MEDIA_SIZE : MAX_NORMAL_SIZE;
+
+  if (file.size > limit) {
+    fs.unlink(file.path, () => {});
+    return res.status(413).json({
+      success: false,
+      message: `File too large. Max ${Math.round(limit / 1024 / 1024)}MB allowed.`,
+    });
+  }
+
+  next();
+};
 
 export default upload;

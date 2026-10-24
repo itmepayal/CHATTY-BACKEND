@@ -32,6 +32,13 @@ const MessageSchema = mongoose.Schema(
       mimeType: { type: String },
       resourceType: { type: String },
     },
+    video: {
+      public_id: { type: String },
+      url: { type: String },
+      duration: { type: Number },
+      mimeType: { type: String },
+      resourceType: { type: String },
+    },
     clientId: { type: String },
     reactions: [
       {
