@@ -4,80 +4,100 @@ import ApiError from "../utils/apiError.js";
 import { StatusCodes } from "http-status-codes";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
+import ScheduledMessage from "../models/scheduledMessage.model.js";
+import Report from "../models/report.model.js";
+import ChatSetting, {
+  ALLOWED_TIMERS,
+  pairKeyOf,
+  getDisappearAfter,
+} from "../models/chatSetting.model.js";
 import ApiResponse from "../utils/apiResponse.js";
-import {
-  uploadFileToCloudinary,
-  deleteFileToCloudinary,
-} from "../config/cloudinary.config.js";
-import {
-  io,
-  isUserOnline,
-  isUserViewingChat,
-  getPrivacy,
-} from "../lib/socket.js";
+import { uploadFileToCloudinary } from "../config/cloudinary.config.js";
+import { io, getPrivacy } from "../lib/socket.js";
 import { assertCanMessage } from "../utils/chatguard.js";
+import { deliverMessage } from "../services/message.service.js";
+import { attachLinkPreview } from "../utils/linkPreview.js";
+import { wipeMessage } from "../utils/messageCleanup.js";
+import {
+  toObjectId,
+  formatMessage,
+  emitConversationUpdate,
+  isParticipantOf,
+  getOtherUserId,
+  isBetween,
+  REPLY_SELECT,
+} from "../utils/messageHelpers.js";
 
 const MAX_VOICE_SECONDS = 300;
 const MAX_VIDEO_SECONDS = 60;
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+const MAX_PINS = 3;
+const MAX_FORWARD_TARGETS = 5;
+const MAX_TEXT_LENGTH = 4000;
 
-const toObjectId = (id) => new mongoose.Types.ObjectId(id);
+const REPORT_REASONS = [
+  "spam",
+  "harassment",
+  "inappropriate",
+  "impersonation",
+  "other",
+];
 
-const formatFile = (file) =>
-  file?.url
-    ? {
-        url: file.url,
-        name: file.name,
-        size: file.size,
-        mimeType: file.mimeType,
-      }
-    : null;
+const SPAM = {
+  DUP_WINDOW_MS: 30_000,
+  DUP_MAX: 3,
+  NEW_CHAT_WINDOW_MS: 60_000,
+  NEW_CHAT_MAX: 10,
+};
 
-const formatAudio = (audio) =>
-  audio?.url
-    ? {
-        url: audio.url,
-        duration: audio.duration || 0,
-        mimeType: audio.mimeType,
-      }
-    : null;
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const formatVideo = (video) =>
-  video?.url
-    ? {
-        url: video.url,
-        duration: video.duration || 0,
-        mimeType: video.mimeType,
-      }
-    : null;
+const assertValidId = (id, label = "ID") => {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, `Invalid ${label}.`);
+  }
+};
 
-const formatMessage = (msg) => {
-  const deleted = Boolean(msg.isDeleted);
+/* expiresAt null / missing = kabhi expire nahi hoga */
+const notExpired = () => ({
+  $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+});
 
-  return {
-    id: msg._id,
-    senderId: msg.senderId,
-    receiverId: msg.receiverId,
-    text: deleted ? "" : msg.text,
-    image:
-      !deleted && msg.image?.url
-        ? { url: msg.image.url, public_id: msg.image.public_id }
-        : null,
-    file: deleted ? null : formatFile(msg.file),
-    audio: deleted ? null : formatAudio(msg.audio),
-    video: deleted ? null : formatVideo(msg.video),
-    clientId: msg.clientId,
-    reactions: deleted
-      ? []
-      : (msg.reactions || []).map((r) => ({
-          userId: r.userId,
-          emoji: r.emoji,
-        })),
-    isDeleted: deleted,
-    status: msg.status || "sent",
-    deliveredAt: msg.deliveredAt,
-    seenAt: msg.seenAt,
-    createdAt: msg.createdAt,
-  };
+const isExpired = (message) =>
+  Boolean(message?.expiresAt) && message.expiresAt.getTime() <= Date.now();
+
+/* ---------------- SPAM GUARD ---------------- */
+const assertNotSpamming = async (senderId, receiverId, text) => {
+  // 1) same text baar-baar
+  if (text) {
+    const dup = await Message.countDocuments({
+      senderId,
+      receiverId,
+      text,
+      createdAt: { $gt: new Date(Date.now() - SPAM.DUP_WINDOW_MS) },
+    });
+    if (dup >= SPAM.DUP_MAX) {
+      throw new ApiError(
+        StatusCodes.TOO_MANY_REQUESTS,
+        "Duplicate messages blocked. Please wait a bit.",
+      );
+    }
+  }
+
+  // 2) bahut saare alag-alag logon ko ek saath message (bot jaisa behaviour)
+  const recentReceivers = await Message.distinct("receiverId", {
+    senderId,
+    createdAt: { $gt: new Date(Date.now() - SPAM.NEW_CHAT_WINDOW_MS) },
+  });
+  const alreadyTalking = recentReceivers.some(
+    (id) => id.toString() === receiverId.toString(),
+  );
+  if (!alreadyTalking && recentReceivers.length >= SPAM.NEW_CHAT_MAX) {
+    throw new ApiError(
+      StatusCodes.TOO_MANY_REQUESTS,
+      "You are messaging too many people too quickly.",
+    );
+  }
 };
 
 const processAttachment = async (
@@ -149,69 +169,11 @@ const processAttachment = async (
   };
 };
 
-const isParticipantOf = (message, userId) =>
-  message.senderId.toString() === userId.toString() ||
-  message.receiverId.toString() === userId.toString();
-
-const getOtherUserId = (message, userId) =>
-  message.senderId.toString() === userId.toString()
-    ? message.receiverId
-    : message.senderId;
-
-const unreadFilter = (receiverId, senderId) => ({
-  receiverId: toObjectId(receiverId),
-  senderId: toObjectId(senderId),
-  status: { $ne: "seen" },
-  receiverReadAt: null,
-  isDeleted: { $ne: true },
-  deletedFor: { $ne: toObjectId(receiverId) },
-});
-
-const getUnreadCount = (receiverId, senderId) =>
-  Message.countDocuments(unreadFilter(receiverId, senderId));
-
-const getLastMessage = async (ownerId, otherId) => {
-  const owner = toObjectId(ownerId);
-  const other = toObjectId(otherId);
-
-  const msg = await Message.findOne({
-    $or: [
-      { senderId: owner, receiverId: other },
-      { senderId: other, receiverId: owner },
-    ],
-    deletedFor: { $ne: owner },
-  }).sort({ createdAt: -1 });
-
-  return msg ? formatMessage(msg) : null;
-};
-
-const emitConversationUpdate = async (ownerId, otherId) => {
-  try {
-    const ts = Date.now();
-    const [unreadCount, lastMessage] = await Promise.all([
-      getUnreadCount(ownerId, otherId),
-      getLastMessage(ownerId, otherId),
-    ]);
-
-    io.to(ownerId.toString()).emit("conversationUpdated", {
-      userId: otherId.toString(),
-      unreadCount,
-      lastMessage,
-      lastMessageAt: lastMessage?.createdAt ?? null,
-      ts,
-    });
-  } catch (err) {
-    console.error("emitConversationUpdate failed:", err?.message || err);
-  }
-};
-
 const messageController = {
+  /* ---------------- SIDEBAR ---------------- */
   getUsersForSidebar: asyncHandler(async (req, res) => {
     const userId = req.user._id;
-
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid User ID.");
-    }
+    assertValidId(userId, "User ID");
 
     const uid = toObjectId(userId);
 
@@ -225,7 +187,10 @@ const messageController = {
     const convoAgg = await Message.aggregate([
       {
         $match: {
-          $or: [{ senderId: uid }, { receiverId: uid }],
+          $and: [
+            { $or: [{ senderId: uid }, { receiverId: uid }] },
+            notExpired(),
+          ],
           deletedFor: { $ne: uid },
         },
       },
@@ -286,21 +251,27 @@ const messageController = {
     ).send(res);
   }),
 
+  /* ---------------- GET MESSAGES ---------------- */
   getMessage: asyncHandler(async (req, res) => {
     const { id: userToChatId } = req.params;
     const senderId = req.user._id;
 
-    if (!mongoose.Types.ObjectId.isValid(userToChatId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid User ID.");
-    }
+    assertValidId(userToChatId, "User ID");
 
     const messages = await Message.find({
-      $or: [
-        { senderId: senderId, receiverId: userToChatId },
-        { senderId: userToChatId, receiverId: senderId },
+      $and: [
+        {
+          $or: [
+            { senderId: senderId, receiverId: userToChatId },
+            { senderId: userToChatId, receiverId: senderId },
+          ],
+        },
+        notExpired(),
       ],
       deletedFor: { $ne: senderId },
-    }).sort({ createdAt: 1 });
+    })
+      .sort({ createdAt: 1 })
+      .populate("replyTo", REPLY_SELECT);
 
     return new ApiResponse(
       StatusCodes.OK,
@@ -309,14 +280,20 @@ const messageController = {
     ).send(res);
   }),
 
+  /* ---------------- SEND (reply + link preview + spam guard) ---------------- */
   sendMessage: asyncHandler(async (req, res) => {
-    const { text, clientId, isVoice, isVideo, duration } = req.body;
+    const {
+      text,
+      clientId,
+      isVoice,
+      isVideo,
+      duration,
+      replyTo: replyToId,
+    } = req.body;
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
 
-    if (!mongoose.Types.ObjectId.isValid(receiverId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid receiver ID.");
-    }
+    assertValidId(receiverId, "receiver ID");
 
     if (receiverId.toString() === senderId.toString()) {
       throw new ApiError(
@@ -329,6 +306,12 @@ const messageController = {
 
     if (!trimmedText && !req.file) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
+    }
+    if (trimmedText && trimmedText.length > MAX_TEXT_LENGTH) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Message is too long (max ${MAX_TEXT_LENGTH} characters).`,
+      );
     }
 
     if (clientId) {
@@ -343,6 +326,27 @@ const messageController = {
     }
 
     await assertCanMessage(senderId, receiverId);
+    await assertNotSpamming(senderId, receiverId, trimmedText);
+
+    /* reply validation */
+    let replyTo;
+    if (replyToId) {
+      assertValidId(replyToId, "reply ID");
+      const original = await Message.findById(replyToId).select(
+        "senderId receiverId isDeleted",
+      );
+      if (
+        !original ||
+        original.isDeleted ||
+        !isBetween(original, senderId, receiverId)
+      ) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Cannot reply to this message.",
+        );
+      }
+      replyTo = original._id;
+    }
 
     const {
       image: uploadedImage,
@@ -355,26 +359,20 @@ const messageController = {
       duration,
     });
 
-    const online = isUserOnline(receiverId);
-    const viewing = online && (await isUserViewingChat(receiverId, senderId));
-    const seenNow = viewing && getPrivacy(receiverId).readReceipts;
-    const now = new Date();
-
-    let message;
+    let result;
     try {
-      message = await Message.create({
+      result = await deliverMessage({
         senderId,
         receiverId,
-        text: trimmedText,
-        clientId: clientId || undefined,
-        image: uploadedImage || undefined,
-        file: uploadedFile || undefined,
-        audio: uploadedAudio || undefined,
-        video: uploadedVideo || undefined,
-        status: seenNow ? "seen" : online ? "delivered" : "sent",
-        deliveredAt: online ? now : undefined,
-        seenAt: seenNow ? now : undefined,
-        receiverReadAt: viewing ? now : undefined,
+        data: {
+          text: trimmedText,
+          clientId: clientId || undefined,
+          image: uploadedImage || undefined,
+          file: uploadedFile || undefined,
+          audio: uploadedAudio || undefined,
+          video: uploadedVideo || undefined,
+          replyTo,
+        },
       });
     } catch (error) {
       if (error?.code === 11000 && clientId) {
@@ -390,27 +388,9 @@ const messageController = {
       throw error;
     }
 
-    if (!message) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Failed to send message.");
-    }
+    const { message, payload } = result;
 
-    const payload = formatMessage(message);
-
-    io.to(receiverId.toString()).emit("newMessage", payload);
-    io.to(senderId.toString()).emit("newMessage", payload);
-
-    if (seenNow) {
-      io.to(senderId.toString()).emit("messagesSeen", {
-        messageIds: [message._id],
-        seenBy: receiverId,
-        seenAt: now,
-      });
-    }
-
-    await Promise.all([
-      emitConversationUpdate(receiverId, senderId),
-      emitConversationUpdate(senderId, receiverId),
-    ]);
+    attachLinkPreview(message); // background, no await
 
     return new ApiResponse(
       StatusCodes.CREATED,
@@ -419,13 +399,352 @@ const messageController = {
     ).send(res);
   }),
 
+  /* ---------------- FORWARD ---------------- */
+  forwardMessage: asyncHandler(async (req, res) => {
+    const { messageId } = req.params;
+    const userId = req.user._id;
+
+    assertValidId(messageId, "message ID");
+
+    const userIds = [...new Set((req.body.userIds || []).map(String))].filter(
+      (id) => id !== userId.toString(),
+    );
+
+    if (!userIds.length || userIds.length > MAX_FORWARD_TARGETS) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Choose 1 to ${MAX_FORWARD_TARGETS} recipients.`,
+      );
+    }
+    userIds.forEach((id) => assertValidId(id, "recipient ID"));
+
+    const original = await Message.findById(messageId);
+    if (
+      !original ||
+      original.isDeleted ||
+      isExpired(original) ||
+      !isParticipantOf(original, userId)
+    ) {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "You cannot forward this message.",
+      );
+    }
+
+    const o = original.toObject();
+    const content = {
+      text: o.text,
+      image: o.image?.url ? o.image : undefined,
+      file: o.file?.url ? o.file : undefined,
+      audio: o.audio?.url ? o.audio : undefined,
+      video: o.video?.url ? o.video : undefined,
+      linkPreview: o.linkPreview?.url ? o.linkPreview : undefined,
+      isForwarded: true,
+    };
+
+    const sent = [];
+    for (const receiverId of userIds) {
+      try {
+        await assertCanMessage(userId, receiverId);
+        const { payload } = await deliverMessage({
+          senderId: userId,
+          receiverId,
+          data: content,
+        });
+        sent.push(payload);
+      } catch (e) {
+        console.error("forward failed for", receiverId, e?.message || e);
+      }
+    }
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      sent,
+      `Forwarded to ${sent.length} chat(s).`,
+    ).send(res);
+  }),
+
+  editMessage: asyncHandler(async (req, res) => {
+    const { messageId } = req.params;
+    const userId = req.user._id;
+    const text = req.body.text?.trim();
+
+    assertValidId(messageId, "message ID");
+
+    if (!text || text.length > MAX_TEXT_LENGTH) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
+      );
+    }
+
+    const message = await Message.findById(messageId);
+    if (!message || message.isDeleted || isExpired(message)) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
+    }
+    if (message.senderId.toString() !== userId.toString()) {
+      throw new ApiError(StatusCodes.FORBIDDEN, "Only the sender can edit.");
+    }
+    if (message.audio?.url || message.video?.url) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Voice/video messages can't be edited.",
+      );
+    }
+    if (Date.now() - message.createdAt.getTime() > EDIT_WINDOW_MS) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Edit time is over.");
+    }
+
+    await assertCanMessage(userId, message.receiverId);
+
+    if (message.text === text) {
+      return new ApiResponse(
+        StatusCodes.OK,
+        { messageId: message._id },
+        "No changes.",
+      ).send(res);
+    }
+
+    message.text = text;
+    message.isEdited = true;
+    message.editedAt = new Date();
+    message.linkPreview = undefined;
+    await message.save();
+
+    const payload = {
+      messageId: message._id,
+      text,
+      isEdited: true,
+      editedAt: message.editedAt,
+    };
+
+    io.to(message.receiverId.toString()).emit("messageEdited", payload);
+    io.to(message.senderId.toString()).emit("messageEdited", payload);
+
+    await Promise.all([
+      emitConversationUpdate(message.receiverId, message.senderId),
+      emitConversationUpdate(message.senderId, message.receiverId),
+    ]);
+
+    attachLinkPreview(message);
+
+    return new ApiResponse(StatusCodes.OK, payload, "Message edited.").send(
+      res,
+    );
+  }),
+
+  togglePin: asyncHandler(async (req, res) => {
+    const { messageId } = req.params;
+    const userId = req.user._id;
+
+    assertValidId(messageId, "message ID");
+
+    const message = await Message.findById(messageId);
+    if (!message || message.isDeleted || isExpired(message)) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
+    }
+    if (!isParticipantOf(message, userId)) {
+      throw new ApiError(StatusCodes.FORBIDDEN, "You cannot pin this message.");
+    }
+
+    const otherId = getOtherUserId(message, userId);
+    await assertCanMessage(userId, otherId);
+
+    if (!message.isPinned) {
+      const count = await Message.countDocuments({
+        isPinned: true,
+        $or: [
+          { senderId: userId, receiverId: otherId },
+          { senderId: otherId, receiverId: userId },
+        ],
+      });
+      if (count >= MAX_PINS) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          `You can pin up to ${MAX_PINS} messages.`,
+        );
+      }
+      message.isPinned = true;
+      message.pinnedBy = userId;
+      message.pinnedAt = new Date();
+    } else {
+      message.isPinned = false;
+      message.pinnedBy = undefined;
+      message.pinnedAt = undefined;
+    }
+
+    await message.save();
+
+    const payload = {
+      messageId: message._id,
+      isPinned: message.isPinned,
+      pinnedBy: userId,
+    };
+
+    io.to(userId.toString()).emit("messagePinned", payload);
+    io.to(otherId.toString()).emit("messagePinned", payload);
+
+    return new ApiResponse(StatusCodes.OK, payload, "Pin updated.").send(res);
+  }),
+
+  getPinned: asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { id: otherId } = req.params;
+
+    assertValidId(otherId, "user ID");
+
+    const pinned = await Message.find({
+      $and: [
+        {
+          $or: [
+            { senderId: userId, receiverId: otherId },
+            { senderId: otherId, receiverId: userId },
+          ],
+        },
+        notExpired(),
+      ],
+      isPinned: true,
+      isDeleted: { $ne: true },
+      deletedFor: { $ne: userId },
+    })
+      .sort({ pinnedAt: -1 })
+      .populate("replyTo", REPLY_SELECT);
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      pinned.map(formatMessage),
+      "Pinned messages.",
+    ).send(res);
+  }),
+
+  searchMessages: asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { id: otherId } = req.params;
+    const q = String(req.query.q || "").trim();
+    const limit = Math.min(Number(req.query.limit) || 30, 50);
+
+    assertValidId(otherId, "user ID");
+
+    if (q.length < 2) {
+      return new ApiResponse(
+        StatusCodes.OK,
+        [],
+        "Type at least 2 characters.",
+      ).send(res);
+    }
+
+    const results = await Message.find({
+      $and: [
+        {
+          $or: [
+            { senderId: userId, receiverId: otherId },
+            { senderId: otherId, receiverId: userId },
+          ],
+        },
+        notExpired(),
+      ],
+      deletedFor: { $ne: userId },
+      isDeleted: { $ne: true },
+      text: { $regex: escapeRegex(q), $options: "i" },
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select("senderId receiverId text createdAt");
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      results.map((m) => ({
+        id: m._id,
+        senderId: m.senderId,
+        text: m.text,
+        createdAt: m.createdAt,
+      })),
+      "Search results.",
+    ).send(res);
+  }),
+
+  scheduleMessage: asyncHandler(async (req, res) => {
+    const { id: receiverId } = req.params;
+    const senderId = req.user._id;
+    const text = req.body.text?.trim();
+    const when = new Date(req.body.scheduledFor);
+
+    assertValidId(receiverId, "receiver ID");
+
+    if (receiverId.toString() === senderId.toString()) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "You cannot message yourself.",
+      );
+    }
+    if (!text || text.length > MAX_TEXT_LENGTH) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
+      );
+    }
+    if (
+      Number.isNaN(when.getTime()) ||
+      when.getTime() < Date.now() + 30_000 ||
+      when.getTime() > Date.now() + 30 * 86_400_000
+    ) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Pick a time between 1 minute and 30 days from now.",
+      );
+    }
+
+    await assertCanMessage(senderId, receiverId);
+
+    const doc = await ScheduledMessage.create({
+      senderId,
+      receiverId,
+      text,
+      scheduledFor: when,
+    });
+
+    return new ApiResponse(StatusCodes.CREATED, doc, "Message scheduled.").send(
+      res,
+    );
+  }),
+
+  getScheduled: asyncHandler(async (req, res) => {
+    const filter = { senderId: req.user._id, status: "pending" };
+    if (req.query.to && mongoose.Types.ObjectId.isValid(req.query.to)) {
+      filter.receiverId = req.query.to;
+    }
+
+    const list = await ScheduledMessage.find(filter).sort({ scheduledFor: 1 });
+
+    return new ApiResponse(StatusCodes.OK, list, "Scheduled messages.").send(
+      res,
+    );
+  }),
+
+  cancelScheduled: asyncHandler(async (req, res) => {
+    const { scheduleId } = req.params;
+    assertValidId(scheduleId, "schedule ID");
+
+    const doc = await ScheduledMessage.findOneAndUpdate(
+      { _id: scheduleId, senderId: req.user._id, status: "pending" },
+      { status: "cancelled" },
+    );
+    if (!doc) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Scheduled message not found.");
+    }
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { id: doc._id },
+      "Scheduled message cancelled.",
+    ).send(res);
+  }),
+
   markMessagesSeen: asyncHandler(async (req, res) => {
     const { id: otherUserId } = req.params;
     const userId = req.user._id;
 
-    if (!mongoose.Types.ObjectId.isValid(otherUserId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
-    }
+    assertValidId(otherUserId, "user ID");
 
     const { readReceipts } = getPrivacy(userId);
 
@@ -481,9 +800,7 @@ const messageController = {
     const { emoji } = req.body;
     const userId = req.user._id;
 
-    if (!mongoose.Types.ObjectId.isValid(messageId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid message ID.");
-    }
+    assertValidId(messageId, "message ID");
 
     if (!emoji || typeof emoji !== "string" || emoji.length > 16) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Valid emoji is required.");
@@ -494,14 +811,12 @@ const messageController = {
     if (!message) {
       throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
     }
-
-    if (message.isDeleted) {
+    if (message.isDeleted || isExpired(message)) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         "Cannot react to a deleted message.",
       );
     }
-
     if (!isParticipantOf(message, userId)) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
@@ -549,16 +864,13 @@ const messageController = {
     const { messageId } = req.params;
     const userId = req.user._id;
 
-    if (!mongoose.Types.ObjectId.isValid(messageId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid message ID.");
-    }
+    assertValidId(messageId, "message ID");
 
     const message = await Message.findById(messageId);
 
     if (!message) {
       throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
     }
-
     if (!isParticipantOf(message, userId)) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
@@ -588,23 +900,19 @@ const messageController = {
     const { messageId } = req.params;
     const userId = req.user._id;
 
-    if (!mongoose.Types.ObjectId.isValid(messageId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid message ID.");
-    }
+    assertValidId(messageId, "message ID");
 
     const message = await Message.findById(messageId);
 
     if (!message) {
       throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
     }
-
     if (message.senderId.toString() !== userId.toString()) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
         "Only the sender can delete a message for everyone.",
       );
     }
-
     if (message.isDeleted) {
       return new ApiResponse(
         StatusCodes.OK,
@@ -613,60 +921,7 @@ const messageController = {
       ).send(res);
     }
 
-    const imageId = message.image?.public_id;
-    if (imageId) {
-      try {
-        await deleteFileToCloudinary(imageId, "image");
-      } catch (err) {
-        console.error("Cloudinary image delete failed:", err?.message || err);
-      }
-    }
-
-    const fileId = message.file?.public_id;
-    if (fileId) {
-      try {
-        await deleteFileToCloudinary(
-          fileId,
-          message.file.resourceType || "raw",
-        );
-      } catch (err) {
-        console.error("Cloudinary file delete failed:", err?.message || err);
-      }
-    }
-
-    const audioId = message.audio?.public_id;
-    if (audioId) {
-      try {
-        await deleteFileToCloudinary(
-          audioId,
-          message.audio.resourceType || "video",
-        );
-      } catch (err) {
-        console.error("Cloudinary audio delete failed:", err?.message || err);
-      }
-    }
-
-    const videoId = message.video?.public_id;
-    if (videoId) {
-      try {
-        await deleteFileToCloudinary(
-          videoId,
-          message.video.resourceType || "video",
-        );
-      } catch (err) {
-        console.error("Cloudinary video delete failed:", err?.message || err);
-      }
-    }
-
-    message.isDeleted = true;
-    message.deletedAt = new Date();
-    message.text = undefined;
-    message.image = undefined;
-    message.file = undefined;
-    message.audio = undefined;
-    message.video = undefined;
-    message.reactions = [];
-    await message.save();
+    await wipeMessage(message);
 
     const payload = { messageId: message._id };
 
@@ -682,6 +937,124 @@ const messageController = {
       StatusCodes.OK,
       payload,
       "Message deleted for everyone.",
+    ).send(res);
+  }),
+
+  reportUser: asyncHandler(async (req, res) => {
+    const { id: reportedUserId } = req.params;
+    const reporterId = req.user._id;
+    const { reason, details, messageId } = req.body;
+
+    assertValidId(reportedUserId, "user ID");
+
+    if (reportedUserId.toString() === reporterId.toString()) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "You cannot report yourself.",
+      );
+    }
+    if (!REPORT_REASONS.includes(reason)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Please choose a valid reason.",
+      );
+    }
+
+    const reported = await User.exists({ _id: reportedUserId });
+    if (!reported) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+    }
+
+    if (messageId) {
+      assertValidId(messageId, "message ID");
+      const m = await Message.findById(messageId).select("senderId receiverId");
+      if (!m || !isBetween(m, reporterId, reportedUserId)) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Invalid message for report.",
+        );
+      }
+    }
+
+    const recent = await Report.exists({
+      reporterId,
+      reportedUserId,
+      createdAt: { $gt: new Date(Date.now() - 24 * 3600_000) },
+    });
+    if (recent) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        "You already reported this user in the last 24 hours.",
+      );
+    }
+
+    await Report.create({
+      reporterId,
+      reportedUserId,
+      messageId: messageId || undefined,
+      reason,
+      details: details?.toString().trim().slice(0, 500) || undefined,
+    });
+
+    return new ApiResponse(
+      StatusCodes.CREATED,
+      null,
+      "Report submitted. Thank you.",
+    ).send(res);
+  }),
+
+  getDisappearing: asyncHandler(async (req, res) => {
+    const { id: otherId } = req.params;
+    assertValidId(otherId, "user ID");
+
+    const seconds = await getDisappearAfter(req.user._id, otherId);
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { seconds },
+      "Disappearing setting.",
+    ).send(res);
+  }),
+
+  setDisappearing: asyncHandler(async (req, res) => {
+    const { id: otherId } = req.params;
+    const userId = req.user._id;
+    const seconds = Number(req.body.seconds);
+
+    assertValidId(otherId, "user ID");
+
+    if (otherId.toString() === userId.toString()) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user.");
+    }
+    if (!ALLOWED_TIMERS.includes(seconds)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid timer value.");
+    }
+
+    await assertCanMessage(userId, otherId);
+
+    await ChatSetting.findOneAndUpdate(
+      { pairKey: pairKeyOf(userId, otherId) },
+      { disappearAfter: seconds, updatedBy: userId },
+      { upsert: true },
+    );
+
+    io.to(userId.toString()).emit("disappearingUpdated", {
+      userId: otherId.toString(),
+      seconds,
+      by: userId,
+    });
+    io.to(otherId.toString()).emit("disappearingUpdated", {
+      userId: userId.toString(),
+      seconds,
+      by: userId,
+    });
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { seconds },
+      seconds
+        ? "Disappearing messages turned on."
+        : "Disappearing messages turned off.",
     ).send(res);
   }),
 };

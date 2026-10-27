@@ -51,6 +51,29 @@ const MessageSchema = mongoose.Schema(
         emoji: { type: String, required: true },
       },
     ],
+
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
+      default: null,
+    },
+    isForwarded: { type: Boolean, default: false },
+
+    isPinned: { type: Boolean, default: false },
+    pinnedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    pinnedAt: { type: Date },
+
+    isEdited: { type: Boolean, default: false },
+    editedAt: { type: Date },
+
+    linkPreview: {
+      url: { type: String },
+      title: { type: String },
+      description: { type: String },
+      image: { type: String },
+      siteName: { type: String },
+    },
+
     deletedFor: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
@@ -64,6 +87,7 @@ const MessageSchema = mongoose.Schema(
     seenAt: { type: Date },
 
     receiverReadAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
@@ -75,7 +99,6 @@ MessageSchema.index(
 
 MessageSchema.index({ receiverId: 1, senderId: 1, status: 1, isDeleted: 1 });
 MessageSchema.index({ receiverId: 1, status: 1 });
-
 MessageSchema.index({ senderId: 1, receiverId: 1, createdAt: -1 });
 
 const Message = mongoose.model("Message", MessageSchema);

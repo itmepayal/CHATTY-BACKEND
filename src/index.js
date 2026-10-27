@@ -24,12 +24,20 @@ import { server } from "./lib/socket.js";
 import "./app/app.js";
 
 // ==============================
+// Scheduler
+// ==============================
+import { startScheduler } from "./jobs/scheduler.js";
+import { startDisappearingSweeper } from "./jobs/disappearing.js";
+
+// ==============================
 // Start the Server
 // ==============================
 connectDB(mongoUri, mongoDbName)
   .then(() => {
     server.listen(port, () => {
       console.log(`Server running at port ${port}`);
+      startScheduler();
+      startDisappearingSweeper();
     });
   })
   .catch((error) => {
