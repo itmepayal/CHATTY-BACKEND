@@ -70,6 +70,9 @@ router.put(
 );
 router.post("/report/:id", reportLimiter, messageController.reportUser);
 
+/* ---------- archive / unarchive chat (body: { archived: true | false }) ---------- */
+router.patch("/archive/:id", settingsLimiter, messageController.setArchive);
+
 /* ---------- delete ---------- */
 router.delete(
   "/delete-for-me/:messageId",

@@ -11,6 +11,7 @@ import ChatSetting, {
   pairKeyOf,
   getDisappearAfter,
 } from "../models/chatSetting.model.js";
+import ChatArchive, { getArchivedSet } from "../models/chatArchive.model.js";
 import ApiResponse from "../utils/apiResponse.js";
 import { uploadFileToCloudinary } from "../config/cloudinary.config.js";
 import { io, getPrivacy } from "../lib/socket.js";
@@ -177,9 +178,10 @@ const messageController = {
 
     const uid = toObjectId(userId);
 
-    const [users, me] = await Promise.all([
+    const [users, me, archivedSet] = await Promise.all([
       User.find({ _id: { $ne: userId } }).select("fullName email avatar"),
       User.findById(userId).select("blockedUsers"),
+      getArchivedSet(userId),
     ]);
 
     const blockedSet = new Set((me?.blockedUsers || []).map(String));
@@ -232,6 +234,7 @@ const messageController = {
           email: user.email,
           avatar: user.avatar?.url || "",
           isBlocked,
+          isArchived: archivedSet.has(user._id.toString()),
           unreadCount: isBlocked ? 0 : c?.unreadCount || 0,
           lastMessage: c ? formatMessage(c.lastMessage) : null,
           lastMessageAt: c?.lastMessage.createdAt || null,
@@ -1055,6 +1058,42 @@ const messageController = {
       seconds
         ? "Disappearing messages turned on."
         : "Disappearing messages turned off.",
+    ).send(res);
+  }),
+
+  setArchive: asyncHandler(async (req, res) => {
+    const { id: otherId } = req.params;
+    const userId = req.user._id;
+    const archived = req.body.archived === true || req.body.archived === "true";
+
+    assertValidId(otherId, "user ID");
+
+    if (otherId.toString() === userId.toString()) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user.");
+    }
+    if (!(await User.exists({ _id: otherId }))) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+    }
+
+    if (archived) {
+      await ChatArchive.updateOne(
+        { ownerId: userId, otherId },
+        { $setOnInsert: { ownerId: userId, otherId } },
+        { upsert: true },
+      );
+    } else {
+      await ChatArchive.deleteOne({ ownerId: userId, otherId });
+    }
+
+    io.to(userId.toString()).emit("chatArchived", {
+      userId: otherId.toString(),
+      archived,
+    });
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { userId: otherId, archived },
+      archived ? "Chat archived." : "Chat unarchived.",
     ).send(res);
   }),
 };

@@ -31,6 +31,9 @@ const io = new Server(server, {
 /* ---------- GROUP ROOM HELPER ---------- */
 export const groupRoom = (groupId) => `group:${groupId}`;
 
+/* ---------- ID VALIDATION (blocks fake rooms like "group:xyz" / socket ids) ---------- */
+const isObjectId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
+
 /* ---------- ONLINE USERS TRACKING ---------- */
 const onlineUsers = new Map();
 
@@ -68,6 +71,40 @@ export const loadPrivacy = async (userId) => {
   }
 };
 
+/* ---------- BLOCK CHECK FOR TYPING (short TTL cache, DB spam se bachne ke liye) ---------- */
+const BLOCK_CACHE_TTL_MS = 10_000;
+const blockCache = new Map();
+
+const isBlockedEitherWay = async (a, b) => {
+  const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+  const hit = blockCache.get(key);
+
+  if (hit && hit.exp > Date.now()) return hit.value;
+
+  let value = false;
+  try {
+    const found = await User.exists({
+      $or: [
+        { _id: a, blockedUsers: b },
+        { _id: b, blockedUsers: a },
+      ],
+    });
+    value = Boolean(found);
+  } catch (e) {
+    console.error("[socket] block check failed:", e?.message || e);
+  }
+
+  blockCache.set(key, { value, exp: Date.now() + BLOCK_CACHE_TTL_MS });
+
+  // cache chhota rakhne ke liye purani entries saaf karo
+  if (blockCache.size > 5000) {
+    const now = Date.now();
+    for (const [k, v] of blockCache) if (v.exp <= now) blockCache.delete(k);
+  }
+
+  return value;
+};
+
 /* ---------- ONLINE STATUS AND ACTIVE CHAT HELPERS ---------- */
 export const isUserOnline = (userId) =>
   (onlineUsers.get(userId.toString())?.size || 0) > 0;
@@ -77,6 +114,10 @@ export const isUserViewingChat = async (receiverId, senderId) => {
 
   return sockets.some((s) => s.data.activeChatId === senderId.toString());
 };
+
+/* ---------- FORCE DISCONNECT (logout / session revoke ke time call karo) ---------- */
+export const disconnectUser = (userId) =>
+  io.in(String(userId)).disconnectSockets(true);
 
 /* ---------- COOKIE PARSING ---------- */
 const parseCookies = (header = "") =>
@@ -127,6 +168,7 @@ async function markPendingAsDelivered(userId) {
       receiverId: userId,
       status: "sent",
       isDeleted: false,
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
     }).select("_id senderId");
 
     if (!pending.length) return;
@@ -186,6 +228,8 @@ io.on("connection", (socket) => {
   console.log("[socket] connected:", userId, socket.id);
 
   /* ---------- REGISTER SOCKET AND TRACK PRESENCE ---------- */
+  /* NOTE: user-room (userId) join hone se "chatArchived" jaise events
+     owner ke saare tabs/devices tak apne aap pahunch jaate hain. */
   socket.join(userId);
 
   if (!onlineUsers.has(userId)) {
@@ -211,7 +255,7 @@ io.on("connection", (socket) => {
 
   /* ---------- CHAT OPEN AND CLOSE EVENTS ---------- */
   socket.on("chat:open", (otherUserId) => {
-    socket.data.activeChatId = otherUserId ? String(otherUserId) : null;
+    socket.data.activeChatId = isObjectId(otherUserId) ? otherUserId : null;
   });
 
   socket.on("chat:close", () => {
@@ -224,10 +268,11 @@ io.on("connection", (socket) => {
   });
 
   /* ---------- ONE-TO-ONE TYPING EVENTS ---------- */
-  socket.on("typing", (payload) => {
+  socket.on("typing", async (payload) => {
     const to = payload?.to;
 
-    if (!to || typeof to !== "string") return;
+    // sirf valid user id; room names / socket ids / khud ko reject
+    if (!isObjectId(to) || to === userId) return;
 
     const isTyping = Boolean(payload.isTyping);
 
@@ -239,6 +284,9 @@ io.on("connection", (socket) => {
       lastEmit.typing = now;
 
       if (!getPrivacy(userId).typingIndicator) return;
+
+      // block hone par typing nahi dikhni chahiye
+      if (await isBlockedEitherWay(userId, to)) return;
 
       socket.data.typingTo.add(to);
     } else {
@@ -252,7 +300,7 @@ io.on("connection", (socket) => {
   socket.on("group:typing", (payload) => {
     const groupId = payload?.groupId;
 
-    if (!groupId || typeof groupId !== "string") return;
+    if (!isObjectId(groupId)) return;
 
     const room = groupRoom(groupId);
 

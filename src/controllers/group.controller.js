@@ -5,6 +5,9 @@ import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import Group from "../models/group.model.js";
 import GroupMessage from "../models/groupmessage.model.js";
+import GroupArchive, {
+  getArchivedGroupSet,
+} from "../models/grouparchive.model.js";
 import {
   uploadFileToCloudinary,
   deleteFileToCloudinary,
@@ -140,6 +143,7 @@ const formatGroup = (group, extra = {}) => ({
   lastMessageAt: group.lastMessageAt || group.createdAt,
   unreadCount: 0,
   lastMessage: null,
+  archived: false,
   ...extra,
 });
 
@@ -263,6 +267,7 @@ const destroyGroup = async (group) => {
     group.avatar?.public_id && deleteFileToCloudinary(group.avatar.public_id),
   ]);
   await GroupMessage.deleteMany({ groupId: group._id });
+  await GroupArchive.deleteMany({ groupId: group._id });
   await Group.deleteOne({ _id: group._id });
 };
 
@@ -312,12 +317,13 @@ const groupController = {
 
   getMyGroups: asyncHandler(async (req, res) => {
     const me = req.user._id;
-    const [groups, blocked] = await Promise.all([
+    const [groups, blocked, archivedSet] = await Promise.all([
       Group.find({ "members.userId": me }).populate(
         "members.userId",
         "fullName avatar",
       ),
       getBlockedByMe(me),
+      getArchivedGroupSet(me),
     ]);
 
     const result = await Promise.all(
@@ -331,6 +337,7 @@ const groupController = {
           unreadCount,
           lastMessage: last ? formatGroupMessage(last) : null,
           lastMessageAt: last?.createdAt || g.lastMessageAt || g.createdAt,
+          archived: archivedSet.has(String(g._id)),
         });
       }),
     );
@@ -346,11 +353,48 @@ const groupController = {
     const me = req.user._id;
     await getGroupAndMember(req.params.id, me);
     const group = await loadGroup(req.params.id);
+    const archived = !!(await GroupArchive.exists({
+      ownerId: me,
+      groupId: group._id,
+    }));
     return new ApiResponse(
       StatusCodes.OK,
-      formatGroup(group),
+      formatGroup(group, { archived }),
       "Group fetched.",
     ).send(res);
+  }),
+
+  archiveGroup: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+
+    await GroupArchive.updateOne(
+      { ownerId: me, groupId: group._id },
+      { $setOnInsert: { ownerId: me, groupId: group._id } },
+      { upsert: true },
+    );
+
+    const payload = { groupId: String(group._id), archived: true };
+    // Sync all of this user's devices/tabs
+    io.to(String(me)).emit("group:archiveChanged", payload);
+
+    return new ApiResponse(StatusCodes.OK, payload, "Group archived.").send(
+      res,
+    );
+  }),
+
+  unarchiveGroup: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+
+    await GroupArchive.deleteOne({ ownerId: me, groupId: group._id });
+
+    const payload = { groupId: String(group._id), archived: false };
+    io.to(String(me)).emit("group:archiveChanged", payload);
+
+    return new ApiResponse(StatusCodes.OK, payload, "Group unarchived.").send(
+      res,
+    );
   }),
 
   updateGroup: asyncHandler(async (req, res) => {
@@ -462,6 +506,7 @@ const groupController = {
 
     group.members = group.members.filter((m) => sid(m.userId) !== targetId);
     await group.save();
+    await GroupArchive.deleteOne({ ownerId: targetId, groupId: group._id });
 
     leaveRoom(targetId, group._id);
     io.to(targetId).emit("group:removed", {
@@ -558,6 +603,7 @@ const groupController = {
       group.owner = byJoin.find((m) => m.role === "admin").userId;
     }
     await group.save();
+    await GroupArchive.deleteOne({ ownerId: me, groupId: group._id });
 
     leaveRoom(me, group._id);
     io.to(me).emit("group:removed", {
