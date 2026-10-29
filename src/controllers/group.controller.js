@@ -8,6 +8,7 @@ import GroupMessage from "../models/groupmessage.model.js";
 import GroupArchive, {
   getArchivedGroupSet,
 } from "../models/grouparchive.model.js";
+import LocationShare from "../models/LocationShare.model.js";
 import {
   uploadFileToCloudinary,
   deleteFileToCloudinary,
@@ -26,7 +27,39 @@ const MAX_TEXT = 2000;
 const MAX_VOICE_SECONDS = 300;
 const MAX_VIDEO_SECONDS = 60;
 
+const LIVE_DURATIONS_MIN = [15, 60, 480];
+const MIN_UPDATE_INTERVAL_MS = 2000;
+
+const lastUpdateAt = new Map();
+
+const toNum = (v) =>
+  v === null || v === undefined || v === "" ? NaN : Number(v);
+
+const optNum = (v) => {
+  const n = toNum(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+const validCoords = (lat, lng) =>
+  Number.isFinite(lat) &&
+  Number.isFinite(lng) &&
+  Math.abs(lat) <= 90 &&
+  Math.abs(lng) <= 180;
+
+const readLocation = (body) => ({
+  lat: toNum(body.lat),
+  lng: toNum(body.lng),
+  accuracy: optNum(body.accuracy),
+  heading: optNum(body.heading),
+  speed: optNum(body.speed),
+});
+
 const sid = (x) => String(x?._id ?? x);
+
+const readClientId = (body) =>
+  typeof body.clientId === "string" && body.clientId.length <= 64
+    ? body.clientId
+    : undefined;
 
 const parseIds = (raw) => {
   if (!raw) return [];
@@ -149,6 +182,9 @@ const formatGroup = (group, extra = {}) => ({
 
 const formatGroupMessage = (msg) => {
   const sender = msg.senderId?._id ? msg.senderId : null;
+  const hasLocation =
+    Number.isFinite(msg.location?.lat) && Number.isFinite(msg.location?.lng);
+
   return {
     id: msg._id,
     groupId: sid(msg.groupId),
@@ -186,6 +222,15 @@ const formatGroupMessage = (msg) => {
           mimeType: msg.video.mimeType,
         }
       : null,
+    location: hasLocation
+      ? {
+          lat: msg.location.lat,
+          lng: msg.location.lng,
+          accuracy: msg.location.accuracy,
+          isLive: !!msg.location.isLive,
+          shareId: msg.location.shareId ? String(msg.location.shareId) : null,
+        }
+      : null,
     clientId: msg.clientId,
     readBy: (msg.readBy || []).map(String),
     createdAt: msg.createdAt,
@@ -198,6 +243,18 @@ const emitToMembers = (group, event, payload, exceptIds = []) => {
     const uid = sid(m.userId);
     if (!skip.has(uid)) io.to(uid).emit(event, payload);
   }
+};
+
+const emitToViewers = async (group, sharerId, event, payload) => {
+  const memberIds = group.members.map((m) => sid(m.userId));
+  const [blockers, blockedBySharer] = await Promise.all([
+    getBlockersOf(memberIds, sharerId),
+    getBlockedByMe(sharerId),
+  ]);
+  const blockedSet = new Set([...blockedBySharer].map(String));
+  memberIds
+    .filter((id) => !blockers.has(id) && !blockedSet.has(id))
+    .forEach((id) => io.to(id).emit(event, payload));
 };
 
 const joinRoom = (userId, groupId) =>
@@ -249,6 +306,59 @@ const emitGroupConversation = async (group) => {
   }
 };
 
+const broadcastGroupMessage = async (group, message, senderId) => {
+  await message.populate("senderId", "fullName avatar");
+  await Group.updateOne(
+    { _id: group._id },
+    { lastMessageAt: message.createdAt },
+  );
+
+  const payload = formatGroupMessage(message);
+
+  const memberIds = group.members.map((m) => sid(m.userId));
+  const blockers = await getBlockersOf(memberIds, senderId);
+  memberIds
+    .filter((id) => !blockers.has(id))
+    .forEach((id) => io.to(id).emit("group:newMessage", payload));
+
+  emitGroupConversation(group);
+
+  return payload;
+};
+
+const endShare = async (group, share, status = "stopped") => {
+  const res = await LocationShare.updateOne(
+    { _id: share._id, status: "active" },
+    { status, endedAt: new Date() },
+  );
+  lastUpdateAt.delete(String(share._id));
+  if (!res.modifiedCount) return false;
+
+  if (share.messageId) {
+    await GroupMessage.updateOne(
+      { _id: share.messageId },
+      { "location.isLive": false },
+    );
+  }
+
+  emitToMembers(group, "group:location:ended", {
+    groupId: String(group._id),
+    shareId: String(share._id),
+  });
+  return true;
+};
+
+const stopUserShares = async (group, userId) => {
+  const active = await LocationShare.find({
+    groupId: group._id,
+    sharerId: userId,
+    status: "active",
+  });
+  for (const s of active) {
+    await endShare(group, s, "stopped");
+  }
+};
+
 const destroyGroup = async (group) => {
   const media = await GroupMessage.find({
     groupId: group._id,
@@ -268,6 +378,7 @@ const destroyGroup = async (group) => {
   ]);
   await GroupMessage.deleteMany({ groupId: group._id });
   await GroupArchive.deleteMany({ groupId: group._id });
+  await LocationShare.deleteMany({ groupId: group._id });
   await Group.deleteOne({ _id: group._id });
 };
 
@@ -375,7 +486,6 @@ const groupController = {
     );
 
     const payload = { groupId: String(group._id), archived: true };
-    // Sync all of this user's devices/tabs
     io.to(String(me)).emit("group:archiveChanged", payload);
 
     return new ApiResponse(StatusCodes.OK, payload, "Group archived.").send(
@@ -504,6 +614,8 @@ const groupController = {
       );
     }
 
+    await stopUserShares(group, targetId);
+
     group.members = group.members.filter((m) => sid(m.userId) !== targetId);
     await group.save();
     await GroupArchive.deleteOne({ ownerId: targetId, groupId: group._id });
@@ -579,6 +691,8 @@ const groupController = {
   leaveGroup: asyncHandler(async (req, res) => {
     const me = String(req.user._id);
     const { group } = await getGroupAndMember(req.params.id, me);
+
+    await stopUserShares(group, me);
 
     group.members = group.members.filter((m) => sid(m.userId) !== me);
 
@@ -672,10 +786,7 @@ const groupController = {
     const { group } = await getGroupAndMember(req.params.id, me);
 
     const text = req.body.text?.trim();
-    const clientId =
-      typeof req.body.clientId === "string" && req.body.clientId.length <= 64
-        ? req.body.clientId
-        : undefined;
+    const clientId = readClientId(req.body);
     const isVoice = req.body.isVoice === "true" || req.body.isVoice === true;
     const isVideo = req.body.isVideo === "true" || req.body.isVideo === true;
 
@@ -738,7 +849,6 @@ const groupController = {
         readBy: [me],
       });
     } catch (error) {
-      // Our upload is now orphaned (create failed or lost a duplicate race).
       await Promise.allSettled(deleteMedia(attachment));
 
       if (error?.code === 11000 && clientId) {
@@ -754,21 +864,7 @@ const groupController = {
       throw error;
     }
 
-    await message.populate("senderId", "fullName avatar");
-    await Group.updateOne(
-      { _id: group._id },
-      { lastMessageAt: message.createdAt },
-    );
-
-    const payload = formatGroupMessage(message);
-
-    const memberIds = group.members.map((m) => sid(m.userId));
-    const blockers = await getBlockersOf(memberIds, me);
-    memberIds
-      .filter((id) => !blockers.has(id))
-      .forEach((id) => io.to(id).emit("group:newMessage", payload));
-
-    emitGroupConversation(group);
+    const payload = await broadcastGroupMessage(group, message, me);
 
     return new ApiResponse(StatusCodes.CREATED, payload, "Message sent.").send(
       res,
@@ -816,6 +912,311 @@ const groupController = {
       StatusCodes.OK,
       { count: ids.length },
       "Messages marked as seen.",
+    ).send(res);
+  }),
+
+  startGroupShare: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+
+    const { mode } = req.body;
+    const { lat, lng, accuracy, heading, speed } = readLocation(req.body);
+    const durationMin = toNum(req.body.durationMin);
+    const clientId = readClientId(req.body);
+
+    if (mode !== "current" && mode !== "live") {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share mode.");
+    }
+    if (!validCoords(lat, lng)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid location.");
+    }
+    if (mode === "live" && !LIVE_DURATIONS_MIN.includes(durationMin)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid duration.");
+    }
+
+    /* ---- duplicate (client retry) check: SABSE PEHLE, koi side-effect se pehle ---- */
+    const findDuplicate = () =>
+      GroupMessage.findOne({
+        groupId: group._id,
+        senderId: me,
+        clientId,
+      }).populate("senderId", "fullName avatar");
+
+    const respondDuplicate = async (dup) => {
+      const message = formatGroupMessage(dup);
+      if (mode === "live" && dup.location?.shareId) {
+        const share = await LocationShare.findById(dup.location.shareId);
+        return new ApiResponse(
+          StatusCodes.OK,
+          { message, share },
+          "Live location already started.",
+        ).send(res);
+      }
+      return new ApiResponse(
+        StatusCodes.OK,
+        message,
+        "Location already sent.",
+      ).send(res);
+    };
+
+    if (clientId) {
+      const dup = await findDuplicate();
+      if (dup) return respondDuplicate(dup);
+    }
+
+    /* ---- one-time pin ---- */
+    if (mode === "current") {
+      let message;
+      try {
+        message = await GroupMessage.create({
+          groupId: group._id,
+          senderId: me,
+          location: { lat, lng, accuracy, isLive: false },
+          clientId,
+          readBy: [me],
+        });
+      } catch (error) {
+        if (error?.code === 11000 && clientId) {
+          const dup = await findDuplicate();
+          if (dup) return respondDuplicate(dup);
+        }
+        throw error;
+      }
+
+      const payload = await broadcastGroupMessage(group, message, me);
+
+      return new ApiResponse(
+        StatusCodes.CREATED,
+        payload,
+        "Location sent.",
+      ).send(res);
+    }
+
+    await stopUserShares(group, me);
+
+    const now = new Date();
+    let share;
+    try {
+      share = await LocationShare.create({
+        sharerId: me,
+        groupId: group._id,
+        expiresAt: new Date(now.getTime() + durationMin * 60_000),
+        lastLocation: { lat, lng, accuracy, heading, speed, updatedAt: now },
+      });
+    } catch (error) {
+      if (error?.code === 11000) {
+        throw new ApiError(
+          StatusCodes.CONFLICT,
+          "A live share is already active in this group.",
+        );
+      }
+      throw error;
+    }
+
+    let message;
+    try {
+      message = await GroupMessage.create({
+        groupId: group._id,
+        senderId: me,
+        location: {
+          lat,
+          lng,
+          accuracy,
+          isLive: true,
+          shareId: share._id,
+        },
+        clientId,
+        readBy: [me],
+      });
+    } catch (error) {
+      await LocationShare.deleteOne({ _id: share._id });
+
+      if (error?.code === 11000 && clientId) {
+        const dup = await findDuplicate();
+        if (dup) return respondDuplicate(dup);
+      }
+      throw error;
+    }
+
+    share.messageId = message._id;
+    await LocationShare.updateOne(
+      { _id: share._id },
+      { messageId: message._id },
+    );
+
+    const payload = await broadcastGroupMessage(group, message, me);
+
+    await emitToViewers(group, me, "group:location:update", {
+      groupId: String(group._id),
+      shareId: String(share._id),
+      sharerId: String(me),
+      lat,
+      lng,
+      accuracy,
+      heading,
+      speed,
+      updatedAt: now,
+    });
+
+    return new ApiResponse(
+      StatusCodes.CREATED,
+      { message: payload, share },
+      "Live location started.",
+    ).send(res);
+  }),
+
+  updateGroupShare: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { shareId } = req.params;
+    const { group } = await getGroupAndMember(req.params.id, me);
+
+    if (!mongoose.Types.ObjectId.isValid(shareId)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share ID.");
+    }
+
+    const { lat, lng, accuracy, heading, speed } = readLocation(req.body);
+
+    if (!validCoords(lat, lng)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid location.");
+    }
+
+    const key = String(shareId);
+    const nowMs = Date.now();
+    if (nowMs - (lastUpdateAt.get(key) || 0) < MIN_UPDATE_INTERVAL_MS) {
+      return new ApiResponse(
+        StatusCodes.OK,
+        { shareId: key, skipped: true },
+        "Update skipped (too frequent).",
+      ).send(res);
+    }
+    if (lastUpdateAt.size > 5000) lastUpdateAt.clear();
+    lastUpdateAt.set(key, nowMs);
+
+    const now = new Date();
+
+    const share = await LocationShare.findOneAndUpdate(
+      {
+        _id: shareId,
+        groupId: group._id,
+        sharerId: me,
+        status: "active",
+        expiresAt: { $gt: now },
+      },
+      {
+        $set: {
+          lastLocation: { lat, lng, accuracy, heading, speed, updatedAt: now },
+        },
+      },
+      { new: true },
+    );
+
+    if (!share) {
+      lastUpdateAt.delete(key);
+
+      const stale = await LocationShare.findOne({
+        _id: shareId,
+        groupId: group._id,
+        sharerId: me,
+        status: "active",
+        expiresAt: { $lte: now },
+      });
+      if (stale) {
+        await endShare(group, stale, "expired");
+        throw new ApiError(StatusCodes.GONE, "Live share has expired.");
+      }
+      throw new ApiError(StatusCodes.NOT_FOUND, "Live share not found.");
+    }
+
+    const payload = {
+      groupId: String(group._id),
+      shareId: String(share._id),
+      sharerId: String(me),
+      lat,
+      lng,
+      accuracy,
+      heading,
+      speed,
+      updatedAt: now,
+    };
+
+    await emitToViewers(group, me, "group:location:update", payload);
+
+    return new ApiResponse(StatusCodes.OK, payload, "Location updated.").send(
+      res,
+    );
+  }),
+
+  stopGroupShare: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { shareId } = req.params;
+    const { group } = await getGroupAndMember(req.params.id, me);
+
+    if (!mongoose.Types.ObjectId.isValid(shareId)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share ID.");
+    }
+
+    const share = await LocationShare.findOne({
+      _id: shareId,
+      groupId: group._id,
+      sharerId: me,
+      status: "active",
+    });
+    if (!share) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Live share not found.");
+    }
+
+    await endShare(group, share, "stopped");
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { shareId: share._id },
+      "Live location stopped.",
+    ).send(res);
+  }),
+
+  getActiveGroupShares: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+    const now = new Date();
+
+    const stale = await LocationShare.find({
+      groupId: group._id,
+      status: "active",
+      expiresAt: { $lte: now },
+    });
+    for (const s of stale) {
+      await endShare(group, s, "expired");
+    }
+
+    const blocked = await getBlockedByMe(me);
+
+    const [mine, candidates] = await Promise.all([
+      LocationShare.find({
+        groupId: group._id,
+        sharerId: me,
+        status: "active",
+        expiresAt: { $gt: now },
+      }),
+      LocationShare.find({
+        groupId: group._id,
+        sharerId: { $nin: [...blocked, me] },
+        status: "active",
+        expiresAt: { $gt: now },
+      }),
+    ]);
+
+    const sharerIds = [...new Set(candidates.map((s) => String(s.sharerId)))];
+    const blockedMe = sharerIds.length
+      ? await getBlockersOf(sharerIds, me)
+      : new Set();
+    const inGroup = candidates.filter(
+      (s) => !blockedMe.has(String(s.sharerId)),
+    );
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { mine, inGroup },
+      "Active location shares.",
     ).send(res);
   }),
 };

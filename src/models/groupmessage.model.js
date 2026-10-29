@@ -39,6 +39,13 @@ const GroupMessageSchema = new mongoose.Schema(
       mimeType: { type: String },
       resourceType: { type: String },
     },
+    location: {
+      lat: Number,
+      lng: Number,
+      accuracy: Number,
+      isLive: { type: Boolean, default: false },
+      shareId: { type: mongoose.Schema.Types.ObjectId, ref: "LocationShare" },
+    },
     clientId: { type: String },
     readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     silentReadBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
@@ -47,20 +54,27 @@ const GroupMessageSchema = new mongoose.Schema(
 );
 
 GroupMessageSchema.pre("validate", function (next) {
+  const hasLocation =
+    Number.isFinite(this.location?.lat) && Number.isFinite(this.location?.lng);
+
   if (
     !this.text &&
     !this.image?.url &&
     !this.file?.url &&
     !this.audio?.url &&
-    !this.video?.url
+    !this.video?.url &&
+    !hasLocation
   ) {
-    return next(new Error("Message must have text or an attachment."));
+    return next(
+      new Error("Message must have text, an attachment or a location."),
+    );
   }
   next();
 });
 
 GroupMessageSchema.index({ groupId: 1, createdAt: -1 });
 GroupMessageSchema.index({ groupId: 1, senderId: 1, readBy: 1 });
+GroupMessageSchema.index({ "location.shareId": 1 }, { sparse: true });
 
 GroupMessageSchema.index(
   { groupId: 1, senderId: 1, clientId: 1 },

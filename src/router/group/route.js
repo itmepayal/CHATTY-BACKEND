@@ -8,7 +8,6 @@ const router = Router();
 router.use(authMiddleware);
 
 // Get all groups for the logged-in user
-// Create a new group
 router
   .route("/")
   .get(groupController.getMyGroups)
@@ -43,5 +42,22 @@ router
 
 // Mark group messages as seen
 router.post("/:id/seen", groupController.markGroupSeen);
+
+// ==========================================
+// Group Live Location Sharing
+// ==========================================
+
+// Send current location pin / start live location in a group
+router.post("/:id/location", groupController.startGroupShare);
+
+// Get active location shares for a group
+// (":shareId" wale routes se pehle rakha hai, taaki "active" shareId na samjha jaye)
+router.get("/:id/location/active", groupController.getActiveGroupShares);
+
+// Push a new position for an existing live share
+router.patch("/:id/location/:shareId", groupController.updateGroupShare);
+
+// Stop sharing a group location
+router.post("/:id/location/:shareId/stop", groupController.stopGroupShare);
 
 export default router;

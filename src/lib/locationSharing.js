@@ -1,4 +1,6 @@
 import LocationShare from "../models/LocationShare.model.js";
+import GroupMessage from "../models/groupmessage.model.js";
+import { groupRoom } from "../lib/socket.js";
 
 const MIN_INTERVAL_MS = 2000;
 const isObjectId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
@@ -11,6 +13,8 @@ export const registerLocationHandlers = (
 ) => {
   const userId = socket.data.userId;
   const lastEmitAt = new Map();
+
+  socket.on("disconnect", () => lastEmitAt.clear());
 
   socket.on("location:update", async (payload, ack) => {
     const done = typeof ack === "function" ? ack : () => {};
@@ -29,7 +33,6 @@ export const registerLocationHandlers = (
         return done({ ok: false, error: "invalid_coords" });
       }
 
-      // rate limit
       const now = Date.now();
       if (now - (lastEmitAt.get(shareId) || 0) < MIN_INTERVAL_MS) {
         return done({ ok: true, skipped: true });
@@ -38,11 +41,11 @@ export const registerLocationHandlers = (
 
       const updatedAt = new Date();
 
-      // sirf owner + active + expire nahi hua
       const share = await LocationShare.findOneAndUpdate(
         {
           _id: shareId,
           sharerId: userId,
+          receiverId: { $ne: null },
           status: "active",
           expiresAt: { $gt: updatedAt },
         },
@@ -63,7 +66,6 @@ export const registerLocationHandlers = (
 
       if (!share) {
         lastEmitAt.delete(shareId);
-        // receiver ko expiry sweeper (neeche) "ended" bhej dega
         socket.emit("location:ended", { shareId });
         return done({ ok: false, error: "share_inactive" });
       }
@@ -81,17 +83,17 @@ export const registerLocationHandlers = (
         return done({ ok: false, error: "blocked" });
       }
 
+      const saved = share.lastLocation;
       const out = {
         shareId: String(share._id),
-        lat,
-        lng,
-        accuracy,
-        heading,
-        speed,
+        lat: saved.lat,
+        lng: saved.lng,
+        accuracy: saved.accuracy,
+        heading: saved.heading,
+        speed: saved.speed,
         updatedAt,
       };
 
-      // receiver ko bhi, aur sharer ko bhi (taaki uska apna map/"Updated" bhi chale)
       io.to(receiverId).emit("location:update", out);
       io.to(userId).emit("location:update", out);
 
@@ -103,34 +105,56 @@ export const registerLocationHandlers = (
   });
 };
 
-/**
- * Expire hue shares ko band karta hai aur dono users ko "location:ended" bhejta hai.
- * Sharer ka tab band ho gaya ho tab bhi receiver ka card "ended" ho jata hai.
- * Server start par SIRF EK baar call karo.
- */
 export const startLocationExpirySweeper = (io, everyMs = 30_000) => {
+  let running = false;
+
   const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+
     try {
       const now = new Date();
       const expired = await LocationShare.find({
         status: "active",
         expiresAt: { $lte: now },
-      }).select("_id sharerId receiverId");
+      })
+        .select("_id sharerId receiverId groupId")
+        .lean();
 
       if (!expired.length) return;
 
+      const ids = expired.map((s) => s._id);
+
       await LocationShare.updateMany(
-        { _id: { $in: expired.map((s) => s._id) }, status: "active" },
+        { _id: { $in: ids }, status: "active" },
         { status: "expired", endedAt: now },
       );
 
+      await GroupMessage.updateMany(
+        { "location.shareId": { $in: ids } },
+        { "location.isLive": false },
+      );
+
       for (const s of expired) {
-        const payload = { shareId: String(s._id) };
-        io.to(s.sharerId.toString()).emit("location:ended", payload);
-        io.to(s.receiverId.toString()).emit("location:ended", payload);
+        const sharer = String(s.sharerId);
+
+        if (s.receiverId) {
+          const payload = { shareId: String(s._id) };
+          io.to(sharer).emit("location:ended", payload);
+          io.to(String(s.receiverId)).emit("location:ended", payload);
+        } else if (s.groupId) {
+          const payload = {
+            groupId: String(s.groupId),
+            shareId: String(s._id),
+          };
+          io.to(groupRoom(s.groupId)).emit("group:location:ended", payload);
+          io.to(sharer).emit("group:location:ended", payload);
+        }
       }
     } catch (e) {
       console.error("[location] expiry sweep failed:", e?.message || e);
+    } finally {
+      running = false;
     }
   }, everyMs);
 
