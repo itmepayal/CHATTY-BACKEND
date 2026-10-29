@@ -83,6 +83,15 @@ const MessageSchema = mongoose.Schema(
       enum: ["sent", "delivered", "seen"],
       default: "sent",
     },
+
+    location: {
+      lat: { type: Number },
+      lng: { type: Number },
+      accuracy: { type: Number },
+      isLive: { type: Boolean, default: false },
+      shareId: { type: mongoose.Schema.Types.ObjectId, ref: "LocationShare" },
+    },
+
     deliveredAt: { type: Date },
     seenAt: { type: Date },
 

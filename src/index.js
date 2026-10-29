@@ -28,6 +28,12 @@ import "./app/app.js";
 // ==============================
 import { startScheduler } from "./jobs/scheduler.js";
 import { startDisappearingSweeper } from "./jobs/disappearing.js";
+import { startLocationExpiryJob } from "./jobs/location.js";
+
+// ==============================
+// Socket
+// ==============================
+import { io } from "./lib/socket.js";
 
 // ==============================
 // Start the Server
@@ -38,6 +44,7 @@ connectDB(mongoUri, mongoDbName)
       console.log(`Server running at port ${port}`);
       startScheduler();
       startDisappearingSweeper();
+      startLocationExpiryJob(io);
     });
   })
   .catch((error) => {

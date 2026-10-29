@@ -4,7 +4,8 @@ import { io } from "../lib/socket.js";
 
 export const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
-export const REPLY_SELECT = "senderId text image file audio video isDeleted";
+export const REPLY_SELECT =
+  "senderId text image file audio video location isDeleted";
 
 const formatFile = (file) =>
   file?.url
@@ -34,6 +35,20 @@ const formatVideo = (video) =>
       }
     : null;
 
+const hasLatLng = (loc) =>
+  Number.isFinite(loc?.lat) && Number.isFinite(loc?.lng);
+
+const formatLocation = (loc) =>
+  hasLatLng(loc)
+    ? {
+        lat: loc.lat,
+        lng: loc.lng,
+        accuracy: loc.accuracy,
+        isLive: Boolean(loc.isLive),
+        shareId: loc.shareId ? String(loc.shareId) : null,
+      }
+    : null;
+
 const formatReply = (r) => {
   if (!r || typeof r !== "object" || !r.senderId) return null;
   if (r.isDeleted) return { id: r._id, isDeleted: true };
@@ -50,7 +65,17 @@ const formatReply = (r) => {
           ? "audio"
           : r.file?.url
             ? "file"
-            : "text",
+            : hasLatLng(r.location)
+              ? "location"
+              : "text",
+    // frontend replyPreviewText in sab ko check karta hai
+    image: r.image?.url ? { url: r.image.url } : null,
+    file: r.file?.url ? { name: r.file.name } : null,
+    audio: r.audio?.url ? { url: r.audio.url } : null,
+    video: r.video?.url ? { url: r.video.url } : null,
+    location: hasLatLng(r.location)
+      ? { lat: r.location.lat, lng: r.location.lng }
+      : null,
     isDeleted: false,
   };
 };
@@ -70,6 +95,7 @@ export const formatMessage = (msg) => {
     file: deleted ? null : formatFile(msg.file),
     audio: deleted ? null : formatAudio(msg.audio),
     video: deleted ? null : formatVideo(msg.video),
+    location: deleted ? null : formatLocation(msg.location),
     clientId: msg.clientId,
     reactions: deleted
       ? []

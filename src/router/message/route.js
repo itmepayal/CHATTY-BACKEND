@@ -1,9 +1,12 @@
 import express from "express";
+
 import messageController from "../../controllers/messages.controller.js";
 import authMiddleware from "../../middlewares/authMidleware.middleware.js";
+
 import upload, {
   enforceTypeSizeLimit,
 } from "../../middlewares/multer.middleware.js";
+
 import {
   sendMessageLimiter,
   reactLimiter,
@@ -14,66 +17,127 @@ import {
 
 const router = express.Router();
 
-// authMiddleware sabse pehle, taaki limiters ko req.user mile
+/* =========================================================
+   AUTHENTICATION
+   All routes below require authentication
+========================================================= */
 router.use(authMiddleware);
 
-router.route("/").get(messageController.getUsersForSidebar);
+/* =========================================================
+   SIDEBAR
+========================================================= */
+router.get("/", messageController.getUsersForSidebar);
 
-/* ---------- static GET routes ("/:id" se PEHLE) ---------- */
+/* =========================================================
+   LOCATION SHARING
+========================================================= */
+
+router.post("/location/share", settingsLimiter, messageController.startShare);
+
+router.patch(
+  "/location/stop/:id",
+  settingsLimiter,
+  messageController.stopShare,
+);
+
+router.get("/location/active", messageController.getActiveShares);
+
+/* =========================================================
+   STATIC GET ROUTES
+   Keep these before "/:id"
+========================================================= */
 router.get("/scheduled", messageController.getScheduled);
+
 router.get("/search/:id", messageController.searchMessages);
+
 router.get("/pinned/:id", messageController.getPinned);
+
 router.get("/disappearing/:id", messageController.getDisappearing);
 
-router.route("/:id").get(messageController.getMessage);
+/* =========================================================
+   GET MESSAGES
+========================================================= */
+router.get("/:id", messageController.getMessage);
 
-/* ---------- send (limiter upload se pehle, taaki blocked request ki file save na ho) ---------- */
-router
-  .route("/send/:id")
-  .post(
-    sendMessageLimiter,
-    upload.single("image"),
-    enforceTypeSizeLimit,
-    messageController.sendMessage,
-  );
+/* =========================================================
+   SEND MESSAGE
+========================================================= */
+router.post(
+  "/send/:id",
+  sendMessageLimiter,
+  upload.single("image"),
+  enforceTypeSizeLimit,
+  messageController.sendMessage,
+);
 
-/* ---------- schedule ---------- */
+/* =========================================================
+   SCHEDULE MESSAGES
+========================================================= */
 router.post(
   "/schedule/:id",
   sendMessageLimiter,
   messageController.scheduleMessage,
 );
+
 router.delete("/scheduled/:scheduleId", messageController.cancelScheduled);
 
-/* ---------- forward / edit / pin ---------- */
+/* =========================================================
+   FORWARD MESSAGE
+========================================================= */
 router.post(
   "/forward/:messageId",
   forwardLimiter,
   messageController.forwardMessage,
 );
+
+/* =========================================================
+   EDIT MESSAGE
+========================================================= */
 router.patch(
   "/edit/:messageId",
   sendMessageLimiter,
   messageController.editMessage,
 );
+
+/* =========================================================
+   PIN / UNPIN MESSAGE
+========================================================= */
 router.patch("/pin/:messageId", messageController.togglePin);
 
-/* ---------- seen / react ---------- */
+/* =========================================================
+   READ RECEIPTS
+========================================================= */
 router.patch("/seen/:id", messageController.markMessagesSeen);
+
+/* =========================================================
+   MESSAGE REACTIONS
+========================================================= */
 router.patch("/react/:messageId", reactLimiter, messageController.reactMessage);
 
-/* ---------- disappearing + report ---------- */
+/* =========================================================
+   DISAPPEARING MESSAGES
+========================================================= */
 router.put(
   "/disappearing/:id",
   settingsLimiter,
   messageController.setDisappearing,
 );
+
+/* =========================================================
+   REPORT USER
+========================================================= */
 router.post("/report/:id", reportLimiter, messageController.reportUser);
 
-/* ---------- archive / unarchive chat (body: { archived: true | false }) ---------- */
+/* =========================================================
+   ARCHIVE / UNARCHIVE CHAT
+   Body: { "archived": true }
+   Body: { "archived": false }
+========================================================= */
 router.patch("/archive/:id", settingsLimiter, messageController.setArchive);
 
-/* ---------- delete ---------- */
+/* =========================================================
+   DELETE MESSAGE
+========================================================= */
 router.delete(
   "/delete-for-me/:messageId",
   messageController.deleteMessageForMe,

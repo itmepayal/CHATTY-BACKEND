@@ -12,6 +12,7 @@ import ChatSetting, {
   getDisappearAfter,
 } from "../models/chatSetting.model.js";
 import ChatArchive, { getArchivedSet } from "../models/chatArchive.model.js";
+import LocationShare from "../models/LocationShare.model.js";
 import ApiResponse from "../utils/apiResponse.js";
 import { uploadFileToCloudinary } from "../config/cloudinary.config.js";
 import { io, getPrivacy } from "../lib/socket.js";
@@ -35,6 +36,23 @@ const EDIT_WINDOW_MS = 15 * 60 * 1000;
 const MAX_PINS = 3;
 const MAX_FORWARD_TARGETS = 5;
 const MAX_TEXT_LENGTH = 4000;
+
+/* ---------------- LOCATION HELPERS ---------------- */
+const LIVE_DURATIONS_MIN = [15, 60, 480];
+
+const toNum = (v) =>
+  v === null || v === undefined || v === "" ? NaN : Number(v);
+
+const validCoords = (lat, lng) =>
+  Number.isFinite(lat) &&
+  Number.isFinite(lng) &&
+  Math.abs(lat) <= 90 &&
+  Math.abs(lng) <= 180;
+
+const emitToPair = (a, b, event, payload) => {
+  io.to(a.toString()).emit(event, payload);
+  io.to(b.toString()).emit(event, payload);
+};
 
 const REPORT_REASONS = [
   "spam",
@@ -441,6 +459,15 @@ const messageController = {
       file: o.file?.url ? o.file : undefined,
       audio: o.audio?.url ? o.audio : undefined,
       video: o.video?.url ? o.video : undefined,
+      location:
+        Number.isFinite(o.location?.lat) && Number.isFinite(o.location?.lng)
+          ? {
+              lat: o.location.lat,
+              lng: o.location.lng,
+              accuracy: o.location.accuracy,
+              isLive: false, // forward = static pin, live share se nahi judega
+            }
+          : undefined,
       linkPreview: o.linkPreview?.url ? o.linkPreview : undefined,
       isForwarded: true,
     };
@@ -1094,6 +1121,189 @@ const messageController = {
       StatusCodes.OK,
       { userId: otherId, archived },
       archived ? "Chat archived." : "Chat unarchived.",
+    ).send(res);
+  }),
+
+  /* ---------------- LOCATION: START ---------------- */
+  // current -> data = message payload
+  // live    -> data = { message, share }
+  startShare: asyncHandler(async (req, res) => {
+    const senderId = req.user._id;
+    const { receiverId, mode } = req.body;
+
+    const lat = toNum(req.body.lat);
+    const lng = toNum(req.body.lng);
+    const accuracy = toNum(req.body.accuracy);
+    const durationMin = toNum(req.body.durationMin);
+
+    assertValidId(receiverId, "receiver ID");
+
+    if (receiverId.toString() === senderId.toString()) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "You cannot share location with yourself.",
+      );
+    }
+    if (mode !== "current" && mode !== "live") {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share mode.");
+    }
+    if (!validCoords(lat, lng)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid location.");
+    }
+
+    await assertCanMessage(senderId, receiverId);
+
+    const safeAccuracy = Number.isFinite(accuracy) ? accuracy : undefined;
+
+    /* ---- one-time pin ---- */
+    if (mode === "current") {
+      const { payload } = await deliverMessage({
+        senderId,
+        receiverId,
+        data: {
+          location: { lat, lng, accuracy: safeAccuracy, isLive: false },
+        },
+      });
+
+      console.log(payload);
+
+      return new ApiResponse(
+        StatusCodes.CREATED,
+        payload,
+        "Location sent.",
+      ).send(res);
+    }
+
+    /* ---- live share ---- */
+    if (!LIVE_DURATIONS_MIN.includes(durationMin)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid duration.");
+    }
+
+    // is chat me pehle se koi live share ho to band karo
+    const previous = await LocationShare.find({
+      sharerId: senderId,
+      receiverId,
+      status: "active",
+    });
+    for (const old of previous) {
+      old.status = "stopped";
+      old.endedAt = new Date();
+      await old.save();
+      emitToPair(old.sharerId, old.receiverId, "location:ended", {
+        shareId: String(old._id),
+      });
+    }
+
+    const now = new Date();
+    const share = await LocationShare.create({
+      sharerId: senderId,
+      receiverId,
+      expiresAt: new Date(now.getTime() + durationMin * 60_000),
+      lastLocation: { lat, lng, accuracy: safeAccuracy, updatedAt: now },
+    });
+
+    let result;
+    try {
+      result = await deliverMessage({
+        senderId,
+        receiverId,
+        data: {
+          location: {
+            lat,
+            lng,
+            accuracy: safeAccuracy,
+            isLive: true,
+            shareId: share._id,
+          },
+        },
+      });
+    } catch (error) {
+      await LocationShare.deleteOne({ _id: share._id });
+      throw error;
+    }
+
+    share.messageId = result.message._id;
+    await share.save();
+
+    // pehla update turant bhejo, taaki receiver ko "Live location ended" na dikhe
+    emitToPair(senderId, receiverId, "location:update", {
+      shareId: String(share._id),
+      lat,
+      lng,
+      accuracy: safeAccuracy,
+      updatedAt: now,
+    });
+
+    console.log(result.payload);
+    console.log(share);
+
+    return new ApiResponse(
+      StatusCodes.CREATED,
+      { message: result.payload, share },
+      "Live location started.",
+    ).send(res);
+  }),
+
+  /* ---------------- LOCATION: STOP ---------------- */
+  stopShare: asyncHandler(async (req, res) => {
+    const { id: shareId } = req.params;
+    const userId = req.user._id;
+
+    assertValidId(shareId, "share ID");
+
+    const share = await LocationShare.findOne({
+      _id: shareId,
+      sharerId: userId,
+      status: "active",
+    });
+    if (!share) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Live share not found.");
+    }
+
+    share.status = "stopped";
+    share.endedAt = new Date();
+    await share.save();
+
+    emitToPair(share.sharerId, share.receiverId, "location:ended", {
+      shareId: String(share._id),
+    });
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { shareId: share._id },
+      "Live location stopped.",
+    ).send(res);
+  }),
+
+  /* ---------------- LOCATION: ACTIVE LIST ---------------- */
+  // data = { mine: [share...], forMe: [share...] }
+  getActiveShares: asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const now = new Date();
+
+    // purane expired shares ko band mark karo
+    await LocationShare.updateMany(
+      { status: "active", expiresAt: { $lte: now } },
+      { status: "expired", endedAt: now },
+    );
+
+    const [mine, forMe] = await Promise.all([
+      LocationShare.find({
+        sharerId: userId,
+        status: "active",
+        expiresAt: { $gt: now },
+      }),
+      LocationShare.find({
+        receiverId: userId,
+        status: "active",
+        expiresAt: { $gt: now },
+      }),
+    ]);
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { mine, forMe },
+      "Active location shares.",
     ).send(res);
   }),
 };

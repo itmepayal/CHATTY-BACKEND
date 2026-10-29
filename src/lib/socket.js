@@ -15,6 +15,7 @@ import {
   registerGroupCallHandlers,
   isUserInGroupCall,
 } from "./groupCallSignaling.js";
+import { registerLocationHandlers } from "./locationSharing.js";
 
 /* ---------- SERVER AND HTTP INITIALIZATION ---------- */
 const app = express();
@@ -244,6 +245,7 @@ io.on("connection", (socket) => {
     isBusy: isUserInGroupCall,
   });
   registerGroupCallHandlers(io, socket);
+  registerLocationHandlers(io, socket, { isBlockedEitherWay });
 
   /* ---------- INITIALIZE TYPING TRACKING ---------- */
   socket.data.typingTo = new Set();
