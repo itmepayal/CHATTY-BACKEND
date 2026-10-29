@@ -2,41 +2,53 @@ import express from "express";
 import authMiddleware from "../../middlewares/authMidleware.middleware.js";
 import usersController from "../../controllers/users.controller.js";
 import upload from "../../middlewares/multer.middleware.js";
+import { settingsLimiter } from "../../middlewares/rateLimit.middleware.js";
 
 const router = express.Router();
 
-router.route("/me").get(authMiddleware, usersController.getCurrentUser);
+router.use(authMiddleware);
 
-router.route("/profile").patch(authMiddleware, usersController.updateProfile);
+/* ---------- CURRENT USER ---------- */
+router.get("/me", usersController.getCurrentUser);
+
+/* ---------- PROFILE ---------- */
+router.patch("/profile", usersController.updateProfile);
 
 router
   .route("/profile/avatar")
-  .patch(authMiddleware, upload.single("avatar"), usersController.updateAvatar)
-  .delete(authMiddleware, usersController.deleteAvatar);
+  .patch(upload.single("avatar"), usersController.updateAvatar)
+  .delete(usersController.deleteAvatar);
 
+/* ---------- SETTINGS ---------- */
 router
   .route("/privacy")
-  .get(authMiddleware, usersController.getPrivacySettings)
-  .patch(authMiddleware, usersController.updatePrivacySettings);
+  .get(usersController.getPrivacySettings)
+  .patch(settingsLimiter, usersController.updatePrivacySettings);
 
 router
   .route("/chat-prefs")
-  .get(authMiddleware, usersController.getChatPrefs)
-  .patch(authMiddleware, usersController.updateChatPrefs);
+  .get(usersController.getChatPrefs)
+  .patch(settingsLimiter, usersController.updateChatPrefs);
 
 router
   .route("/appearance")
-  .get(authMiddleware, usersController.getAppearance)
-  .patch(authMiddleware, usersController.updateAppearance);
+  .get(usersController.getAppearance)
+  .patch(settingsLimiter, usersController.updateAppearance);
 
+/* ---------- E2EE PUBLIC KEY ---------- */
+// "/me/public-key" is declared before "/:id/public-key"
+router.put("/me/public-key", settingsLimiter, usersController.setMyPublicKey);
+router.get("/:id/public-key", usersController.getUserPublicKey);
+
+/* ---------- BLOCK / FAVORITE ---------- */
 router
   .route("/:id/block")
-  .post(authMiddleware, usersController.blockUser)
-  .delete(authMiddleware, usersController.unblockUser);
+  .post(settingsLimiter, usersController.blockUser)
+  .delete(settingsLimiter, usersController.unblockUser);
 
 router
   .route("/:id/favorite")
-  .post(authMiddleware, usersController.addFavorite)
-  .delete(authMiddleware, usersController.removeFavorite);
+  .post(settingsLimiter, usersController.addFavorite)
+  .delete(settingsLimiter, usersController.removeFavorite);
 
 export default router;

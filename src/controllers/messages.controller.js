@@ -29,6 +29,12 @@ import {
   isBetween,
   REPLY_SELECT,
 } from "../utils/messageHelpers.js";
+/* ---------------- E2EE ---------------- */
+import {
+  MAX_CIPHERTEXT_LENGTH,
+  parseBool,
+  assertValidCipher,
+} from "../utils/e2ee.js";
 
 const MAX_VOICE_SECONDS = 300;
 const MAX_VIDEO_SECONDS = 60;
@@ -85,7 +91,33 @@ const notExpired = () => ({
 const isExpired = (message) =>
   Boolean(message?.expiresAt) && message.expiresAt.getTime() <= Date.now();
 
+/* ---------------- E2EE HELPERS ---------------- */
+// dono users ne apni public key upload ki hui honi chahiye
+const assertE2EEReady = async (senderId, receiverId) => {
+  const users = await User.find({
+    _id: { $in: [senderId, receiverId] },
+  }).select("+publicKey");
+
+  const hasKey = (id) =>
+    users.some((u) => String(u._id) === String(id) && Boolean(u.publicKey));
+
+  if (!hasKey(senderId)) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "Set up encryption on your device first.",
+    );
+  }
+  if (!hasKey(receiverId)) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "This user hasn't enabled encryption yet.",
+    );
+  }
+};
+
 /* ---------------- SPAM GUARD ---------------- */
+// NOTE: encrypted text pe duplicate check nahi chalta (har ciphertext unique hota hai),
+// isliye E2EE messages ke liye `text` undefined pass hota hai.
 const assertNotSpamming = async (senderId, receiverId, text) => {
   // 1) same text baar-baar
   if (text) {
@@ -197,7 +229,10 @@ const messageController = {
     const uid = toObjectId(userId);
 
     const [users, me, archivedSet] = await Promise.all([
-      User.find({ _id: { $ne: userId } }).select("fullName email avatar"),
+      // +publicKey sirf `hasPublicKey` nikalne ke liye, key response me nahi jaati
+      User.find({ _id: { $ne: userId } }).select(
+        "fullName email avatar +publicKey",
+      ),
       User.findById(userId).select("blockedUsers"),
       getArchivedSet(userId),
     ]);
@@ -253,7 +288,9 @@ const messageController = {
           avatar: user.avatar?.url || "",
           isBlocked,
           isArchived: archivedSet.has(user._id.toString()),
+          hasPublicKey: Boolean(user.publicKey), // E2EE ready?
           unreadCount: isBlocked ? 0 : c?.unreadCount || 0,
+          // e2ee message ho to lastMessage.text ciphertext hoga, client decrypt karega
           lastMessage: c ? formatMessage(c.lastMessage) : null,
           lastMessageAt: c?.lastMessage.createdAt || null,
           ts,
@@ -301,7 +338,7 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- SEND (reply + link preview + spam guard) ---------------- */
+  /* ---------------- SEND (reply + link preview + spam guard + E2EE) ---------------- */
   sendMessage: asyncHandler(async (req, res) => {
     const {
       text,
@@ -309,6 +346,7 @@ const messageController = {
       isVoice,
       isVideo,
       duration,
+      iv,
       replyTo: replyToId,
     } = req.body;
     const { id: receiverId } = req.params;
@@ -328,11 +366,24 @@ const messageController = {
     if (!trimmedText && !req.file) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
     }
-    if (trimmedText && trimmedText.length > MAX_TEXT_LENGTH) {
+
+    // E2EE sirf text pe lagta hai; text nahi hai to flag ignore
+    // Frontend sends `encrypted`, accept `e2ee` as legacy fallback
+    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee) && Boolean(trimmedText);
+    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
+
+    // E2EE me maxLen ciphertext ki length hai, user ko wo number nahi dikhana.
+    // Plaintext limit client pe encrypt karne se pehle check hoti hai.
+    if (trimmedText && trimmedText.length > maxLen) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
-        `Message is too long (max ${MAX_TEXT_LENGTH} characters).`,
+        wantsE2EE
+          ? "Message is too long."
+          : `Message is too long (max ${MAX_TEXT_LENGTH} characters).`,
       );
+    }
+    if (wantsE2EE) {
+      assertValidCipher(trimmedText, iv); // base64 ciphertext + iv
     }
 
     if (clientId) {
@@ -347,7 +398,12 @@ const messageController = {
     }
 
     await assertCanMessage(senderId, receiverId);
-    await assertNotSpamming(senderId, receiverId, trimmedText);
+    if (wantsE2EE) await assertE2EEReady(senderId, receiverId);
+    await assertNotSpamming(
+      senderId,
+      receiverId,
+      wantsE2EE ? undefined : trimmedText,
+    );
 
     /* reply validation */
     let replyTo;
@@ -393,6 +449,7 @@ const messageController = {
           audio: uploadedAudio || undefined,
           video: uploadedVideo || undefined,
           replyTo,
+          ...(wantsE2EE ? { e2ee: true, iv } : {}),
         },
       });
     } catch (error) {
@@ -411,7 +468,8 @@ const messageController = {
 
     const { message, payload } = result;
 
-    attachLinkPreview(message); // background, no await
+    // server ciphertext ka link preview nahi bana sakta
+    if (!wantsE2EE) attachLinkPreview(message); // background, no await
 
     return new ApiResponse(
       StatusCodes.CREATED,
@@ -421,6 +479,9 @@ const messageController = {
   }),
 
   /* ---------------- FORWARD ---------------- */
+  // Encrypted original ko forward karne ke liye client ko har recipient ke liye
+  // naya ciphertext bhejna hoga:
+  //   body.encrypted = { "<recipientId>": { text: "<b64>", iv: "<b64>" }, ... }
   forwardMessage: asyncHandler(async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user._id;
@@ -453,8 +514,15 @@ const messageController = {
     }
 
     const o = original.toObject();
+    const isEncrypted = Boolean(o.e2ee) && Boolean(o.text);
+    const encryptedFor =
+      req.body.encrypted && typeof req.body.encrypted === "object"
+        ? req.body.encrypted
+        : {};
+
     const content = {
-      text: o.text,
+      // encrypted text purani key se bana hai, naye receiver ke liye useless
+      text: isEncrypted ? undefined : o.text,
       image: o.image?.url ? o.image : undefined,
       file: o.file?.url ? o.file : undefined,
       audio: o.audio?.url ? o.audio : undefined,
@@ -473,16 +541,29 @@ const messageController = {
     };
 
     const sent = [];
+    const failed = [];
     for (const receiverId of userIds) {
       try {
         await assertCanMessage(userId, receiverId);
+
+        const data = { ...content };
+        if (isEncrypted) {
+          const enc = encryptedFor[receiverId];
+          assertValidCipher(enc?.text, enc?.iv);
+          await assertE2EEReady(userId, receiverId);
+          data.text = enc.text;
+          data.e2ee = true;
+          data.iv = enc.iv;
+        }
+
         const { payload } = await deliverMessage({
           senderId: userId,
           receiverId,
-          data: content,
+          data,
         });
         sent.push(payload);
       } catch (e) {
+        failed.push(receiverId);
         console.error("forward failed for", receiverId, e?.message || e);
       }
     }
@@ -490,21 +571,31 @@ const messageController = {
     return new ApiResponse(
       StatusCodes.OK,
       sent,
-      `Forwarded to ${sent.length} chat(s).`,
+      failed.length
+        ? `Forwarded to ${sent.length} chat(s). ${failed.length} failed.`
+        : `Forwarded to ${sent.length} chat(s).`,
     ).send(res);
   }),
 
+  /* ---------------- EDIT ---------------- */
+  // E2EE message edit: body = { text: "<new ciphertext>", iv: "<new iv>", e2ee: true }
   editMessage: asyncHandler(async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user._id;
     const text = req.body.text?.trim();
+    // Frontend sends `encrypted`, accept `e2ee` as legacy fallback
+    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
+    const iv = req.body.iv;
 
     assertValidId(messageId, "message ID");
 
-    if (!text || text.length > MAX_TEXT_LENGTH) {
+    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
+    if (!text || text.length > maxLen) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
-        `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
+        wantsE2EE
+          ? "Encrypted payload is invalid or too large."
+          : `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
       );
     }
 
@@ -525,9 +616,20 @@ const messageController = {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Edit time is over.");
     }
 
-    await assertCanMessage(userId, message.receiverId);
+    // encrypted <-> plaintext mode edit me badla nahi ja sakta
+    if (Boolean(message.e2ee) !== wantsE2EE) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Encryption mode of a message can't be changed.",
+      );
+    }
+    if (wantsE2EE) assertValidCipher(text, iv);
 
-    if (message.text === text) {
+    await assertCanMessage(userId, message.receiverId);
+    if (wantsE2EE) await assertE2EEReady(userId, message.receiverId);
+
+    // ciphertext har baar naya hota hai, isliye "no changes" check sirf plaintext ke liye
+    if (!wantsE2EE && message.text === text) {
       return new ApiResponse(
         StatusCodes.OK,
         { messageId: message._id },
@@ -536,6 +638,7 @@ const messageController = {
     }
 
     message.text = text;
+    if (wantsE2EE) message.iv = iv;
     message.isEdited = true;
     message.editedAt = new Date();
     message.linkPreview = undefined;
@@ -546,6 +649,7 @@ const messageController = {
       text,
       isEdited: true,
       editedAt: message.editedAt,
+      ...(wantsE2EE ? { encrypted: true, iv } : {}),
     };
 
     io.to(message.receiverId.toString()).emit("messageEdited", payload);
@@ -556,7 +660,7 @@ const messageController = {
       emitConversationUpdate(message.senderId, message.receiverId),
     ]);
 
-    attachLinkPreview(message);
+    if (!wantsE2EE) attachLinkPreview(message);
 
     return new ApiResponse(StatusCodes.OK, payload, "Message edited.").send(
       res,
@@ -647,6 +751,9 @@ const messageController = {
     ).send(res);
   }),
 
+  /* ---------------- SEARCH ---------------- */
+  // E2EE messages server pe search nahi ho sakte (server ko plaintext nahi milta).
+  // Client decrypted messages me local search kare.
   searchMessages: asyncHandler(async (req, res) => {
     const userId = req.user._id;
     const { id: otherId } = req.params;
@@ -675,6 +782,7 @@ const messageController = {
       ],
       deletedFor: { $ne: userId },
       isDeleted: { $ne: true },
+      e2ee: { $ne: true },
       text: { $regex: escapeRegex(q), $options: "i" },
     })
       .sort({ createdAt: -1 })
@@ -693,10 +801,15 @@ const messageController = {
     ).send(res);
   }),
 
+  /* ---------------- SCHEDULE ---------------- */
+  // E2EE schedule: client schedule karte waqt hi encrypt karke ciphertext + iv bhejta hai.
   scheduleMessage: asyncHandler(async (req, res) => {
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
     const text = req.body.text?.trim();
+    // Frontend sends `encrypted`, accept `e2ee` as legacy fallback
+    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
+    const iv = req.body.iv;
     const when = new Date(req.body.scheduledFor);
 
     assertValidId(receiverId, "receiver ID");
@@ -707,12 +820,18 @@ const messageController = {
         "You cannot message yourself.",
       );
     }
-    if (!text || text.length > MAX_TEXT_LENGTH) {
+
+    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
+    if (!text || text.length > maxLen) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
-        `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
+        wantsE2EE
+          ? "Encrypted payload is invalid or too large."
+          : `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
       );
     }
+    if (wantsE2EE) assertValidCipher(text, iv);
+
     if (
       Number.isNaN(when.getTime()) ||
       when.getTime() < Date.now() + 30_000 ||
@@ -725,12 +844,14 @@ const messageController = {
     }
 
     await assertCanMessage(senderId, receiverId);
+    if (wantsE2EE) await assertE2EEReady(senderId, receiverId);
 
     const doc = await ScheduledMessage.create({
       senderId,
       receiverId,
       text,
       scheduledFor: when,
+      ...(wantsE2EE ? { e2ee: true, iv } : {}),
     });
 
     return new ApiResponse(StatusCodes.CREATED, doc, "Message scheduled.").send(
@@ -1125,6 +1246,7 @@ const messageController = {
   }),
 
   /* ---------------- LOCATION: START ---------------- */
+  // NOTE: location lat/lng abhi plaintext hai (server live tracking ke liye use karta hai).
   // current -> data = message payload
   // live    -> data = { message, share }
   startShare: asyncHandler(async (req, res) => {
@@ -1164,8 +1286,6 @@ const messageController = {
           location: { lat, lng, accuracy: safeAccuracy, isLive: false },
         },
       });
-
-      console.log(payload);
 
       return new ApiResponse(
         StatusCodes.CREATED,
@@ -1233,9 +1353,6 @@ const messageController = {
       accuracy: safeAccuracy,
       updatedAt: now,
     });
-
-    console.log(result.payload);
-    console.log(share);
 
     return new ApiResponse(
       StatusCodes.CREATED,

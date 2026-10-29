@@ -33,6 +33,9 @@ const GroupSchema = new mongoose.Schema(
     },
     members: { type: [MemberSchema], default: [] },
     lastMessageAt: { type: Date },
+
+    keyRotationPending: { type: Boolean, default: false },
+    keyVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
@@ -40,4 +43,5 @@ const GroupSchema = new mongoose.Schema(
 GroupSchema.index({ "members.userId": 1, lastMessageAt: -1 });
 
 const Group = mongoose.model("Group", GroupSchema);
+
 export default Group;

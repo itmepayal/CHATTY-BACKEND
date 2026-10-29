@@ -81,7 +81,12 @@ const UserSchema = mongoose.Schema(
     favorites: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     timezone: { type: String, trim: true },
     lastSeen: { type: Date },
-
+    publicKey: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+      select: false,
+    },
+    publicKeyUpdatedAt: { type: Date },
     passwordResetToken: { type: String, select: false },
     passwordResetExpires: { type: Date, select: false },
 

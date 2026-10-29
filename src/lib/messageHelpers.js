@@ -5,7 +5,7 @@ import { io } from "../lib/socket.js";
 export const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
 export const REPLY_SELECT =
-  "senderId text image file audio video location isDeleted";
+  "senderId text image file audio video location isDeleted e2ee iv";
 
 const formatFile = (file) =>
   file?.url
@@ -82,12 +82,17 @@ const formatReply = (r) => {
 
 export const formatMessage = (msg) => {
   const deleted = Boolean(msg.isDeleted);
+  // e2ee field in DB; expose as `encrypted` so the frontend needsDecrypt() check works
+  const isEncrypted = !deleted && Boolean(msg.e2ee);
 
   return {
     id: msg._id,
     senderId: msg.senderId,
     receiverId: msg.receiverId,
     text: deleted ? "" : msg.text,
+    // E2EE metadata — frontend needsDecrypt() checks `m.encrypted && m.iv`
+    encrypted: isEncrypted,
+    iv: isEncrypted ? (msg.iv || null) : null,
     image:
       !deleted && msg.image?.url
         ? { url: msg.image.url, public_id: msg.image.public_id }

@@ -12,7 +12,16 @@ const GroupMessageSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    text: { type: String, maxlength: 2000 },
+    text: {
+      type: String,
+      validate: {
+        validator: function (v) {
+          if (!v) return true;
+          return v.length <= (this.e2ee ? 24000 : 2000);
+        },
+        message: "Text is too long.",
+      },
+    },
     image: {
       public_id: { type: String },
       url: { type: String },
@@ -49,6 +58,10 @@ const GroupMessageSchema = new mongoose.Schema(
     clientId: { type: String },
     readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     silentReadBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    e2ee: { type: Boolean, default: false },
+    iv: { type: String },
+    keyVersion: { type: Number },
   },
   { timestamps: true },
 );

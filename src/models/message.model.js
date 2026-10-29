@@ -95,6 +95,9 @@ const MessageSchema = mongoose.Schema(
     deliveredAt: { type: Date },
     seenAt: { type: Date },
 
+    e2ee: { type: Boolean, default: false },
+    iv: { type: String },
+
     receiverReadAt: { type: Date, default: null },
     expiresAt: { type: Date, default: null },
   },

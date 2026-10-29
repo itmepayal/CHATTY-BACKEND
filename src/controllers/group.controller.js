@@ -3,8 +3,10 @@ import { StatusCodes } from "http-status-codes";
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
+import User from "../models/users.model.js";
 import Group from "../models/group.model.js";
 import GroupMessage from "../models/groupmessage.model.js";
+import GroupKey from "../models/groupKey.model.js";
 import GroupArchive, {
   getArchivedGroupSet,
 } from "../models/grouparchive.model.js";
@@ -21,6 +23,13 @@ import {
   getBlockersOf,
   assertUsersAddable,
 } from "../utils/groupguard.js";
+/* ---------------- E2EE ---------------- */
+import {
+  MAX_CIPHERTEXT_LENGTH,
+  parseBool,
+  assertValidCipher,
+  parseKeyEntries,
+} from "../utils/e2ee.js";
 
 const MAX_MEMBERS = 256;
 const MAX_TEXT = 2000;
@@ -157,6 +166,79 @@ const deleteMedia = (m) => [
     deleteFileToCloudinary(m.video.public_id, m.video.resourceType || "video"),
 ];
 
+/* ---------------- E2EE: GROUP KEY HELPERS ---------------- */
+
+// group ka sabse naya key version (0 = group E2EE nahi hai)
+const getLatestKeyVersion = async (groupId) => {
+  const k = await GroupKey.findOne({ groupId })
+    .sort({ version: -1 })
+    .select("version")
+    .lean();
+  return k?.version || 0;
+};
+
+// bahut saare groups ke liye ek hi query (getMyGroups)
+const getLatestVersions = async (groupIds) => {
+  if (!groupIds.length) return new Map();
+  const rows = await GroupKey.aggregate([
+    { $match: { groupId: { $in: groupIds } } },
+    { $group: { _id: "$groupId", version: { $max: "$version" } } },
+  ]);
+  return new Map(rows.map((r) => [String(r._id), r.version]));
+};
+
+// wrapped keys store karo. Existing key kabhi overwrite nahi hoti ($setOnInsert).
+const storeGroupKeys = async (groupId, entries, wrappedBy) => {
+  if (!entries.length) return;
+  await GroupKey.bulkWrite(
+    entries.map((e) => ({
+      updateOne: {
+        filter: { groupId, userId: e.userId, version: e.version },
+        update: {
+          $setOnInsert: {
+            groupId,
+            userId: e.userId,
+            version: e.version,
+            wrappedKey: e.wrappedKey,
+            iv: e.iv,
+            wrappedBy,
+          },
+        },
+        upsert: true,
+      },
+    })),
+    { ordered: false },
+  );
+};
+
+// member hata / nikal gaya -> admins ko batao ki key rotate karni hai
+// (server key bana nahi sakta, client rotate karega via POST /:id/keys)
+const requestKeyRotation = async (group, reason) => {
+  if (!(await getLatestKeyVersion(group._id))) return;
+  group.members
+    .filter((m) => m.role === "admin")
+    .forEach((m) =>
+      io.to(sid(m.userId)).emit("group:keyRotationRequired", {
+        groupId: String(group._id),
+        reason,
+      }),
+    );
+};
+
+// naye members aaye -> existing members (jinke paas key hai) unke liye key wrap karein
+const notifyKeysNeeded = async (group, newIds) => {
+  if (!(await getLatestKeyVersion(group._id))) return;
+  const skip = new Set(newIds.map(String));
+  group.members
+    .filter((m) => !skip.has(sid(m.userId)))
+    .forEach((m) =>
+      io.to(sid(m.userId)).emit("group:keysNeeded", {
+        groupId: String(group._id),
+        userIds: newIds.map(String),
+      }),
+    );
+};
+
 const loadGroup = (id) =>
   Group.findById(id).populate("members.userId", "fullName avatar");
 
@@ -177,8 +259,17 @@ const formatGroup = (group, extra = {}) => ({
   unreadCount: 0,
   lastMessage: null,
   archived: false,
+  e2ee: false,
+  keyVersion: 0,
+  keyRotationPending: !!group.keyRotationPending,
   ...extra,
 });
+
+// formatGroup + e2ee info (ek group ke liye)
+const presentGroup = async (group, extra = {}) => {
+  const keyVersion = await getLatestKeyVersion(group._id);
+  return formatGroup(group, { e2ee: keyVersion > 0, keyVersion, ...extra });
+};
 
 const formatGroupMessage = (msg) => {
   const sender = msg.senderId?._id ? msg.senderId : null;
@@ -196,7 +287,13 @@ const formatGroupMessage = (msg) => {
           avatar: sender.avatar?.url || "",
         }
       : null,
+    // e2ee true ho to `text` ciphertext (base64) hai, client decrypt karega
     text: msg.text || "",
+    // expose both `e2ee` (group-store key derivation) and `encrypted` (needsDecrypt() check)
+    e2ee: !!msg.e2ee,
+    encrypted: !!msg.e2ee,
+    iv: msg.e2ee ? msg.iv || null : null,
+    keyVersion: msg.e2ee ? (msg.keyVersion ?? null) : null,
     image: msg.image?.url
       ? { url: msg.image.url, public_id: msg.image.public_id }
       : null,
@@ -379,10 +476,14 @@ const destroyGroup = async (group) => {
   await GroupMessage.deleteMany({ groupId: group._id });
   await GroupArchive.deleteMany({ groupId: group._id });
   await LocationShare.deleteMany({ groupId: group._id });
+  await GroupKey.deleteMany({ groupId: group._id });
   await Group.deleteOne({ _id: group._id });
 };
 
 const groupController = {
+  /* ---------------- CREATE ---------------- */
+  // E2EE group: body.e2ee = true + body.keys = [{ userId, wrappedKey, iv }, ...]
+  // (version 1; creator + har member ke liye ek wrapped key)
   createGroup: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const name = req.body.name?.trim();
@@ -402,6 +503,26 @@ const groupController = {
     }
     await assertUsersAddable(me, memberIds);
 
+    /* E2EE keys validate (group banne se PEHLE) */
+    const wantsE2EE = parseBool(req.body.e2ee);
+    let keyEntries = [];
+    if (wantsE2EE) {
+      keyEntries = parseKeyEntries(req.body.keys, 1);
+      const need = new Set([String(me), ...memberIds]);
+      const got = new Set(
+        keyEntries.filter((e) => e.version === 1).map((e) => e.userId),
+      );
+      const invalid =
+        keyEntries.some((e) => e.version !== 1 || !need.has(e.userId)) ||
+        [...need].some((id) => !got.has(id));
+      if (invalid) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Provide a wrapped key (version 1) for every member.",
+        );
+      }
+    }
+
     const avatar = req.file?.path ? await uploadImage(req.file) : undefined;
 
     const created = await Group.create({
@@ -413,12 +534,22 @@ const groupController = {
         ...memberIds.map((userId) => ({ userId, role: "member" })),
       ],
       lastMessageAt: new Date(),
+      keyVersion: wantsE2EE ? 1 : 0,
     });
+
+    if (wantsE2EE) {
+      try {
+        await storeGroupKeys(created._id, keyEntries, me);
+      } catch (error) {
+        await Group.deleteOne({ _id: created._id });
+        throw error;
+      }
+    }
 
     [String(me), ...memberIds].forEach((id) => joinRoom(id, created._id));
 
     const group = await loadGroup(created._id);
-    const payload = formatGroup(group);
+    const payload = await presentGroup(group);
     emitToMembers(group, "group:created", payload);
 
     return new ApiResponse(StatusCodes.CREATED, payload, "Group created.").send(
@@ -437,6 +568,8 @@ const groupController = {
       getArchivedGroupSet(me),
     ]);
 
+    const versions = await getLatestVersions(groups.map((g) => g._id));
+
     const result = await Promise.all(
       groups.map(async (g) => {
         const mine = g.members.find((m) => sid(m.userId) === String(me));
@@ -444,11 +577,14 @@ const groupController = {
           getUnread(g._id, me, mine.joinedAt, blocked),
           getLast(g._id, mine.joinedAt, blocked),
         ]);
+        const keyVersion = versions.get(String(g._id)) || 0;
         return formatGroup(g, {
           unreadCount,
           lastMessage: last ? formatGroupMessage(last) : null,
           lastMessageAt: last?.createdAt || g.lastMessageAt || g.createdAt,
           archived: archivedSet.has(String(g._id)),
+          e2ee: keyVersion > 0,
+          keyVersion,
         });
       }),
     );
@@ -470,7 +606,7 @@ const groupController = {
     }));
     return new ApiResponse(
       StatusCodes.OK,
-      formatGroup(group, { archived }),
+      await presentGroup(group, { archived }),
       "Group fetched.",
     ).send(res);
   }),
@@ -538,7 +674,7 @@ const groupController = {
     if (oldPublicId) await deleteFileToCloudinary(oldPublicId).catch(() => {});
 
     const full = await loadGroup(group._id);
-    const payload = formatGroup(full);
+    const payload = await presentGroup(full);
     emitToMembers(full, "group:updated", payload);
 
     return new ApiResponse(StatusCodes.OK, payload, "Group updated.").send(res);
@@ -574,9 +710,12 @@ const groupController = {
     newIds.forEach((id) => joinRoom(id, group._id));
 
     const full = await loadGroup(group._id);
-    const payload = formatGroup(full);
+    const payload = await presentGroup(full);
     emitToMembers(full, "group:created", payload, [...existing]);
     emitToMembers(full, "group:updated", payload, newIds);
+
+    // E2EE group: existing members ko bolo naye members ke liye key wrap karein
+    await notifyKeysNeeded(full, newIds);
 
     return new ApiResponse(StatusCodes.OK, payload, "Members added.").send(res);
   }),
@@ -617,8 +756,11 @@ const groupController = {
     await stopUserShares(group, targetId);
 
     group.members = group.members.filter((m) => sid(m.userId) !== targetId);
+    // E2EE group: hata hua member purani key jaanta hai -> rotation hone tak naye messages block
+    if (await getLatestKeyVersion(group._id)) group.keyRotationPending = true;
     await group.save();
     await GroupArchive.deleteOne({ ownerId: targetId, groupId: group._id });
+    await GroupKey.deleteMany({ groupId: group._id, userId: targetId });
 
     leaveRoom(targetId, group._id);
     io.to(targetId).emit("group:removed", {
@@ -627,8 +769,11 @@ const groupController = {
     });
 
     const full = await loadGroup(group._id);
-    const payload = formatGroup(full);
+    const payload = await presentGroup(full);
     emitToMembers(full, "group:updated", payload);
+
+    // hata hua member purani key jaanta hai -> admin key rotate kare
+    await requestKeyRotation(group, "member_removed");
 
     return new ApiResponse(StatusCodes.OK, payload, "Member removed.").send(
       res,
@@ -682,7 +827,7 @@ const groupController = {
     await group.save();
 
     const full = await loadGroup(group._id);
-    const payload = formatGroup(full);
+    const payload = await presentGroup(full);
     emitToMembers(full, "group:updated", payload);
 
     return new ApiResponse(StatusCodes.OK, payload, "Role updated.").send(res);
@@ -716,8 +861,11 @@ const groupController = {
     if (sid(group.owner) === me) {
       group.owner = byJoin.find((m) => m.role === "admin").userId;
     }
+    // E2EE group: jaane wala member purani key jaanta hai -> rotation hone tak naye messages block
+    if (await getLatestKeyVersion(group._id)) group.keyRotationPending = true;
     await group.save();
     await GroupArchive.deleteOne({ ownerId: me, groupId: group._id });
+    await GroupKey.deleteMany({ groupId: group._id, userId: me });
 
     leaveRoom(me, group._id);
     io.to(me).emit("group:removed", {
@@ -726,7 +874,10 @@ const groupController = {
     });
 
     const full = await loadGroup(group._id);
-    emitToMembers(full, "group:updated", formatGroup(full));
+    emitToMembers(full, "group:updated", await presentGroup(full));
+
+    // jaane wala member purani key jaanta hai -> admin key rotate kare
+    await requestKeyRotation(group, "member_left");
 
     return new ApiResponse(StatusCodes.OK, null, "You left the group.").send(
       res,
@@ -753,6 +904,207 @@ const groupController = {
     return new ApiResponse(StatusCodes.OK, payload, "Group deleted.").send(res);
   }),
 
+  /* ---------------- E2EE: GROUP KEYS ---------------- */
+
+  // GET /groups/:id/keys
+  // Mere saare wrapped keys (har version) + wrapper ki public key
+  // (client: ECDH(myPrivate, wrapperPublic) se unwrap karega)
+  getMyGroupKeys: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+
+    const keys = await GroupKey.find({ groupId: group._id, userId: me })
+      .sort({ version: 1 })
+      .lean();
+
+    const wrapperIds = [...new Set(keys.map((k) => String(k.wrappedBy)))];
+    const wrappers = wrapperIds.length
+      ? await User.find({ _id: { $in: wrapperIds } })
+          .select("+publicKey")
+          .lean()
+      : [];
+    const pubMap = new Map(
+      wrappers.map((u) => [String(u._id), u.publicKey || null]),
+    );
+
+    const latestVersion = await getLatestKeyVersion(group._id);
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      {
+        latestVersion,
+        keys: keys.map((k) => ({
+          version: k.version,
+          wrappedKey: k.wrappedKey,
+          iv: k.iv,
+          wrappedBy: String(k.wrappedBy),
+          wrapperPublicKey: pubMap.get(String(k.wrappedBy)) || null,
+          createdAt: k.createdAt,
+        })),
+      },
+      "Group keys fetched.",
+    ).send(res);
+  }),
+
+  // GET /groups/:id/keys/pending
+  // Kin members ke paas koi key version missing hai (+ unki public key),
+  // taaki key-holder client unke liye wrap karke POST /:id/keys kar sake.
+  getPendingKeyMembers: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+
+    const latestVersion = await getLatestKeyVersion(group._id);
+    if (!latestVersion) {
+      return new ApiResponse(
+        StatusCodes.OK,
+        { latestVersion: 0, pending: [] },
+        "Group is not encrypted.",
+      ).send(res);
+    }
+
+    const rows = await GroupKey.find({ groupId: group._id })
+      .select("userId version")
+      .lean();
+
+    const have = new Map();
+    for (const r of rows) {
+      const k = String(r.userId);
+      if (!have.has(k)) have.set(k, new Set());
+      have.get(k).add(r.version);
+    }
+
+    const pending = [];
+    for (const m of group.members) {
+      const uid = sid(m.userId);
+      const missingVersions = [];
+      for (let v = 1; v <= latestVersion; v++) {
+        if (!have.get(uid)?.has(v)) missingVersions.push(v);
+      }
+      if (missingVersions.length)
+        pending.push({ userId: uid, missingVersions });
+    }
+
+    if (pending.length) {
+      const users = await User.find({
+        _id: { $in: pending.map((p) => p.userId) },
+      })
+        .select("+publicKey")
+        .lean();
+      const pubMap = new Map(
+        users.map((u) => [String(u._id), u.publicKey || null]),
+      );
+      pending.forEach((p) => {
+        p.publicKey = pubMap.get(p.userId) || null;
+      });
+    }
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { latestVersion, pending },
+      "Pending key members fetched.",
+    ).send(res);
+  }),
+
+  // POST /groups/:id/keys
+  // body: { keys: [{ userId, version, wrappedKey, iv }, ...] }
+  //  - version <= latest  : koi bhi member, sirf missing keys add hongi (naye members ke liye)
+  //  - version == latest+1: sirf admin (enable E2EE / key rotation), har current member ke liye key zaroori
+  setGroupKeys: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group, member } = await getGroupAndMember(req.params.id, me);
+
+    const entries = parseKeyEntries(req.body.keys, toNum(req.body.version));
+
+    const memberIds = new Set(group.members.map((m) => sid(m.userId)));
+    if (entries.some((e) => !memberIds.has(e.userId))) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Keys can only be created for group members.",
+      );
+    }
+
+    const latest = await getLatestKeyVersion(group._id);
+    const maxIncoming = Math.max(...entries.map((e) => e.version));
+    const isNewVersion = maxIncoming > latest;
+
+    if (isNewVersion) {
+      assertAdmin(member);
+
+      if (maxIncoming !== latest + 1) {
+        throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid key version.");
+      }
+      const covered = new Set(
+        entries.filter((e) => e.version === maxIncoming).map((e) => e.userId),
+      );
+      if ([...memberIds].some((id) => !covered.has(id))) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "A new key version must include every member.",
+        );
+      }
+
+      // purane groups (jinke Group.keyVersion field nahi / kam hai) ko sync karo
+      await Group.updateOne(
+        { _id: group._id, keyVersion: { $lt: latest } },
+        { keyVersion: latest },
+      );
+
+      // version atomically claim karo: do admins ek saath rotate karein to sirf ek jeetega
+      const claimed = await Group.findOneAndUpdate(
+        { _id: group._id, keyVersion: latest },
+        { keyVersion: maxIncoming },
+      );
+      if (!claimed) {
+        throw new ApiError(
+          StatusCodes.CONFLICT,
+          "Key was rotated by someone else. Fetch the new key.",
+        );
+      }
+    }
+
+    try {
+      await storeGroupKeys(group._id, entries, me);
+    } catch (error) {
+      if (isNewVersion) {
+        // claim wapas lo, warna group aage ke liye atak jayega
+        await GroupKey.deleteMany({ groupId: group._id, version: maxIncoming });
+        await Group.updateOne(
+          { _id: group._id, keyVersion: maxIncoming },
+          { keyVersion: latest },
+        );
+      }
+      throw error;
+    }
+
+    if (isNewVersion) {
+      await Group.updateOne({ _id: group._id }, { keyRotationPending: false });
+    }
+
+    const latestVersion = Math.max(latest, maxIncoming);
+    const affected = [...new Set(entries.map((e) => e.userId))];
+    affected.forEach((uid) =>
+      io.to(uid).emit("group:keysUpdated", {
+        groupId: String(group._id),
+        latestVersion,
+      }),
+    );
+
+    // E2EE abhi enable / rotate hua ho to sabko naya group state bhejo
+    if (isNewVersion) {
+      const full = await loadGroup(group._id);
+      emitToMembers(full, "group:updated", await presentGroup(full));
+    }
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { latestVersion, stored: entries.length },
+      isNewVersion && latest === 0
+        ? "Encryption enabled for this group."
+        : "Group keys saved.",
+    ).send(res);
+  }),
+
+  /* ---------------- MESSAGES ---------------- */
   getGroupMessages: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group, member } = await getGroupAndMember(req.params.id, me);
@@ -781,6 +1133,8 @@ const groupController = {
     ).send(res);
   }),
 
+  // E2EE group me text hamesha encrypted hona chahiye:
+  //   body = { text: "<ciphertext b64>", iv: "<b64>", keyVersion: N, e2ee: true }
   sendGroupMessage: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
@@ -789,11 +1143,13 @@ const groupController = {
     const clientId = readClientId(req.body);
     const isVoice = req.body.isVoice === "true" || req.body.isVoice === true;
     const isVideo = req.body.isVideo === "true" || req.body.isVideo === true;
+    // Frontend sends `encrypted`, accept `e2ee` as legacy fallback
+    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
 
     if (!text && !req.file) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
     }
-    if (text && text.length > MAX_TEXT) {
+    if (text && text.length > (wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT)) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         `Message can be at most ${MAX_TEXT} characters.`,
@@ -810,6 +1166,65 @@ const groupController = {
         StatusCodes.BAD_REQUEST,
         "Video message must be a video file.",
       );
+    }
+
+    /* ---- E2EE checks ---- */
+    const latestVersion = await getLatestKeyVersion(group._id);
+    let cipher = {};
+
+    if (latestVersion > 0 && text && !wantsE2EE) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "This group is end-to-end encrypted. Send encrypted text only.",
+      );
+    }
+
+    if (wantsE2EE) {
+      if (!latestVersion) {
+        throw new ApiError(
+          StatusCodes.CONFLICT,
+          "Encryption is not enabled for this group.",
+        );
+      }
+      if (!text) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Encrypted message needs ciphertext.",
+        );
+      }
+      assertValidCipher(text, req.body.iv);
+
+      const keyVersion = Number(req.body.keyVersion);
+      if (
+        !Number.isInteger(keyVersion) ||
+        keyVersion < 1 ||
+        keyVersion > latestVersion
+      ) {
+        throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid key version.");
+      }
+
+      // member hata/nikla hai: purani key se naye messages nahi, rotation ka wait karo
+      if (group.keyRotationPending && keyVersion === latestVersion) {
+        throw new ApiError(
+          StatusCodes.CONFLICT,
+          "Group key is being rotated. Please try again in a moment.",
+        );
+      }
+
+      // sender ke paas us version ki key honi chahiye
+      const hasKey = await GroupKey.exists({
+        groupId: group._id,
+        userId: me,
+        version: keyVersion,
+      });
+      if (!hasKey) {
+        throw new ApiError(
+          StatusCodes.FORBIDDEN,
+          "You don't have the key for this version.",
+        );
+      }
+
+      cipher = { e2ee: true, iv: req.body.iv, keyVersion };
     }
 
     const findDuplicate = () =>
@@ -845,6 +1260,7 @@ const groupController = {
         senderId: me,
         text,
         ...attachment,
+        ...cipher,
         clientId,
         readBy: [me],
       });
@@ -915,6 +1331,8 @@ const groupController = {
     ).send(res);
   }),
 
+  /* ---------------- LOCATION ---------------- */
+  // NOTE: location lat/lng plaintext hi rehta hai (server live tracking handle karta hai).
   startGroupShare: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
