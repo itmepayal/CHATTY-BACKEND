@@ -1,5 +1,5 @@
 import { StatusCodes } from "http-status-codes";
-import ApiError from "../utils/apiError.js";
+import ApiError from "../utils/api-error.js";
 
 export const notFoundHandler = (req, _res, next) => {
   next(

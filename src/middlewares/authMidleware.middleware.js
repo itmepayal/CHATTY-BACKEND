@@ -1,9 +1,9 @@
 import jwt from "jsonwebtoken";
 import User from "../models/users.model.js";
 import Session from "../models/session.model.js";
-import ApiError from "../utils/apiError.js";
+import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { accessToken } from "../constants/constant.js";
+import { accessToken } from "../constants/constants.js";
 
 const authMiddleware = async (req, res, next) => {
   try {

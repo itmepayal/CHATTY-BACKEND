@@ -1,10 +1,12 @@
 import mongoose from "mongoose";
 
-const connectDB = async (url, dbname) => {
+const connectDB = async (url, dbName) => {
   try {
-    await mongoose.connect(`${url}/${dbname}`);
+    const connection = await mongoose.connect(url, { dbName });
+    return connection;
   } catch (error) {
-    console.log("Database connection failed!!");
+    console.error("Database connection failed:", error.message);
+    throw error;
   }
 };
 

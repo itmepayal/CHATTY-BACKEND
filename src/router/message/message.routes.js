@@ -19,10 +19,8 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-/* ---------- SIDEBAR ---------- */
 router.get("/", messageController.getUsersForSidebar);
 
-/* ---------- LOCATION SHARING ---------- */
 router.post("/location/share", settingsLimiter, messageController.startShare);
 router.patch(
   "/location/stop/:id",
@@ -31,16 +29,13 @@ router.patch(
 );
 router.get("/location/active", messageController.getActiveShares);
 
-/* ---------- STATIC GET ROUTES (must stay before "/:id") ---------- */
 router.get("/scheduled", messageController.getScheduled);
 router.get("/search/:id", messageController.searchMessages);
 router.get("/pinned/:id", messageController.getPinned);
 router.get("/disappearing/:id", messageController.getDisappearing);
 
-/* ---------- GET MESSAGES ---------- */
 router.get("/:id", messageController.getMessage);
 
-/* ---------- SEND ---------- */
 router.post(
   "/send/:id",
   sendMessageLimiter,
@@ -49,7 +44,6 @@ router.post(
   messageController.sendMessage,
 );
 
-/* ---------- SCHEDULE ---------- */
 router.post(
   "/schedule/:id",
   sendMessageLimiter,
@@ -57,43 +51,34 @@ router.post(
 );
 router.delete("/scheduled/:scheduleId", messageController.cancelScheduled);
 
-/* ---------- FORWARD ---------- */
 router.post(
   "/forward/:messageId",
   forwardLimiter,
   messageController.forwardMessage,
 );
 
-/* ---------- EDIT ---------- */
 router.patch(
   "/edit/:messageId",
   sendMessageLimiter,
   messageController.editMessage,
 );
 
-/* ---------- PIN ---------- */
 router.patch("/pin/:messageId", messageController.togglePin);
 
-/* ---------- READ RECEIPTS ---------- */
 router.patch("/seen/:id", messageController.markMessagesSeen);
 
-/* ---------- REACTIONS ---------- */
 router.patch("/react/:messageId", reactLimiter, messageController.reactMessage);
 
-/* ---------- DISAPPEARING ---------- */
 router.put(
   "/disappearing/:id",
   settingsLimiter,
   messageController.setDisappearing,
 );
 
-/* ---------- REPORT ---------- */
 router.post("/report/:id", reportLimiter, messageController.reportUser);
 
-/* ---------- ARCHIVE ---------- */
 router.patch("/archive/:id", settingsLimiter, messageController.setArchive);
 
-/* ---------- DELETE ---------- */
 router.delete(
   "/delete-for-me/:messageId",
   messageController.deleteMessageForMe,

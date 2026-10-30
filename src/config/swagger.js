@@ -1,6 +1,6 @@
 import swaggerJSDoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
-import { swaggerEnabled, swaggerServerUrl } from "../constants/constant.js";
+import { swaggerEnabled, swaggerServerUrl } from "../constants/constants.js";
 
 const objectId = (example = "665f1c2e9b1e8a0012a4b123") => ({
   type: "string",
@@ -249,7 +249,6 @@ const options = {
           },
         },
 
-        // ----- Groups -----
         GroupMember: {
           type: "object",
           properties: {
@@ -342,18 +341,19 @@ const options = {
     },
     security: [{ bearerAuth: [] }],
     tags: [
-      { name: "Auth", description: "Register, login, tokens, 2FA" },
-      {
-        name: "Users",
-        description: "Profile, privacy, preferences, relations",
-      },
-      { name: "Sessions", description: "Manage active login sessions" },
-      { name: "Messages", description: "Direct (1-to-1) messages" },
-      { name: "Groups", description: "Groups and group messages" },
-      { name: "AI", description: "AI assistant endpoints" },
+      { name: "Auth", description: "Register, login, logout, password management, 2FA, account deletion" },
+      { name: "Sessions", description: "List and revoke active login sessions" },
+      { name: "Users", description: "Profile, avatar, privacy, appearance, chat preferences, block/favorite, E2EE public keys" },
+      { name: "Contacts", description: "Search users, manage contact list, contact-based chat list" },
+      { name: "Messages", description: "Direct (1-to-1) messaging: send, edit, delete, react, pin, forward, schedule, search, disappearing, archive, report" },
+      { name: "Groups", description: "Group creation, membership, messaging, E2EE keys, archive" },
+      { name: "Calls", description: "1-to-1 call history" },
+      { name: "Group Calls", description: "Group call history" },
+      { name: "Location", description: "Live and current location sharing for direct chats and groups" },
+      { name: "AI", description: "AI chatbot, English correction, text rewriting, Hinglish translation" },
     ],
   },
-  apis: ["./src/docs/*.js", "./src/routes/**/*.js"],
+  apis: ["./src/docs/*.js"],
 };
 
 const swaggerSpec = swaggerJSDoc(options);

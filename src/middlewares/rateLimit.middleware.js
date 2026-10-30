@@ -1,4 +1,5 @@
 import rateLimit from "express-rate-limit";
+import { RATE_LIMITS } from "../constants/constants.js";
 
 const make = (windowMs, limit, message) =>
   rateLimit({
@@ -11,27 +12,31 @@ const make = (windowMs, limit, message) =>
   });
 
 export const sendMessageLimiter = make(
-  10_000,
-  15,
+  RATE_LIMITS.SEND_MESSAGE.windowMs,
+  RATE_LIMITS.SEND_MESSAGE.max,
   "You are sending messages too fast. Please slow down.",
 );
+
 export const reactLimiter = make(
-  10_000,
-  30,
+  RATE_LIMITS.REACT.windowMs,
+  RATE_LIMITS.REACT.max,
   "Too many reactions. Please slow down.",
 );
+
 export const forwardLimiter = make(
-  60_000,
-  10,
+  RATE_LIMITS.FORWARD.windowMs,
+  RATE_LIMITS.FORWARD.max,
   "Too many forwards. Try again in a minute.",
 );
+
 export const reportLimiter = make(
-  60 * 60_000,
-  10,
+  RATE_LIMITS.REPORT.windowMs,
+  RATE_LIMITS.REPORT.max,
   "Too many reports. Try again later.",
 );
+
 export const settingsLimiter = make(
-  60_000,
-  20,
+  RATE_LIMITS.SETTINGS.windowMs,
+  RATE_LIMITS.SETTINGS.max,
   "Too many changes. Try again shortly.",
 );

@@ -2,35 +2,20 @@ import multer from "multer";
 import path from "path";
 import crypto from "crypto";
 import fs from "fs";
+import {
+  MAX_NORMAL_FILE_SIZE,
+  MAX_MEDIA_FILE_SIZE,
+  BLOCKED_EXTENSIONS,
+  UPLOAD_DIR as UPLOAD_DIR_CONST,
+} from "../constants/constants.js";
 
-const MAX_SIZE = 50 * 1024 * 1024;
-const MAX_NORMAL_SIZE = 10 * 1024 * 1024;
-const MAX_MEDIA_SIZE = 50 * 1024 * 1024;
+const UPLOAD_DIR = path.resolve(UPLOAD_DIR_CONST);
 
-const UPLOAD_DIR = path.resolve("public/upload");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const BLOCKED_EXT = new Set([
-  ".exe",
-  ".bat",
-  ".cmd",
-  ".sh",
-  ".msi",
-  ".com",
-  ".scr",
-  ".js",
-  ".vbs",
-  ".jar",
-  ".apk",
-  ".dmg",
-]);
-
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-    cb(null, UPLOAD_DIR);
-  },
-  filename: (req, file, cb) => {
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${crypto.randomUUID()}${ext}`);
   },
@@ -38,10 +23,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: MAX_SIZE },
+  limits: { fileSize: MAX_MEDIA_FILE_SIZE },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (BLOCKED_EXT.has(ext)) {
+    if (BLOCKED_EXTENSIONS.has(ext)) {
       return cb(new Error("This file type is not allowed."));
     }
     cb(null, true);
@@ -54,10 +39,10 @@ export const enforceTypeSizeLimit = (req, res, next) => {
 
   const isMedia =
     file.mimetype?.startsWith("video/") || file.mimetype?.startsWith("audio/");
-  const limit = isMedia ? MAX_MEDIA_SIZE : MAX_NORMAL_SIZE;
+  const limit = isMedia ? MAX_MEDIA_FILE_SIZE : MAX_NORMAL_FILE_SIZE;
 
   if (file.size > limit) {
-    fs.unlink(file.path, () => {});
+    fs.unlink(file.path, () => { });
     return res.status(413).json({
       success: false,
       message: `File too large. Max ${Math.round(limit / 1024 / 1024)}MB allowed.`,

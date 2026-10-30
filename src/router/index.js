@@ -1,12 +1,12 @@
 import express from "express";
-import authRoute from "./auth/route.js";
-import usersRoute from "./users/route.js";
-import messageRoute from "./message/route.js";
-import groupRoute from "./group/route.js";
+import authRoute from "./auth/auth.routes.js";
+import usersRoute from "./users/users.routes.js";
+import messageRoute from "./message/message.routes.js";
+import groupRoute from "./group/group.routes.js";
 import aiRoute from "./ai/ai.routes.js";
-import callRoute from "./call/router.js";
-import groupCallRoute from "./groupCall/router.js";
-import contactsRoute from "./contact/contact.route.js";
+import callRoute from "./call/call.routes.js";
+import groupCallRoute from "./group-call/group-call.routes.js";
+import contactsRoute from "./contact/contact.routes.js";
 
 const router = express.Router();
 

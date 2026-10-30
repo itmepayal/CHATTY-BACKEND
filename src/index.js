@@ -1,53 +1,24 @@
-// ==============================
-// Environment Configuration
-// ==============================
 import "./config/env.config.js";
-
-// ==============================
-// Database Configuration
-// ==============================
 import connectDB from "./config/db.config.js";
-
-// ==============================
-// Constants
-// ==============================
-import { port, mongoUri, mongoDbName } from "./constants/constant.js";
-
-// ==============================
-// Socket io Server
-// ==============================
-import { server } from "./lib/socket.js";
-
-// ==============================
-// Middlewares and Routes are initialized
-// ==============================
+import { port, mongoUri, mongoDbName } from "./constants/constants.js";
+import { server, io } from "./lib/socket.js";
 import "./app/app.js";
-
-// ==============================
-// Scheduler
-// ==============================
 import { startScheduler } from "./jobs/scheduler.js";
 import { startDisappearingSweeper } from "./jobs/disappearing.js";
 import { startLocationExpiryJob } from "./jobs/location.js";
 
-// ==============================
-// Socket
-// ==============================
-import { io } from "./lib/socket.js";
+server.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
 
-// ==============================
-// Start the Server
-// ==============================
 connectDB(mongoUri, mongoDbName)
   .then(() => {
-    server.listen(port, () => {
-      console.log(`Server running at port ${port}`);
-      startScheduler();
-      startDisappearingSweeper();
-      startLocationExpiryJob(io);
-    });
+    console.log("MongoDB connected");
+    startScheduler();
+    startDisappearingSweeper();
+    startLocationExpiryJob(io);
   })
   .catch((error) => {
-    console.log(error);
+    console.error("Failed to connect to database:", error.message);
     process.exit(1);
   });

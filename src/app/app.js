@@ -1,52 +1,28 @@
-// ==============================
-// Import Dependencies
-// ==============================
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import router from "../router/route.js";
-import {
-  errorHandler,
-  notFoundHandler,
-} from "../middlewares/errorHandler.middleware.js";
-
-// ==============================
-// Socket.IO Initialize
-// ==============================
 import { app } from "../lib/socket.js";
-
-// ==============================
-// Swagger Configuration
-// ==============================
+import router from "../router/index.js";
+import { errorHandler, notFoundHandler } from "../middlewares/errorHandler.middleware.js";
 import { setupSwagger } from "../config/swagger.js";
+import { clientUrl } from "../constants/constants.js";
 
-// ==============================
-// Constants
-// ==============================
-import { clientUrl } from "../constants/constant.js";
-
-// ==============================
-// Middleware to parse JSON
-// ==============================
-app.use(express.json());
-
-// ==============================
-// CORS Configuration
-// ==============================
-const allowedOrigins = [
+const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:8080",
   "https://chatty-app-sigma.vercel.app",
-];
+  clientUrl,
+].filter(Boolean);
+
+app.use(express.json());
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
         return callback(null, true);
       }
-
       return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true,
@@ -55,24 +31,11 @@ app.use(
   }),
 );
 
-// ==============================
-// Cookie Parser
-// ==============================
 app.use(cookieParser());
 
-// ==============================
-// Swagger Documentation
-// Register before application routes
-// ==============================
 setupSwagger(app);
 
-// ==============================
-// Register API Routes
-// ==============================
 app.use("/api/v1", router);
 
-// ==============================
-// 404 + Global Error Handler
-// ==============================
 app.use(notFoundHandler);
 app.use(errorHandler);

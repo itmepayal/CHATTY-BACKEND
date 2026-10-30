@@ -1,11 +1,10 @@
 import { v2 as cloudinary } from "cloudinary";
 import fs from "fs/promises";
-
 import {
   cloudinaryName,
   cloudinaryApiKey,
   cloudinaryApiSecret,
-} from "../constants/constant.js";
+} from "../constants/constants.js";
 
 cloudinary.config({
   cloud_name: cloudinaryName,
@@ -24,7 +23,7 @@ const uploadFileToCloudinary = async (localFilePath) => {
     console.error("Error uploading file to Cloudinary:", error);
     return null;
   } finally {
-    await fs.unlink(localFilePath).catch(() => {});
+    await fs.unlink(localFilePath).catch(() => { });
   }
 };
 
