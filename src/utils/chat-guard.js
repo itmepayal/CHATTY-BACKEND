@@ -1,6 +1,6 @@
 import { StatusCodes } from "http-status-codes";
 import User from "../models/users.model.js";
-import ApiError from "./apiError.js";
+import ApiError from "./api-error.js";
 
 const hasBlocked = (user, otherId) =>
   user?.blockedUsers?.some((b) => String(b) === String(otherId));

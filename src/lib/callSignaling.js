@@ -1,8 +1,9 @@
 import crypto from "crypto";
 import Call from "../models/call.model.js";
-import { assertCanMessage } from "../utils/chatguard.js";
+import { assertCanMessage } from "../utils/chat-guard.js";
+import { CALL_RING_TIMEOUT_MS } from "../constants/constants.js";
 
-const RING_TIMEOUT_MS = 40_000;
+const RING_TIMEOUT_MS = CALL_RING_TIMEOUT_MS;
 
 const calls = new Map();
 const userCall = new Map();
@@ -54,7 +55,6 @@ async function finishCall(io, callId, { status, endedBy = null, reason = "" }) {
   }
 }
 
-// isBusy: extra busy check (group call mein ho to 1-to-1 call nahi)
 export function registerCallHandlers(
   io,
   socket,
@@ -73,7 +73,7 @@ export function registerCallHandlers(
     userId === call.callerId ? call.receiverSocketId : call.callerSocketId;
 
   socket.on("call:invite", async (payload, ack) => {
-    const reply = typeof ack === "function" ? ack : () => {};
+    const reply = typeof ack === "function" ? ack : () => { };
     try {
       const to = payload?.to;
       const type = payload?.type;

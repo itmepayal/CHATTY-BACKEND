@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
-import ApiError from "./apiError.js";
+import ApiError from "./api-error.js";
 import Group from "../models/group.model.js";
 import User from "../models/users.model.js";
 

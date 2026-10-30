@@ -1,5 +1,5 @@
 import { StatusCodes } from "http-status-codes";
-import ApiError from "../utils/apiError.js";
+import ApiError from "../utils/api-error.js";
 import User from "../models/user.model.js";
 import Contact from "../models/contact.model.js";
 

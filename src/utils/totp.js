@@ -2,6 +2,12 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { authenticator } from "otplib";
 import bcrypt from "bcryptjs";
+import {
+  CHALLENGE_TTL,
+  RECOVERY_CODE_COUNT,
+  RECOVERY_CODE_BYTES,
+  BCRYPT_ROUNDS_RECOVERY,
+} from "../constants/constants.js";
 
 authenticator.options = {
   window: 1,
@@ -62,8 +68,6 @@ export function verifyTotpToken(token, encryptedSec) {
   }
 }
 
-const CHALLENGE_TTL = "5m";
-
 function getChallengeSecret() {
   const base =
     process.env.CHALLENGE_TOKEN_SECRET || process.env.ACCESS_TOKEN_SECRET;
@@ -90,10 +94,6 @@ export function verifyChallengeToken(token) {
   }
   return decoded;
 }
-
-const RECOVERY_CODE_COUNT = 8;
-const RECOVERY_CODE_BYTES = 5;
-const BCRYPT_ROUNDS_RECOVERY = 10;
 
 export async function generateRecoveryCodes() {
   const codes = [];

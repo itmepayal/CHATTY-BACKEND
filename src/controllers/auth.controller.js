@@ -3,28 +3,23 @@ import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
 
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
-import ApiError from "../utils/apiError.js";
-import ApiResponse from "../utils/apiResponse.js";
+import ApiError from "../utils/api-error.js";
+import ApiResponse from "../utils/api-response.js";
 import {
   options,
   refreshTokenScret,
   clientUrl,
   RESET_TOKEN_BYTES,
   RESET_TOKEN_TTL_MS,
-} from "../constants/constant.js";
+} from "../constants/constants.js";
 import { uploadFileToCloudinary } from "../config/cloudinary.config.js";
 import User from "../models/users.model.js";
 import Session from "../models/session.model.js";
-import {
-  sendPasswordResetEmail,
-  sendLoginAlertEmail,
-} from "../utils/emailService.js";
-import { parseDevice, getIp, sanitizeIp } from "../utils/deviceInfo.js";
+import { sendPasswordResetEmail } from "../utils/email-service.js";
 import { signChallengeToken } from "../utils/totp.js";
-import { prefsPayload } from "../utils/userPrefs.js";
-
-const hashToken = (raw) =>
-  crypto.createHash("sha256").update(raw).digest("hex");
+import { prefsPayload } from "../utils/user-prefs.js";
+import { createLoginSession } from "../services/session.service.js";
+import { hashToken } from "../utils/token-hash.js";
 
 const authController = {
   registerUser: asyncHandler(async (req, res) => {
@@ -118,33 +113,7 @@ const authController = {
       ).send(res);
     }
 
-    const deviceInfo = parseDevice(req.headers["user-agent"]);
-    const rawIp = getIp(req);
-
-    const session = await Session.create({
-      userId: user._id,
-      device: deviceInfo,
-      ip: sanitizeIp(rawIp),
-      location: "Location unavailable",
-    });
-
-    const { accessToken, refreshToken } = await User.generateToken(
-      user._id,
-      session._id,
-    );
-
-    if (user.loginAlerts) {
-      const time = new Date().toLocaleString("en-IN", {
-        timeZone: "Asia/Kolkata",
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
-      sendLoginAlertEmail(user.email, {
-        deviceLabel: deviceInfo.label,
-        location: "Location unavailable",
-        time,
-      }).catch(() => {});
-    }
+    const { accessToken, refreshToken } = await createLoginSession(req, user);
 
     res
       .cookie("accessToken", accessToken, options)
@@ -192,7 +161,7 @@ const authController = {
     if (req.sessionId) {
       await Session.findByIdAndUpdate(req.sessionId, {
         $set: { revoked: true },
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     res

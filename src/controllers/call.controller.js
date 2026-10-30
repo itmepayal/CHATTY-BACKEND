@@ -1,7 +1,7 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import { StatusCodes } from "http-status-codes";
 import Call from "../models/call.model.js";
-import ApiResponse from "../utils/apiResponse.js";
+import ApiResponse from "../utils/api-response.js";
 
 const callController = {
   getCallHistory: asyncHandler(async (req, res) => {

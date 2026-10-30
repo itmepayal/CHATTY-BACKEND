@@ -529,13 +529,13 @@
  *         $ref: '#/components/responses/NotFound'
  *
  * /groups/{groupId}/seen:
- *   patch:
+ *   post:
  *     tags: [Groups]
- *     summary: Mark group messages as seen
+ *     operationId: markGroupSeen
+ *     summary: Mark all group messages as seen
  *     description: >
- *       Marks unread messages from others as read. If you turned off read
- *       receipts, they are marked read for you but other members are not told.
- *       The HTTP method and path are assumed, so check your group route file.
+ *       Marks unread messages from others as read. If you have turned off read
+ *       receipts, they are marked read for you but other members are not notified.
  *     parameters:
  *       - $ref: '#/components/parameters/GroupId'
  *     responses:

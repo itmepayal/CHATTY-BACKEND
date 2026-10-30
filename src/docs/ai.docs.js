@@ -42,7 +42,7 @@
  *       required: [role]
  *       description: >
  *         One chat turn. The last item in the array must be from the user.
- *         Adjust field names to match utils/aiChatContents.js.
+ *         Adjust field names to match utils/ai-chat-contents.js.
  *       properties:
  *         role:
  *           type: string

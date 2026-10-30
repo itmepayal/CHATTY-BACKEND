@@ -1,25 +1,24 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import mongoose from "mongoose";
-import ApiError from "../utils/apiError.js";
+import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
-import ScheduledMessage from "../models/scheduledMessage.model.js";
+import ScheduledMessage from "../models/scheduled-message.model.js";
 import Report from "../models/report.model.js";
 import ChatSetting, {
   ALLOWED_TIMERS,
   pairKeyOf,
   getDisappearAfter,
-} from "../models/chatSetting.model.js";
-import ChatArchive, { getArchivedSet } from "../models/chatArchive.model.js";
-import LocationShare from "../models/LocationShare.model.js";
-import ApiResponse from "../utils/apiResponse.js";
-import { uploadFileToCloudinary } from "../config/cloudinary.config.js";
+} from "../models/chat-setting.model.js";
+import ChatArchive, { getArchivedSet } from "../models/chat-archive.model.js";
+import LocationShare from "../models/location-share.model.js";
+import ApiResponse from "../utils/api-response.js";
 import { io, getPrivacy } from "../lib/socket.js";
-import { assertCanMessage } from "../utils/chatguard.js";
-import { deliverMessage } from "../services/message.service.js";
-import { attachLinkPreview } from "../utils/linkPreview.js";
-import { wipeMessage } from "../utils/messageCleanup.js";
+import { assertCanMessage } from "../utils/chat-guard.js";
+import { deliverMessage, assertE2EEReady, assertNotSpamming, processAttachment } from "../services/message.service.js";
+import { attachLinkPreview } from "../utils/link-preview.js";
+import { wipeMessage } from "../utils/message-cleanup.js";
 import {
   toObjectId,
   formatMessage,
@@ -28,208 +27,39 @@ import {
   getOtherUserId,
   isBetween,
   REPLY_SELECT,
-} from "../utils/messageHelpers.js";
-/* ---------------- E2EE ---------------- */
+  emitToPair,
+  notExpired,
+  isExpired,
+} from "../utils/message-helpers.js";
 import {
   MAX_CIPHERTEXT_LENGTH,
   parseBool,
   assertValidCipher,
 } from "../utils/e2ee.js";
-
-const MAX_VOICE_SECONDS = 300;
-const MAX_VIDEO_SECONDS = 60;
-const EDIT_WINDOW_MS = 15 * 60 * 1000;
-const MAX_PINS = 3;
-const MAX_FORWARD_TARGETS = 5;
-const MAX_TEXT_LENGTH = 4000;
-
-/* ---------------- LOCATION HELPERS ---------------- */
-const LIVE_DURATIONS_MIN = [15, 60, 480];
-
-const toNum = (v) =>
-  v === null || v === undefined || v === "" ? NaN : Number(v);
-
-const validCoords = (lat, lng) =>
-  Number.isFinite(lat) &&
-  Number.isFinite(lng) &&
-  Math.abs(lat) <= 90 &&
-  Math.abs(lng) <= 180;
-
-const emitToPair = (a, b, event, payload) => {
-  io.to(a.toString()).emit(event, payload);
-  io.to(b.toString()).emit(event, payload);
-};
-
-const REPORT_REASONS = [
-  "spam",
-  "harassment",
-  "inappropriate",
-  "impersonation",
-  "other",
-];
-
-const SPAM = {
-  DUP_WINDOW_MS: 30_000,
-  DUP_MAX: 3,
-  NEW_CHAT_WINDOW_MS: 60_000,
-  NEW_CHAT_MAX: 10,
-};
-
-const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const assertValidId = (id, label = "ID") => {
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, `Invalid ${label}.`);
-  }
-};
-
-/* expiresAt null / missing = kabhi expire nahi hoga */
-const notExpired = () => ({
-  $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-});
-
-const isExpired = (message) =>
-  Boolean(message?.expiresAt) && message.expiresAt.getTime() <= Date.now();
-
-/* ---------------- E2EE HELPERS ---------------- */
-// dono users ne apni public key upload ki hui honi chahiye
-const assertE2EEReady = async (senderId, receiverId) => {
-  const users = await User.find({
-    _id: { $in: [senderId, receiverId] },
-  }).select("+publicKey");
-
-  const hasKey = (id) =>
-    users.some((u) => String(u._id) === String(id) && Boolean(u.publicKey));
-
-  if (!hasKey(senderId)) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      "Set up encryption on your device first.",
-    );
-  }
-  if (!hasKey(receiverId)) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      "This user hasn't enabled encryption yet.",
-    );
-  }
-};
-
-/* ---------------- SPAM GUARD ---------------- */
-// NOTE: encrypted text pe duplicate check nahi chalta (har ciphertext unique hota hai),
-// isliye E2EE messages ke liye `text` undefined pass hota hai.
-const assertNotSpamming = async (senderId, receiverId, text) => {
-  // 1) same text baar-baar
-  if (text) {
-    const dup = await Message.countDocuments({
-      senderId,
-      receiverId,
-      text,
-      createdAt: { $gt: new Date(Date.now() - SPAM.DUP_WINDOW_MS) },
-    });
-    if (dup >= SPAM.DUP_MAX) {
-      throw new ApiError(
-        StatusCodes.TOO_MANY_REQUESTS,
-        "Duplicate messages blocked. Please wait a bit.",
-      );
-    }
-  }
-
-  // 2) bahut saare alag-alag logon ko ek saath message (bot jaisa behaviour)
-  const recentReceivers = await Message.distinct("receiverId", {
-    senderId,
-    createdAt: { $gt: new Date(Date.now() - SPAM.NEW_CHAT_WINDOW_MS) },
-  });
-  const alreadyTalking = recentReceivers.some(
-    (id) => id.toString() === receiverId.toString(),
-  );
-  if (!alreadyTalking && recentReceivers.length >= SPAM.NEW_CHAT_MAX) {
-    throw new ApiError(
-      StatusCodes.TOO_MANY_REQUESTS,
-      "You are messaging too many people too quickly.",
-    );
-  }
-};
-
-const processAttachment = async (
-  file,
-  { isVoice = false, isVideo = false, duration } = {},
-) => {
-  if (!file?.path) {
-    return { image: null, file: null, audio: null, video: null };
-  }
-
-  const up = await uploadFileToCloudinary(file.path);
-  if (!up?.public_id || !up?.secure_url) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Failed to upload attachment.");
-  }
-
-  if (file.mimetype?.startsWith("image/")) {
-    return {
-      image: { url: up.secure_url, public_id: up.public_id },
-      file: null,
-      audio: null,
-      video: null,
-    };
-  }
-
-  if (isVoice && file.mimetype?.startsWith("audio/")) {
-    const seconds = Math.round(Number(duration) || up.duration || 0);
-    return {
-      image: null,
-      file: null,
-      video: null,
-      audio: {
-        public_id: up.public_id,
-        url: up.secure_url,
-        duration: Math.min(Math.max(seconds, 0), MAX_VOICE_SECONDS),
-        mimeType: file.mimetype.split(";")[0],
-        resourceType: up.resource_type,
-      },
-    };
-  }
-
-  if (isVideo && file.mimetype?.startsWith("video/")) {
-    const seconds = Math.round(Number(duration) || up.duration || 0);
-    return {
-      image: null,
-      file: null,
-      audio: null,
-      video: {
-        public_id: up.public_id,
-        url: up.secure_url,
-        duration: Math.min(Math.max(seconds, 0), MAX_VIDEO_SECONDS),
-        mimeType: file.mimetype.split(";")[0],
-        resourceType: up.resource_type,
-      },
-    };
-  }
-
-  return {
-    image: null,
-    audio: null,
-    video: null,
-    file: {
-      public_id: up.public_id,
-      url: up.secure_url,
-      name: file.originalname,
-      size: file.size,
-      mimeType: file.mimetype,
-      resourceType: up.resource_type,
-    },
-  };
-};
+import {
+  assertValidId,
+  toNum,
+  validCoords,
+  escapeRegex,
+} from "../utils/validators.js"
+import {
+  EDIT_WINDOW_MS,
+  MAX_PINS,
+  MAX_FORWARD_TARGETS,
+  MAX_TEXT_LENGTH,
+  REPORT_REASONS,
+  LIVE_DURATIONS_MIN,
+} from "../constants/constants.js";
 
 const messageController = {
-  /* ---------------- SIDEBAR ---------------- */
   getUsersForSidebar: asyncHandler(async (req, res) => {
+
     const userId = req.user._id;
     assertValidId(userId, "User ID");
 
     const uid = toObjectId(userId);
 
     const [users, me, archivedSet] = await Promise.all([
-      // +publicKey sirf `hasPublicKey` nikalne ke liye, key response me nahi jaati
       User.find({ _id: { $ne: userId } }).select(
         "fullName email avatar +publicKey",
       ),
@@ -288,9 +118,8 @@ const messageController = {
           avatar: user.avatar?.url || "",
           isBlocked,
           isArchived: archivedSet.has(user._id.toString()),
-          hasPublicKey: Boolean(user.publicKey), // E2EE ready?
+          hasPublicKey: Boolean(user.publicKey),
           unreadCount: isBlocked ? 0 : c?.unreadCount || 0,
-          // e2ee message ho to lastMessage.text ciphertext hoga, client decrypt karega
           lastMessage: c ? formatMessage(c.lastMessage) : null,
           lastMessageAt: c?.lastMessage.createdAt || null,
           ts,
@@ -309,7 +138,6 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- GET MESSAGES ---------------- */
   getMessage: asyncHandler(async (req, res) => {
     const { id: userToChatId } = req.params;
     const senderId = req.user._id;
@@ -338,7 +166,6 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- SEND (reply + link preview + spam guard + E2EE) ---------------- */
   sendMessage: asyncHandler(async (req, res) => {
     const {
       text,
@@ -367,13 +194,9 @@ const messageController = {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
     }
 
-    // E2EE sirf text pe lagta hai; text nahi hai to flag ignore
-    // Frontend sends `encrypted`, accept `e2ee` as legacy fallback
     const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee) && Boolean(trimmedText);
     const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
 
-    // E2EE me maxLen ciphertext ki length hai, user ko wo number nahi dikhana.
-    // Plaintext limit client pe encrypt karne se pehle check hoti hai.
     if (trimmedText && trimmedText.length > maxLen) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
@@ -383,7 +206,7 @@ const messageController = {
       );
     }
     if (wantsE2EE) {
-      assertValidCipher(trimmedText, iv); // base64 ciphertext + iv
+      assertValidCipher(trimmedText, iv);
     }
 
     if (clientId) {
@@ -405,7 +228,6 @@ const messageController = {
       wantsE2EE ? undefined : trimmedText,
     );
 
-    /* reply validation */
     let replyTo;
     if (replyToId) {
       assertValidId(replyToId, "reply ID");
@@ -431,8 +253,8 @@ const messageController = {
       audio: uploadedAudio,
       video: uploadedVideo,
     } = await processAttachment(req.file, {
-      isVoice: isVoice === "true" || isVoice === true,
-      isVideo: isVideo === "true" || isVideo === true,
+      isVoice: parseBool(isVoice),
+      isVideo: parseBool(isVideo),
       duration,
     });
 
@@ -468,8 +290,7 @@ const messageController = {
 
     const { message, payload } = result;
 
-    // server ciphertext ka link preview nahi bana sakta
-    if (!wantsE2EE) attachLinkPreview(message); // background, no await
+    if (!wantsE2EE) attachLinkPreview(message);
 
     return new ApiResponse(
       StatusCodes.CREATED,
@@ -478,10 +299,6 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- FORWARD ---------------- */
-  // Encrypted original ko forward karne ke liye client ko har recipient ke liye
-  // naya ciphertext bhejna hoga:
-  //   body.encrypted = { "<recipientId>": { text: "<b64>", iv: "<b64>" }, ... }
   forwardMessage: asyncHandler(async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user._id;
@@ -521,7 +338,6 @@ const messageController = {
         : {};
 
     const content = {
-      // encrypted text purani key se bana hai, naye receiver ke liye useless
       text: isEncrypted ? undefined : o.text,
       image: o.image?.url ? o.image : undefined,
       file: o.file?.url ? o.file : undefined,
@@ -530,11 +346,11 @@ const messageController = {
       location:
         Number.isFinite(o.location?.lat) && Number.isFinite(o.location?.lng)
           ? {
-              lat: o.location.lat,
-              lng: o.location.lng,
-              accuracy: o.location.accuracy,
-              isLive: false, // forward = static pin, live share se nahi judega
-            }
+            lat: o.location.lat,
+            lng: o.location.lng,
+            accuracy: o.location.accuracy,
+            isLive: false,
+          }
           : undefined,
       linkPreview: o.linkPreview?.url ? o.linkPreview : undefined,
       isForwarded: true,
@@ -577,13 +393,10 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- EDIT ---------------- */
-  // E2EE message edit: body = { text: "<new ciphertext>", iv: "<new iv>", e2ee: true }
   editMessage: asyncHandler(async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user._id;
     const text = req.body.text?.trim();
-    // Frontend sends `encrypted`, accept `e2ee` as legacy fallback
     const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
     const iv = req.body.iv;
 
@@ -616,7 +429,6 @@ const messageController = {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Edit time is over.");
     }
 
-    // encrypted <-> plaintext mode edit me badla nahi ja sakta
     if (Boolean(message.e2ee) !== wantsE2EE) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
@@ -628,7 +440,6 @@ const messageController = {
     await assertCanMessage(userId, message.receiverId);
     if (wantsE2EE) await assertE2EEReady(userId, message.receiverId);
 
-    // ciphertext har baar naya hota hai, isliye "no changes" check sirf plaintext ke liye
     if (!wantsE2EE && message.text === text) {
       return new ApiResponse(
         StatusCodes.OK,
@@ -652,8 +463,7 @@ const messageController = {
       ...(wantsE2EE ? { encrypted: true, iv } : {}),
     };
 
-    io.to(message.receiverId.toString()).emit("messageEdited", payload);
-    io.to(message.senderId.toString()).emit("messageEdited", payload);
+    emitToPair(message.receiverId, message.senderId, "messageEdited", payload);
 
     await Promise.all([
       emitConversationUpdate(message.receiverId, message.senderId),
@@ -715,8 +525,7 @@ const messageController = {
       pinnedBy: userId,
     };
 
-    io.to(userId.toString()).emit("messagePinned", payload);
-    io.to(otherId.toString()).emit("messagePinned", payload);
+    emitToPair(userId, otherId, "messagePinned", payload);
 
     return new ApiResponse(StatusCodes.OK, payload, "Pin updated.").send(res);
   }),
@@ -751,9 +560,6 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- SEARCH ---------------- */
-  // E2EE messages server pe search nahi ho sakte (server ko plaintext nahi milta).
-  // Client decrypted messages me local search kare.
   searchMessages: asyncHandler(async (req, res) => {
     const userId = req.user._id;
     const { id: otherId } = req.params;
@@ -801,13 +607,10 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- SCHEDULE ---------------- */
-  // E2EE schedule: client schedule karte waqt hi encrypt karke ciphertext + iv bhejta hai.
   scheduleMessage: asyncHandler(async (req, res) => {
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
     const text = req.body.text?.trim();
-    // Frontend sends `encrypted`, accept `e2ee` as legacy fallback
     const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
     const iv = req.body.iv;
     const when = new Date(req.body.scheduledFor);
@@ -1001,8 +804,7 @@ const messageController = {
 
     const otherUserId = getOtherUserId(message, userId);
 
-    io.to(otherUserId.toString()).emit("messageReaction", payload);
-    io.to(userId.toString()).emit("messageReaction", payload);
+    emitToPair(otherUserId, userId, "messageReaction", payload);
 
     return new ApiResponse(
       StatusCodes.OK,
@@ -1076,8 +878,7 @@ const messageController = {
 
     const payload = { messageId: message._id };
 
-    io.to(message.receiverId.toString()).emit("messageDeleted", payload);
-    io.to(message.senderId.toString()).emit("messageDeleted", payload);
+    emitToPair(message.receiverId, message.senderId, "messageDeleted", payload);
 
     await Promise.all([
       emitConversationUpdate(message.receiverId, message.senderId),
@@ -1245,10 +1046,7 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- LOCATION: START ---------------- */
-  // NOTE: location lat/lng abhi plaintext hai (server live tracking ke liye use karta hai).
-  // current -> data = message payload
-  // live    -> data = { message, share }
+
   startShare: asyncHandler(async (req, res) => {
     const senderId = req.user._id;
     const { receiverId, mode } = req.body;
@@ -1277,7 +1075,6 @@ const messageController = {
 
     const safeAccuracy = Number.isFinite(accuracy) ? accuracy : undefined;
 
-    /* ---- one-time pin ---- */
     if (mode === "current") {
       const { payload } = await deliverMessage({
         senderId,
@@ -1294,12 +1091,10 @@ const messageController = {
       ).send(res);
     }
 
-    /* ---- live share ---- */
     if (!LIVE_DURATIONS_MIN.includes(durationMin)) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid duration.");
     }
 
-    // is chat me pehle se koi live share ho to band karo
     const previous = await LocationShare.find({
       sharerId: senderId,
       receiverId,
@@ -1345,7 +1140,6 @@ const messageController = {
     share.messageId = result.message._id;
     await share.save();
 
-    // pehla update turant bhejo, taaki receiver ko "Live location ended" na dikhe
     emitToPair(senderId, receiverId, "location:update", {
       shareId: String(share._id),
       lat,
@@ -1361,7 +1155,6 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- LOCATION: STOP ---------------- */
   stopShare: asyncHandler(async (req, res) => {
     const { id: shareId } = req.params;
     const userId = req.user._id;
@@ -1392,13 +1185,10 @@ const messageController = {
     ).send(res);
   }),
 
-  /* ---------------- LOCATION: ACTIVE LIST ---------------- */
-  // data = { mine: [share...], forMe: [share...] }
   getActiveShares: asyncHandler(async (req, res) => {
     const userId = req.user._id;
     const now = new Date();
 
-    // purane expired shares ko band mark karo
     await LocationShare.updateMany(
       { status: "active", expiresAt: { $lte: now } },
       { status: "expired", endedAt: now },

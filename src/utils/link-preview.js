@@ -23,7 +23,6 @@ const isPrivateIp = (ip) => {
   );
 };
 
-/* SSRF safe: only public hosts, every redirect hop is re-validated */
 const safeFetch = async (url, hops = 0) => {
   if (hops > 3) throw new Error("Too many redirects");
 
@@ -89,7 +88,6 @@ export const buildPreview = async (url) => {
   };
 };
 
-/* fire-and-forget: call WITHOUT await after send / edit */
 export const attachLinkPreview = async (message) => {
   try {
     const url = message.text?.match(URL_RE)?.[0];

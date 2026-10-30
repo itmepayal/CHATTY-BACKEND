@@ -68,7 +68,6 @@ const formatReply = (r) => {
             : hasLatLng(r.location)
               ? "location"
               : "text",
-    // frontend replyPreviewText in sab ko check karta hai
     image: r.image?.url ? { url: r.image.url } : null,
     file: r.file?.url ? { name: r.file.name } : null,
     audio: r.audio?.url ? { url: r.audio.url } : null,
@@ -82,7 +81,6 @@ const formatReply = (r) => {
 
 export const formatMessage = (msg) => {
   const deleted = Boolean(msg.isDeleted);
-  // e2ee field in DB; expose as `encrypted` so the frontend needsDecrypt() check works
   const isEncrypted = !deleted && Boolean(msg.e2ee);
 
   return {
@@ -90,9 +88,8 @@ export const formatMessage = (msg) => {
     senderId: msg.senderId,
     receiverId: msg.receiverId,
     text: deleted ? "" : msg.text,
-    // E2EE metadata — frontend needsDecrypt() checks `m.encrypted && m.iv`
     encrypted: isEncrypted,
-    iv: isEncrypted ? (msg.iv || null) : null,
+    iv: isEncrypted ? msg.iv || null : null,
     image:
       !deleted && msg.image?.url
         ? { url: msg.image.url, public_id: msg.image.public_id }
@@ -195,3 +192,15 @@ export const emitConversationUpdate = async (ownerId, otherId) => {
     console.error("emitConversationUpdate failed:", err?.message || err);
   }
 };
+
+export const emitToPair = (a, b, event, payload) => {
+  io.to(a.toString()).emit(event, payload);
+  io.to(b.toString()).emit(event, payload);
+};
+
+export const notExpired = () => ({
+  $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+});
+
+export const isExpired = (message) =>
+  Boolean(message?.expiresAt) && message.expiresAt.getTime() <= Date.now();

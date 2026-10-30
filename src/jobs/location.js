@@ -1,4 +1,5 @@
-import LocationShare from "../models/LocationShare.model.js";
+import LocationShare from "../models/location-share.model.js";
+import { LOCATION_EXPIRY_JOB_INTERVAL_MS } from "../constants/constants.js";
 
 export const startLocationExpiryJob = (io) => {
   let running = false;
@@ -33,5 +34,5 @@ export const startLocationExpiryJob = (io) => {
     } finally {
       running = false;
     }
-  }, 30 * 1000);
+  }, LOCATION_EXPIRY_JOB_INTERVAL_MS);
 };

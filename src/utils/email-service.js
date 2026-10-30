@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { clientUrl } from "../constants/constant.js";
+import { clientUrl } from "../constants/constants.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 

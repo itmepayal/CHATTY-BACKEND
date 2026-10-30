@@ -1,8 +1,12 @@
-import LocationShare from "../models/LocationShare.model.js";
-import GroupMessage from "../models/groupmessage.model.js";
+import LocationShare from "../models/location-share.model.js";
+import GroupMessage from "../models/group-message.model.js";
 import { groupRoom } from "../lib/socket.js";
+import {
+  MIN_LOCATION_UPDATE_INTERVAL_MS,
+  LOCATION_EXPIRY_SWEEP_INTERVAL_MS,
+} from "../constants/constants.js";
 
-const MIN_INTERVAL_MS = 2000;
+const MIN_INTERVAL_MS = MIN_LOCATION_UPDATE_INTERVAL_MS;
 const isObjectId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
@@ -17,7 +21,7 @@ export const registerLocationHandlers = (
   socket.on("disconnect", () => lastEmitAt.clear());
 
   socket.on("location:update", async (payload, ack) => {
-    const done = typeof ack === "function" ? ack : () => {};
+    const done = typeof ack === "function" ? ack : () => { };
 
     try {
       const { shareId, lat, lng, accuracy, heading, speed } = payload || {};
@@ -105,7 +109,7 @@ export const registerLocationHandlers = (
   });
 };
 
-export const startLocationExpirySweeper = (io, everyMs = 30_000) => {
+export const startLocationExpirySweeper = (io, everyMs = LOCATION_EXPIRY_SWEEP_INTERVAL_MS) => {
   let running = false;
 
   const timer = setInterval(async () => {

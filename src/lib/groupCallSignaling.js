@@ -2,11 +2,15 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import Group from "../models/group.model.js";
 import User from "../models/users.model.js";
-import GroupCall from "../models/groupcall.model.js";
+import GroupCall from "../models/group-call.model.js";
 import { isUserInCall } from "./callSignaling.js";
+import {
+  MAX_CALL_PARTICIPANTS,
+  GROUP_CALL_RING_TIMEOUT_MS,
+} from "../constants/constants.js";
 
-const MAX_PARTICIPANTS = 6;
-const RING_TIMEOUT_MS = 45_000;
+const MAX_PARTICIPANTS = MAX_CALL_PARTICIPANTS;
+const RING_TIMEOUT_MS = GROUP_CALL_RING_TIMEOUT_MS;
 
 const calls = new Map();
 const userGroup = new Map();
@@ -32,9 +36,8 @@ const getProfile = async (userId, fallbackName) => {
   }
 };
 
-/* ---------- end the whole call ---------- */
 async function finishCall(io, call, { status, reason = "" }) {
-  if (calls.get(call.groupId) !== call) return; // already finished
+  if (calls.get(call.groupId) !== call) return;
 
   clearTimeout(call.timer);
   calls.delete(call.groupId);
@@ -74,7 +77,6 @@ async function finishCall(io, call, { status, reason = "" }) {
   }
 }
 
-/* ---------- one participant leaves ---------- */
 function removeParticipant(io, call, userId, reason = "left") {
   if (!call.participants.has(userId)) return;
 
@@ -96,11 +98,9 @@ function removeParticipant(io, call, userId, reason = "left") {
   }
 }
 
-/* ---------- register handlers for one socket ---------- */
 export function registerGroupCallHandlers(io, socket) {
   const userId = socket.data.userId;
 
-  // sirf wo call jisme ye socket khud participant hai
   const myCall = (callId) => {
     const gid = userGroup.get(userId);
     const call = gid && calls.get(gid);
@@ -109,9 +109,8 @@ export function registerGroupCallHandlers(io, socket) {
     return call;
   };
 
-  /* ----- start a group call ----- */
   socket.on("gcall:start", async (payload, ack) => {
-    const reply = typeof ack === "function" ? ack : () => {};
+    const reply = typeof ack === "function" ? ack : () => { };
     try {
       const { groupId, type } = payload || {};
       if (!isId(groupId) || !["audio", "video"].includes(type)) {
@@ -129,7 +128,6 @@ export function registerGroupCallHandlers(io, socket) {
 
       const profile = await getProfile(userId, socket.data.fullName);
 
-      // await ke baad dobara check (race condition)
       const existing = calls.get(gid);
       if (existing) {
         return reply({
@@ -195,9 +193,8 @@ export function registerGroupCallHandlers(io, socket) {
     }
   });
 
-  /* ----- join an active call ----- */
   socket.on("gcall:join", async (payload, ack) => {
-    const reply = typeof ack === "function" ? ack : () => {};
+    const reply = typeof ack === "function" ? ack : () => { };
     try {
       const gid = String(payload?.groupId || "");
       const call = calls.get(gid);
@@ -217,7 +214,6 @@ export function registerGroupCallHandlers(io, socket) {
 
       const profile = await getProfile(userId, socket.data.fullName);
 
-      // await ke baad dobara check
       if (
         calls.get(gid) !== call ||
         call.participants.has(userId) ||
@@ -250,7 +246,6 @@ export function registerGroupCallHandlers(io, socket) {
         clearTimeout(call.timer);
       }
 
-      // is user ke baaki tabs ki ringing band
       socket.to(userId).emit("gcall:joined-elsewhere", {
         callId: call.callId,
       });
@@ -269,9 +264,8 @@ export function registerGroupCallHandlers(io, socket) {
     }
   });
 
-  /* ----- is group mein call chal rahi hai? (Join banner ke liye) ----- */
   socket.on("gcall:status", ({ groupId } = {}, ack) => {
-    const reply = typeof ack === "function" ? ack : () => {};
+    const reply = typeof ack === "function" ? ack : () => { };
     const call = calls.get(String(groupId || ""));
     if (!call || !call.memberIds.includes(userId)) {
       return reply({ active: false });
@@ -285,7 +279,6 @@ export function registerGroupCallHandlers(io, socket) {
     });
   });
 
-  /* ----- WebRTC signaling relay (offer / answer / ice) ----- */
   socket.on("gcall:signal", ({ callId, to, data } = {}) => {
     const call = myCall(callId);
     if (!call || !data) return;
@@ -298,7 +291,6 @@ export function registerGroupCallHandlers(io, socket) {
     });
   });
 
-  /* ----- mute / camera state ----- */
   socket.on("gcall:media", ({ callId, audio, video } = {}) => {
     const call = myCall(callId);
     if (!call) return;
@@ -314,13 +306,11 @@ export function registerGroupCallHandlers(io, socket) {
     }
   });
 
-  /* ----- leave ----- */
   socket.on("gcall:leave", ({ callId } = {}) => {
     const call = myCall(callId);
     if (call) removeParticipant(io, call, userId, "left");
   });
 
-  /* ----- socket disconnect ----- */
   socket.on("disconnect", () => {
     const gid = userGroup.get(userId);
     const call = gid && calls.get(gid);

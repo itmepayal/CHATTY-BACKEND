@@ -1,17 +1,24 @@
 import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
-import ApiError from "../utils/apiError.js";
+import asyncHandler from "../middlewares/asyncHandler.middleware.js";
+import ApiError from "../utils/api-error.js";
+import ApiResponse from "../utils/api-response.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import Contact from "../models/contact.model.js";
+import { toObjectId } from "../utils/message-helpers.js";
+import { myId } from "../utils/request-helpers.js";
 
-const oid = (id) => new mongoose.Types.ObjectId(id);
-const myId = (req) => req.user._id || req.user.id;
-
-export const searchUsers = async (req, res, next) => {
-  try {
+const contactController = {
+  searchUsers: asyncHandler(async (req, res) => {
     const q = String(req.query.q || "").trim();
-    if (q.length < 2) return res.json({ users: [] });
+    if (q.length < 2) {
+      return new ApiResponse(
+        StatusCodes.OK,
+        { users: [] },
+        "Type at least 2 characters.",
+      ).send(res);
+    }
 
     const me = await User.findById(myId(req)).select("blockedUsers");
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -30,16 +37,14 @@ export const searchUsers = async (req, res, next) => {
     }).select("contactId");
     const set = new Set(mine.map((c) => String(c.contactId)));
 
-    res.json({
-      users: users.map((u) => ({ ...u, isContact: set.has(String(u._id)) })),
-    });
-  } catch (e) {
-    next(e);
-  }
-};
+    return new ApiResponse(
+      StatusCodes.OK,
+      { users: users.map((u) => ({ ...u, isContact: set.has(String(u._id)) })) },
+      "Users fetched successfully.",
+    ).send(res);
+  }),
 
-export const addContact = async (req, res, next) => {
-  try {
+  addContact: asyncHandler(async (req, res) => {
     const { userId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(userId))
       throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
@@ -53,26 +58,20 @@ export const addContact = async (req, res, next) => {
       { $setOnInsert: { nickname: req.body?.nickname } },
       { upsert: true },
     );
-    res.status(StatusCodes.CREATED).json({ message: "Contact added." });
-  } catch (e) {
-    next(e);
-  }
-};
 
-export const removeContact = async (req, res, next) => {
-  try {
+    return new ApiResponse(StatusCodes.CREATED, null, "Contact added.").send(res);
+  }),
+
+  removeContact: asyncHandler(async (req, res) => {
     await Contact.deleteOne({
       ownerId: myId(req),
       contactId: req.params.userId,
     });
-    res.json({ message: "Contact removed." });
-  } catch (e) {
-    next(e);
-  }
-};
 
-export const getContacts = async (req, res, next) => {
-  try {
+    return new ApiResponse(StatusCodes.OK, null, "Contact removed.").send(res);
+  }),
+
+  getContacts: asyncHandler(async (req, res) => {
     const rows = await Contact.find({ ownerId: myId(req) })
       .populate(
         "contactId",
@@ -80,19 +79,20 @@ export const getContacts = async (req, res, next) => {
       )
       .sort({ createdAt: -1 })
       .lean();
-    res.json({
-      contacts: rows
-        .filter((r) => r.contactId)
-        .map((r) => ({ ...r.contactId, nickname: r.nickname })),
-    });
-  } catch (e) {
-    next(e);
-  }
-};
 
-export const getChatList = async (req, res, next) => {
-  try {
-    const me = oid(myId(req));
+    return new ApiResponse(
+      StatusCodes.OK,
+      {
+        contacts: rows
+          .filter((r) => r.contactId)
+          .map((r) => ({ ...r.contactId, nickname: r.nickname })),
+      },
+      "Contacts fetched successfully.",
+    ).send(res);
+  }),
+
+  getChatList: asyncHandler(async (req, res) => {
+    const me = toObjectId(myId(req));
     const contacts = await Contact.find({ ownerId: me })
       .select("contactId")
       .lean();
@@ -153,8 +153,12 @@ export const getChatList = async (req, res, next) => {
           new Date(a.lastMessage?.createdAt || 0),
       );
 
-    res.json({ chats, totalContacts: ids.length });
-  } catch (e) {
-    next(e);
-  }
+    return new ApiResponse(
+      StatusCodes.OK,
+      { chats, totalContacts: ids.length },
+      "Chat list fetched successfully.",
+    ).send(res);
+  }),
 };
+
+export default contactController;

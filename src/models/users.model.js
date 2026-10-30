@@ -6,12 +6,12 @@ import {
   accessTokenExpiresIn,
   refreshTokenScret,
   refreshTokenExpiresIn,
-} from "../constants/constant.js";
+} from "../constants/constants.js";
 
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
-import ApiError from "../utils/apiError.js";
+import ApiError from "../utils/api-error.js";
 
 const UserSchema = mongoose.Schema(
   {

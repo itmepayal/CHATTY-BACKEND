@@ -1,9 +1,8 @@
-import ScheduledMessage from "../models/scheduledMessage.model.js";
+import ScheduledMessage from "../models/scheduled-message.model.js";
 import { deliverMessage } from "../services/message.service.js";
-import { assertCanMessage } from "../utils/chatguard.js";
-import { attachLinkPreview } from "../utils/linkPreview.js";
-
-const TICK_MS = 20_000;
+import { assertCanMessage } from "../utils/chat-guard.js";
+import { attachLinkPreview } from "../utils/link-preview.js";
+import { SCHEDULER_TICK_MS } from "../constants/constants.js";
 
 export const startScheduler = () => {
   setInterval(async () => {
@@ -47,5 +46,5 @@ export const startScheduler = () => {
     } catch (e) {
       console.error("[scheduler] tick failed:", e?.message || e);
     }
-  }, TICK_MS);
+  }, SCHEDULER_TICK_MS);
 };

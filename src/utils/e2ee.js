@@ -1,16 +1,25 @@
 import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
-import ApiError from "./apiError.js";
+import ApiError from "./api-error.js";
+import {
+  MAX_CIPHERTEXT_LENGTH,
+  MAX_WRAPPED_KEY_LENGTH,
+  MAX_KEY_ENTRIES,
+  AES_GCM_IV_BYTES,
+  AES_GCM_TAG_BYTES,
+  BASE64_ENCODING,
+} from "../constants/constants.js";
 
-export const MAX_CIPHERTEXT_LENGTH = 24000;
-export const MAX_WRAPPED_KEY_LENGTH = 2048;
-const MAX_KEY_ENTRIES = 600;
-
-const IV_BYTES = 12;
-const GCM_TAG_BYTES = 16;
+const IV_BYTES = AES_GCM_IV_BYTES;
+const GCM_TAG_BYTES = AES_GCM_TAG_BYTES;
+const DECODE_ENC = BASE64_ENCODING;
 
 const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
-const DECODE_ENC = "base64";
+
+export {
+  MAX_CIPHERTEXT_LENGTH,
+  MAX_WRAPPED_KEY_LENGTH,
+} from "../constants/constants.js";
 
 export const parseBool = (v) => v === true || v === "true";
 
