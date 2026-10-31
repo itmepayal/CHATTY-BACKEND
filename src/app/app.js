@@ -3,7 +3,10 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import { app } from "../lib/socket.js";
 import router from "../router/index.js";
-import { errorHandler, notFoundHandler } from "../middlewares/errorHandler.middleware.js";
+import {
+  errorHandler,
+  notFoundHandler,
+} from "../middlewares/errorHandler.middleware.js";
 import { setupSwagger } from "../config/swagger.js";
 import { clientUrl } from "../constants/constants.js";
 
@@ -11,7 +14,9 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:8080",
+  "http://localhost:8081",
   "https://chatty-app-sigma.vercel.app",
+  "https://chatty-backend-2l2t.onrender.com",
   clientUrl,
 ].filter(Boolean);
 
