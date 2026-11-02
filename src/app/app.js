@@ -25,9 +25,14 @@ app.use(express.json());
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      if (!origin) {
         return callback(null, true);
       }
+
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
       return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true,
