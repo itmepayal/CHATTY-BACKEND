@@ -161,7 +161,7 @@ const authController = {
     if (req.sessionId) {
       await Session.findByIdAndUpdate(req.sessionId, {
         $set: { revoked: true },
-      }).catch(() => { });
+      }).catch(() => {});
     }
 
     res
@@ -196,7 +196,7 @@ const authController = {
   }),
 
   forgotPassword: asyncHandler(async (req, res) => {
-    const { email } = req.body;
+    const { email, platform } = req.body;
 
     if (!email || typeof email !== "string") {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Email is required.");
@@ -210,6 +210,8 @@ const authController = {
         "Enter a valid email address.",
       );
     }
+
+    const isMobile = platform === "mobile";
 
     const GENERIC_MSG =
       "If an account exists with this email address, you will receive instructions to reset your password.";
@@ -225,7 +227,9 @@ const authController = {
     user.passwordResetExpires = new Date(Date.now() + RESET_TOKEN_TTL_MS);
     await user.save({ validateBeforeSave: false });
 
-    const resetUrl = `${clientUrl}/reset-password/${rawToken}`;
+    const resetUrl = isMobile
+      ? `${serverUrl}/api/v1/auth/open-app/reset-password/${rawToken}`
+      : `${clientUrl}/reset-password/${rawToken}`;
 
     try {
       await sendPasswordResetEmail(normalised, resetUrl);

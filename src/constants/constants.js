@@ -4,6 +4,9 @@ export const resendApiKey = process.env.RESEND_API_KEY;
 export const mongoUri = process.env.MONGO_URI;
 export const mongoDbName = process.env.MONGO_DB;
 
+export const serverUrl = process.env.SERVER_URL || `http://localhost:${port}`;
+export const appSchemeUrl = process.env.APP_SCHEME_URL || "chatty://";
+
 export const cloudinaryName = process.env.CLOUDINARY_NAME;
 export const cloudinaryApiKey = process.env.CLOUDINARY_API_KEY;
 export const cloudinaryApiSecret = process.env.CLOUDINARY_API_SECRET;
