@@ -1,53 +1,92 @@
-import User from "../models/users.model.js";
+import User, { VIS } from "../models/users.model.js";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
 import { refreshPrivacy } from "../lib/socket.js";
 import { assertBooleanFields } from "../utils/validators.js";
 import {
   PRIVACY_FIELDS,
+  PRIVACY_VIS_FIELDS,
   CHAT_PREF_FIELDS,
   APPEARANCE_ENUMS,
   APPEARANCE_BOOL_FIELDS,
   APPEARANCE_DB_KEY,
 } from "../constants/constants.js";
 
+const PRIVACY_SELECT =
+  "showOnlineStatus readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission";
+
+const formatPrivacy = (u) => ({
+  showOnlineStatus: u.showOnlineStatus !== false,
+  readReceipts: u.readReceipts !== false,
+  typingIndicator: u.typingIndicator !== false,
+  lastSeenVisibility: u.lastSeenVisibility ?? "contacts",
+  profilePhotoVisibility: u.profilePhotoVisibility ?? "everyone",
+  aboutVisibility: u.aboutVisibility ?? "contacts",
+  groupAddPermission: u.groupAddPermission ?? "contacts",
+});
+
 export const getPrivacy = async (userId) => {
-  const user = await User.findById(userId).select(
-    "showOnlineStatus readReceipts typingIndicator",
-  );
+  const user = await User.findById(userId).select(PRIVACY_SELECT);
   if (!user) {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
   }
-
-  return {
-    showOnlineStatus: user.showOnlineStatus !== false,
-    readReceipts: user.readReceipts !== false,
-    typingIndicator: user.typingIndicator !== false,
-  };
+  return formatPrivacy(user);
 };
 
-export const setPrivacy = async (userId, body) => {
-  const $set = assertBooleanFields(body, PRIVACY_FIELDS, "privacy");
+export const setPrivacy = async (userId, body = {}) => {
+  const boolBody = {};
+  const visBody = {};
+  const unknown = [];
+
+  for (const key of Object.keys(body)) {
+    if (PRIVACY_FIELDS.includes(key)) boolBody[key] = body[key];
+    else if (PRIVACY_VIS_FIELDS.includes(key)) visBody[key] = body[key];
+    else unknown.push(key);
+  }
+
+  if (unknown.length) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Unknown field(s): ${unknown.join(", ")}`,
+    );
+  }
+
+  const $set = {};
+
+  if (Object.keys(boolBody).length) {
+    Object.assign(
+      $set,
+      assertBooleanFields(boolBody, PRIVACY_FIELDS, "privacy"),
+    );
+  }
+
+  for (const [key, value] of Object.entries(visBody)) {
+    if (!VIS.includes(value)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Invalid value for "${key}". Allowed: ${VIS.join(", ")}`,
+      );
+    }
+    $set[key] = value;
+  }
+
+  if (!Object.keys($set).length) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "No privacy fields provided.");
+  }
 
   const updated = await User.findByIdAndUpdate(
     userId,
     { $set },
     { new: true, runValidators: true },
-  ).select("showOnlineStatus readReceipts typingIndicator");
+  ).select(PRIVACY_SELECT);
 
   if (!updated) {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
   }
 
-  const privacy = {
-    showOnlineStatus: updated.showOnlineStatus !== false,
-    readReceipts: updated.readReceipts !== false,
-    typingIndicator: updated.typingIndicator !== false,
-  };
-
   await refreshPrivacy(userId);
 
-  return privacy;
+  return formatPrivacy(updated);
 };
 
 export const getChatPreferences = async (userId) => {

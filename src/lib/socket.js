@@ -40,6 +40,10 @@ const DEFAULT_PRIVACY = {
   showOnlineStatus: true,
   readReceipts: true,
   typingIndicator: true,
+  lastSeenVisibility: "contacts",
+  profilePhotoVisibility: "everyone",
+  aboutVisibility: "contacts",
+  groupAddPermission: "contacts",
 };
 
 export const privacyByUser = new Map();
@@ -48,6 +52,10 @@ const cleanPrivacy = (p = {}) => ({
   showOnlineStatus: p.showOnlineStatus !== false,
   readReceipts: p.readReceipts !== false,
   typingIndicator: p.typingIndicator !== false,
+  lastSeenVisibility: p.lastSeenVisibility ?? "contacts",
+  profilePhotoVisibility: p.profilePhotoVisibility ?? "everyone",
+  aboutVisibility: p.aboutVisibility ?? "contacts",
+  groupAddPermission: p.groupAddPermission ?? "contacts",
 });
 
 export const getPrivacy = (userId) =>
@@ -56,7 +64,9 @@ export const getPrivacy = (userId) =>
 export const loadPrivacy = async (userId) => {
   try {
     const u = await User.findById(userId)
-      .select("showOnlineStatus readReceipts typingIndicator")
+      .select(
+        "showOnlineStatus readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission",
+      )
       .lean();
 
     if (u) privacyByUser.set(String(userId), cleanPrivacy(u));
@@ -325,11 +335,9 @@ io.on("connection", (socket) => {
       if (set.size === 0) {
         onlineUsers.delete(userId);
 
-        if (getPrivacy(userId).showOnlineStatus) {
-          User.findByIdAndUpdate(userId, {
-            lastSeen: new Date(),
-          }).catch(() => { });
-        }
+        User.findByIdAndUpdate(userId, {
+          lastSeen: new Date(),
+        }).catch(() => {});
       }
     }
 

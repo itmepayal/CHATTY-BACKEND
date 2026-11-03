@@ -341,16 +341,47 @@ const options = {
     },
     security: [{ bearerAuth: [] }],
     tags: [
-      { name: "Auth", description: "Register, login, logout, password management, 2FA, account deletion" },
-      { name: "Sessions", description: "List and revoke active login sessions" },
-      { name: "Users", description: "Profile, avatar, privacy, appearance, chat preferences, block/favorite, E2EE public keys" },
-      { name: "Contacts", description: "Search users, manage contact list, contact-based chat list" },
-      { name: "Messages", description: "Direct (1-to-1) messaging: send, edit, delete, react, pin, forward, schedule, search, disappearing, archive, report" },
-      { name: "Groups", description: "Group creation, membership, messaging, E2EE keys, archive" },
+      {
+        name: "Auth",
+        description:
+          "Register, login, logout, password management, 2FA, account deletion",
+      },
+      {
+        name: "Sessions",
+        description: "List and revoke active login sessions",
+      },
+      {
+        name: "Users",
+        description:
+          "Profile, avatar, privacy, appearance, chat preferences, block/favorite, E2EE public keys",
+      },
+      {
+        name: "Contacts",
+        description:
+          "Search users, manage contact list, contact-based chat list",
+      },
+      {
+        name: "Messages",
+        description:
+          "Direct (1-to-1) messaging: send, edit, delete, react, pin, forward, schedule, search, disappearing, archive, report",
+      },
+      {
+        name: "Groups",
+        description:
+          "Group creation, membership, messaging, E2EE keys, archive",
+      },
       { name: "Calls", description: "1-to-1 call history" },
       { name: "Group Calls", description: "Group call history" },
-      { name: "Location", description: "Live and current location sharing for direct chats and groups" },
-      { name: "AI", description: "AI chatbot, English correction, text rewriting, Hinglish translation" },
+      {
+        name: "Location",
+        description:
+          "Live and current location sharing for direct chats and groups",
+      },
+      {
+        name: "AI",
+        description:
+          "AI chatbot, English correction, text rewriting, Hinglish translation",
+      },
     ],
   },
   apis: ["./src/docs/*.js"],

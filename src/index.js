@@ -17,9 +17,11 @@ const startServer = async () => {
     startLocationExpiryJob(io);
 
     server.listen(port, "0.0.0.0", () => {
-      console.log(`Server running on http://0.0.0.0:${port}`);
-      console.log(`Local API: http://localhost:${port}/api/v1`);
-      console.log(`Swagger Docs API: http://localhost:${port}/api-docs`);
+      if (process.env.NODE_ENV != "production") {
+        console.log(`Server running on http://0.0.0.0:${port}`);
+        console.log(`Local API: http://localhost:${port}/api/v1`);
+        console.log(`Swagger Docs API: http://localhost:${port}/api-docs`);
+      }
     });
   } catch (error) {
     console.error("Failed to start server:", error.message);

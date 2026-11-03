@@ -13,6 +13,8 @@ import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
 
+export const VIS = ["everyone", "contacts", "nobody"];
+
 const UserSchema = mongoose.Schema(
   {
     email: {
@@ -102,6 +104,11 @@ const UserSchema = mongoose.Schema(
     showOnlineStatus: { type: Boolean, default: true },
     readReceipts: { type: Boolean, default: true },
     typingIndicator: { type: Boolean, default: true },
+
+    lastSeenVisibility: { type: String, enum: VIS, default: "contacts" },
+    profilePhotoVisibility: { type: String, enum: VIS, default: "everyone" },
+    aboutVisibility: { type: String, enum: VIS, default: "contacts" },
+    groupAddPermission: { type: String, enum: VIS, default: "contacts" },
 
     enterToSend: { type: Boolean, default: true },
     largeEmoji: { type: Boolean, default: true },

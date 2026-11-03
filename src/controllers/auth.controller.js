@@ -17,11 +17,14 @@ import {
 import { uploadFileToCloudinary } from "../config/cloudinary.config.js";
 import User from "../models/users.model.js";
 import Session from "../models/session.model.js";
-import { sendPasswordResetEmail } from "../utils/email-service.js";
+import {
+  sendPasswordResetEmail,
+  openAppPageHtml,
+} from "../utils/email-service.js";
 import { signChallengeToken } from "../utils/totp.js";
 import { prefsPayload } from "../utils/user-prefs.js";
 import { createLoginSession } from "../services/session.service.js";
-import { hashToken } from "../utils/token-hash.js";
+import { hashToken, isValidResetToken } from "../utils/token-hash.js";
 
 const authController = {
   registerUser: asyncHandler(async (req, res) => {
@@ -253,36 +256,31 @@ const authController = {
   openAppResetPassword: asyncHandler(async (req, res) => {
     const { token } = req.params;
 
-    if (!token || !/^[a-f0-9]{10,}$/i.test(token)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid reset token.");
+    if (!isValidResetToken(token)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Invalid or missing reset token.",
+      );
     }
 
-    const deepLink = `${appSchemeUrl}auth/new-password?token=${token}`;
+    const deepLink = `${appSchemeUrl}auth/new-password?token=${encodeURIComponent(token)}`;
 
-    res.status(200).type("html").send(`<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="refresh" content="0;url=${deepLink}" />
-    <title>Opening app…</title>
-  </head>
-  <body style="font-family:sans-serif;text-align:center;padding:48px 16px">
-    <h3>Opening the app…</h3>
-    <p>Agar app nahi khula, neeche tap karo.</p>
-    <a href="${deepLink}"
-       style="display:inline-block;padding:12px 24px;background:#6C5CE7;color:#fff;border-radius:10px;text-decoration:none">
-      Open app
-    </a>
-  </body>
-</html>`);
+    res.set({
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+    });
+
+    return res
+      .status(StatusCodes.OK)
+      .type("html")
+      .send(openAppPageHtml(deepLink));
   }),
 
   resetPassword: asyncHandler(async (req, res) => {
     const { token } = req.params;
     const { password, confirmPassword } = req.body;
 
-    if (!token || typeof token !== "string" || token.length < 10) {
+    if (!isValidResetToken(token)) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         "Invalid or missing reset token.",
@@ -304,9 +302,8 @@ const authController = {
       );
     }
 
-    const hashedToken = hashToken(token);
     const user = await User.findOne({
-      passwordResetToken: hashedToken,
+      passwordResetToken: hashToken(token),
       passwordResetExpires: { $gt: new Date() },
     }).select("+passwordResetToken +passwordResetExpires");
 

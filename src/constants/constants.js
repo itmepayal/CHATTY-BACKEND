@@ -369,3 +369,10 @@ export const CHAT_PREF_FIELDS = Object.freeze([
   "largeEmoji",
   "autoScroll",
 ]);
+
+export const PRIVACY_VIS_FIELDS = [
+  "lastSeenVisibility",
+  "profilePhotoVisibility",
+  "aboutVisibility",
+  "groupAddPermission",
+];

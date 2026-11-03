@@ -16,7 +16,12 @@ import LocationShare from "../models/location-share.model.js";
 import ApiResponse from "../utils/api-response.js";
 import { io, getPrivacy } from "../lib/socket.js";
 import { assertCanMessage } from "../utils/chat-guard.js";
-import { deliverMessage, assertE2EEReady, assertNotSpamming, processAttachment } from "../services/message.service.js";
+import {
+  deliverMessage,
+  assertE2EEReady,
+  assertNotSpamming,
+  processAttachment,
+} from "../services/message.service.js";
 import { attachLinkPreview } from "../utils/link-preview.js";
 import { wipeMessage } from "../utils/message-cleanup.js";
 import {
@@ -41,7 +46,7 @@ import {
   toNum,
   validCoords,
   escapeRegex,
-} from "../utils/validators.js"
+} from "../utils/validators.js";
 import {
   EDIT_WINDOW_MS,
   MAX_PINS,
@@ -50,21 +55,25 @@ import {
   REPORT_REASONS,
   LIVE_DURATIONS_MIN,
 } from "../constants/constants.js";
+import {
+  getContactIdSet,
+  canViewSync,
+} from "../services/privacy-visibility.service.js";
 
 const messageController = {
   getUsersForSidebar: asyncHandler(async (req, res) => {
-
     const userId = req.user._id;
     assertValidId(userId, "User ID");
 
     const uid = toObjectId(userId);
 
-    const [users, me, archivedSet] = await Promise.all([
+    const [users, me, archivedSet, contactSet] = await Promise.all([
       User.find({ _id: { $ne: userId } }).select(
-        "fullName email avatar +publicKey",
+        "fullName email avatar bio lastSeen lastSeenVisibility profilePhotoVisibility aboutVisibility +publicKey",
       ),
       User.findById(userId).select("blockedUsers"),
       getArchivedSet(userId),
+      getContactIdSet(userId),
     ]);
 
     const blockedSet = new Set((me?.blockedUsers || []).map(String));
@@ -109,15 +118,26 @@ const messageController = {
 
     const response = users
       .map((user) => {
-        const c = convoMap.get(user._id.toString());
-        const isBlocked = blockedSet.has(user._id.toString());
+        const otherId = user._id.toString();
+        const c = convoMap.get(otherId);
+        const isBlocked = blockedSet.has(otherId);
+
+        const canSee = (visibility, fallback) =>
+          canViewSync(visibility ?? fallback, otherId, userId, contactSet);
+
+        const showPhoto = canSee(user.profilePhotoVisibility, "everyone");
+        const showLastSeen = canSee(user.lastSeenVisibility, "contacts");
+        const showAbout = canSee(user.aboutVisibility, "contacts");
+
         return {
           id: user._id,
           fullName: user.fullName,
           email: user.email,
-          avatar: user.avatar?.url || "",
+          avatar: showPhoto ? user.avatar?.url || "" : "",
+          bio: showAbout ? user.bio || "" : "",
+          lastSeen: showLastSeen ? user.lastSeen || null : null,
           isBlocked,
-          isArchived: archivedSet.has(user._id.toString()),
+          isArchived: archivedSet.has(otherId),
           hasPublicKey: Boolean(user.publicKey),
           unreadCount: isBlocked ? 0 : c?.unreadCount || 0,
           lastMessage: c ? formatMessage(c.lastMessage) : null,
@@ -194,7 +214,8 @@ const messageController = {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
     }
 
-    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee) && Boolean(trimmedText);
+    const wantsE2EE =
+      parseBool(req.body.encrypted ?? req.body.e2ee) && Boolean(trimmedText);
     const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
 
     if (trimmedText && trimmedText.length > maxLen) {
@@ -346,11 +367,11 @@ const messageController = {
       location:
         Number.isFinite(o.location?.lat) && Number.isFinite(o.location?.lng)
           ? {
-            lat: o.location.lat,
-            lng: o.location.lng,
-            accuracy: o.location.accuracy,
-            isLive: false,
-          }
+              lat: o.location.lat,
+              lng: o.location.lng,
+              accuracy: o.location.accuracy,
+              isLive: false,
+            }
           : undefined,
       linkPreview: o.linkPreview?.url ? o.linkPreview : undefined,
       isForwarded: true,
@@ -1045,7 +1066,6 @@ const messageController = {
       archived ? "Chat archived." : "Chat unarchived.",
     ).send(res);
   }),
-
 
   startShare: asyncHandler(async (req, res) => {
     const senderId = req.user._id;

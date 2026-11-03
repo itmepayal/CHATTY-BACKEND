@@ -8,6 +8,7 @@ import { io } from "../lib/socket.js";
 import { assertAdmin, assertUsersAddable } from "../utils/group-guard.js";
 import { parseIds } from "../utils/validators.js";
 import { MAX_GROUP_MEMBERS } from "../constants/constants.js";
+import { assertCanAddToGroup } from "./privacy-visibility.service.js";
 import {
   sid,
   getLatestKeyVersion,
@@ -31,6 +32,9 @@ export const createGroupWithMembers = async ({
   wantsE2EE,
   keyEntries,
 }) => {
+  // groupAddPermission check (creator ko members add karne se pehle)
+  await assertCanAddToGroup(me, memberIds);
+
   const created = await Group.create({
     name,
     avatar,
@@ -75,6 +79,9 @@ export const addMembersToGroup = async ({ group, me, rawMemberIds }) => {
     );
   }
   await assertUsersAddable(me, newIds);
+
+  // groupAddPermission check
+  await assertCanAddToGroup(me, newIds);
 
   const joinedAt = new Date();
   group.members.push(

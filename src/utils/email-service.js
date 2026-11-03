@@ -177,3 +177,26 @@ function loginAlertHtml({ deviceLabel, location, time }, sessionsUrl) {
 function loginAlertText({ deviceLabel, location, time }, sessionsUrl) {
   return `New Chatty sign-in detected\n\nDevice:   ${deviceLabel}\nLocation: ${location}\nTime:     ${time}\n\nIf this was you, no action is needed.\nIf this wasn't you, review your active sessions:\n${sessionsUrl}\n\n— The Chatty team`.trim();
 }
+
+export function openAppPageHtml(deepLink) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="0;url=${deepLink}" />
+    <title>Opening Chatty…</title>
+  </head>
+  <body style="margin:0;padding:48px 16px;background:#0b0914;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;text-align:center;">
+    <h3 style="margin:0 0 8px;font-size:20px;">Opening the app…</h3>
+    <p style="margin:0 0 24px;font-size:14px;color:#94a3b8;">
+      If the app didn't open, tap the button below.
+    </p>
+    <a href="${deepLink}"
+       style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#ffffff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">
+      Open app
+    </a>
+    <script>window.location.replace(${JSON.stringify(deepLink)});</script>
+  </body>
+</html>`;
+}
