@@ -183,7 +183,8 @@
  *     summary: Send a password reset email
  *     description: >
  *       Limited to 5 requests per 15 minutes per IP. Always returns the same
- *       message whether or not the email exists.
+ *       message whether or not the email exists. Send platform "mobile" from the
+ *       app so the email link opens the app instead of the website.
  *     security: []
  *     requestBody:
  *       required: true
@@ -194,6 +195,10 @@
  *             required: [email]
  *             properties:
  *               email: { type: string, format: email }
+ *               platform:
+ *                 type: string
+ *                 enum: [mobile]
+ *                 description: Optional. Use "mobile" to get an app deep link in the email.
  *     responses:
  *       200:
  *         description: Reset instructions sent (if the account exists)
@@ -208,7 +213,9 @@
  *   post:
  *     tags: [Auth]
  *     summary: Reset password using the emailed token
- *     description: Limited to 5 requests per 15 minutes per IP.
+ *     description: >
+ *       Limited to 5 requests per 15 minutes per IP. On success, all existing
+ *       sessions of the user are revoked.
  *     security: []
  *     parameters:
  *       - in: path
@@ -232,6 +239,29 @@
  *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/TooManyRequests'
+ *
+ * /auth/open-app/reset-password/{token}:
+ *   get:
+ *     tags: [Auth]
+ *     summary: Open the mobile app on the new-password screen
+ *     description: >
+ *       Linked from the reset email on mobile. Returns an HTML page that
+ *       redirects to the app deep link (APP_SCHEME://auth/new-password?token=...).
+ *       The token must be a hex string.
+ *     security: []
+ *     parameters:
+ *       - in: path
+ *         name: token
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: HTML redirect page
+ *         content:
+ *           text/html:
+ *             schema: { type: string }
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *
  * /auth/security/login-alerts:
  *   patch:

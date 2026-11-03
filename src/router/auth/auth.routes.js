@@ -32,6 +32,10 @@ router
   .post(strictLimiter, authController.resetPassword);
 
 router
+  .route("/open-app/reset-password/:token")
+  .get(authController.openAppResetPassword);
+
+router
   .route("/security/login-alerts")
   .patch(authMiddleware, authController.updateLoginAlerts);
 

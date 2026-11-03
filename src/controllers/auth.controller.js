@@ -9,6 +9,8 @@ import {
   options,
   refreshTokenScret,
   clientUrl,
+  serverUrl,
+  appSchemeUrl,
   RESET_TOKEN_BYTES,
   RESET_TOKEN_TTL_MS,
 } from "../constants/constants.js";
@@ -248,6 +250,34 @@ const authController = {
     return new ApiResponse(StatusCodes.OK, null, GENERIC_MSG).send(res);
   }),
 
+  openAppResetPassword: asyncHandler(async (req, res) => {
+    const { token } = req.params;
+
+    if (!token || !/^[a-f0-9]{10,}$/i.test(token)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid reset token.");
+    }
+
+    const deepLink = `${appSchemeUrl}auth/new-password?token=${token}`;
+
+    res.status(200).type("html").send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="0;url=${deepLink}" />
+    <title>Opening app…</title>
+  </head>
+  <body style="font-family:sans-serif;text-align:center;padding:48px 16px">
+    <h3>Opening the app…</h3>
+    <p>Agar app nahi khula, neeche tap karo.</p>
+    <a href="${deepLink}"
+       style="display:inline-block;padding:12px 24px;background:#6C5CE7;color:#fff;border-radius:10px;text-decoration:none">
+      Open app
+    </a>
+  </body>
+</html>`);
+  }),
+
   resetPassword: asyncHandler(async (req, res) => {
     const { token } = req.params;
     const { password, confirmPassword } = req.body;
@@ -291,6 +321,11 @@ const authController = {
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     await user.save();
+
+    await Session.updateMany(
+      { user: user._id },
+      { $set: { revoked: true } },
+    ).catch(() => {});
 
     return new ApiResponse(
       StatusCodes.OK,
