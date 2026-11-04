@@ -1,6 +1,9 @@
 import Group from "../models/group.model.js";
 import GroupMessage from "../models/group-message.model.js";
 import GroupKey from "../models/group-key.model.js";
+import User from "../models/users.model.js";
+import Contact from "../models/contact.model.js";
+import { canViewSync } from "./privacy-visibility.service.js";
 import GroupArchive, {
   getArchivedGroupSet,
 } from "../models/group-archive.model.js";
@@ -85,34 +88,92 @@ export const notifyKeysNeeded = async (group, newIds) => {
 };
 
 export const loadGroup = (id) =>
-  Group.findById(id).populate("members.userId", "fullName avatar");
+  Group.findById(id).populate(
+    "members.userId",
+    "fullName avatar profilePhotoVisibility",
+  );
 
-export const formatGroup = (group, extra = {}) => ({
-  id: group._id,
-  name: group.name,
-  avatar: group.avatar?.url || "",
-  owner: sid(group.owner),
-  members: group.members.map((m) => ({
-    id: sid(m.userId),
-    fullName: m.userId?.fullName || "",
-    avatar: m.userId?.avatar?.url || "",
-    role: m.role,
-    joinedAt: m.joinedAt,
-  })),
-  createdAt: group.createdAt,
-  lastMessageAt: group.lastMessageAt || group.createdAt,
-  unreadCount: 0,
-  lastMessage: null,
-  archived: false,
-  e2ee: false,
-  keyVersion: 0,
-  keyRotationPending: !!group.keyRotationPending,
-  ...extra,
-});
+export const formatGroup = (
+  group,
+  extra = {},
+  viewerId = null,
+  targetSavedViewerSet = null,
+  blockedSet = null,
+) => {
+  const vId = viewerId ? String(viewerId) : null;
+  return {
+    id: group._id,
+    name: group.name,
+    avatar: group.avatar?.url || "",
+    owner: sid(group.owner),
+    members: group.members.map((m) => {
+      const u = m.userId;
+      const uid = sid(u);
+      const isSelf = vId && uid === vId;
+      const isBlocked = blockedSet ? blockedSet.has(uid) : false;
 
-export const presentGroup = async (group, extra = {}) => {
+      let showPhoto = true;
+      if (vId && !isSelf) {
+        if (isBlocked) {
+          showPhoto = false;
+        } else {
+          const vis = u?.profilePhotoVisibility ?? "everyone";
+          showPhoto = canViewSync(vis, uid, vId, targetSavedViewerSet);
+        }
+      }
+
+      return {
+        id: uid,
+        fullName: u?.fullName || "",
+        avatar: showPhoto ? u?.avatar?.url || "" : "",
+        role: m.role,
+        joinedAt: m.joinedAt,
+      };
+    }),
+    createdAt: group.createdAt,
+    lastMessageAt: group.lastMessageAt || group.createdAt,
+    unreadCount: 0,
+    lastMessage: null,
+    archived: false,
+    e2ee: false,
+    keyVersion: 0,
+    keyRotationPending: !!group.keyRotationPending,
+    ...extra,
+  };
+};
+
+export const presentGroup = async (group, extra = {}, viewerId = null) => {
   const keyVersion = await getLatestKeyVersion(group._id);
-  return formatGroup(group, { e2ee: keyVersion > 0, keyVersion, ...extra });
+  let targetSavedViewerSet = null;
+  let blockedSet = null;
+
+  if (viewerId) {
+    const memberIds = group.members
+      .map((m) => m.userId?._id || m.userId)
+      .filter(Boolean);
+    const [savedContacts, blockers, meDoc] = await Promise.all([
+      Contact.find({ ownerId: { $in: memberIds }, contactId: viewerId })
+        .select("ownerId")
+        .lean(),
+      User.find({ _id: { $in: memberIds }, blockedUsers: viewerId })
+        .select("_id")
+        .lean(),
+      User.findById(viewerId).select("blockedUsers").lean(),
+    ]);
+    targetSavedViewerSet = new Set(savedContacts.map((c) => String(c.ownerId)));
+    blockedSet = new Set([
+      ...blockers.map((b) => String(b._id)),
+      ...(meDoc?.blockedUsers || []).map(String),
+    ]);
+  }
+
+  return formatGroup(
+    group,
+    { e2ee: keyVersion > 0, keyVersion, ...extra },
+    viewerId,
+    targetSavedViewerSet,
+    blockedSet,
+  );
 };
 
 export const formatGroupMessage = (msg) => {
@@ -190,6 +251,80 @@ export const emitToMembers = (group, event, payload, exceptIds = []) => {
   }
 };
 
+export const emitGroupToMembers = async (
+  group,
+  event,
+  exceptIds = [],
+  extra = {},
+) => {
+  const skip = new Set(exceptIds.map(String));
+  const memberIds = group.members
+    .map((m) => sid(m.userId))
+    .filter(Boolean);
+
+  const recipientIds = memberIds.filter((id) => !skip.has(id));
+  if (!recipientIds.length) return;
+
+  const keyVersion = await getLatestKeyVersion(group._id);
+
+  // Batch query blockers and contacts among all group members in one round-trip
+  const [memberUsers, contacts] = await Promise.all([
+    User.find({ _id: { $in: memberIds } })
+      .select("_id blockedUsers")
+      .lean(),
+    Contact.find({
+      ownerId: { $in: memberIds },
+      contactId: { $in: memberIds },
+    })
+      .select("ownerId contactId")
+      .lean(),
+  ]);
+
+  const blockedByMap = new Map();
+  for (const u of memberUsers) {
+    blockedByMap.set(
+      String(u._id),
+      new Set((u.blockedUsers || []).map(String)),
+    );
+  }
+
+  // Map: contactId -> Set of ownerIds who saved contactId
+  const savedByMap = new Map();
+  for (const c of contacts) {
+    const cid = String(c.contactId);
+    const oid = String(c.ownerId);
+    if (!savedByMap.has(cid)) savedByMap.set(cid, new Set());
+    savedByMap.get(cid).add(oid);
+  }
+
+  for (const uid of recipientIds) {
+    const targetSavedViewerSet = savedByMap.get(uid) || new Set();
+
+    // Blocked if viewer blocked other OR other blocked viewer
+    const blockedSet = new Set();
+    const myBlocked = blockedByMap.get(uid) || new Set();
+    for (const otherId of memberIds) {
+      if (otherId === uid) continue;
+      if (
+        myBlocked.has(otherId) ||
+        (blockedByMap.get(otherId) && blockedByMap.get(otherId).has(uid))
+      ) {
+        blockedSet.add(otherId);
+      }
+    }
+
+    const personalized = formatGroup(
+      group,
+      { e2ee: keyVersion > 0, keyVersion, ...extra },
+      uid,
+      targetSavedViewerSet,
+      blockedSet,
+    );
+
+    io.to(uid).emit(event, personalized);
+  }
+};
+
 export const emitToViewers = async (group, sharerId, event, payload) => {
   const memberIds = group.members.map((m) => sid(m.userId));
   const [blockers, blockedBySharer] = await Promise.all([
@@ -247,23 +382,57 @@ export const emitGroupConversation = async (group) => {
 };
 
 export const broadcastGroupMessage = async (group, message, senderId) => {
-  await message.populate("senderId", "fullName avatar");
+  await message.populate("senderId", "fullName avatar profilePhotoVisibility");
   await Group.updateOne(
     { _id: group._id },
     { lastMessageAt: message.createdAt },
   );
 
-  const payload = formatGroupMessage(message);
+  const sender = message.senderId;
+  const sId = sid(sender);
+  const vis = sender?.profilePhotoVisibility ?? "everyone";
 
   const memberIds = group.members.map((m) => sid(m.userId));
   const blockers = await getBlockersOf(memberIds, senderId);
-  memberIds
-    .filter((id) => !blockers.has(id))
-    .forEach((id) => io.to(id).emit("group:newMessage", payload));
+  const eligibleMemberIds = memberIds.filter((id) => !blockers.has(id));
+
+  let contactsWhoSavedSender = new Set();
+  if (vis === "contacts") {
+    const contacts = await Contact.find({
+      ownerId: sId,
+      contactId: { $in: eligibleMemberIds },
+    })
+      .select("contactId")
+      .lean();
+    contactsWhoSavedSender = new Set(contacts.map((c) => String(c.contactId)));
+  }
+
+  const basePayload = formatGroupMessage(message);
+
+  for (const id of eligibleMemberIds) {
+    const isSelf = id === sId;
+    let canSeePhoto = isSelf;
+    if (!isSelf) {
+      if (vis === "everyone") canSeePhoto = true;
+      else if (vis === "contacts") canSeePhoto = contactsWhoSavedSender.has(id);
+      else canSeePhoto = false; // nobody
+    }
+
+    const memberPayload = canSeePhoto
+      ? basePayload
+      : {
+          ...basePayload,
+          sender: basePayload.sender
+            ? { ...basePayload.sender, avatar: "" }
+            : null,
+        };
+
+    io.to(id).emit("group:newMessage", memberPayload);
+  }
 
   emitGroupConversation(group);
 
-  return payload;
+  return basePayload;
 };
 
 export const endShare = async (group, share, status = "stopped") => {
@@ -345,13 +514,40 @@ export const getMyGroupsList = async (me) => {
   const [groups, blocked, archivedSet] = await Promise.all([
     Group.find({ "members.userId": me }).populate(
       "members.userId",
-      "fullName avatar",
+      "fullName avatar profilePhotoVisibility",
     ),
     getBlockedByMe(me),
     getArchivedGroupSet(me),
   ]);
 
   const versions = await getLatestVersions(groups.map((g) => g._id));
+
+  // Batch lookup contacts who saved 'me' and blockers among group members
+  const allMemberIds = [
+    ...new Set(
+      groups.flatMap((g) =>
+        g.members.map((m) => m.userId?._id || m.userId).filter(Boolean),
+      ),
+    ),
+  ];
+
+  const [savedContacts, blockers, meDoc] = await Promise.all([
+    Contact.find({ ownerId: { $in: allMemberIds }, contactId: me })
+      .select("ownerId")
+      .lean(),
+    User.find({ _id: { $in: allMemberIds }, blockedUsers: me })
+      .select("_id")
+      .lean(),
+    User.findById(me).select("blockedUsers").lean(),
+  ]);
+
+  const targetSavedViewerSet = new Set(
+    savedContacts.map((c) => String(c.ownerId)),
+  );
+  const blockedSet = new Set([
+    ...blockers.map((b) => String(b._id)),
+    ...(meDoc?.blockedUsers || []).map(String),
+  ]);
 
   const result = await Promise.all(
     groups.map(async (g) => {
@@ -361,14 +557,20 @@ export const getMyGroupsList = async (me) => {
         getLast(g._id, mine.joinedAt, blocked),
       ]);
       const keyVersion = versions.get(String(g._id)) || 0;
-      return formatGroup(g, {
-        unreadCount,
-        lastMessage: last ? formatGroupMessage(last) : null,
-        lastMessageAt: last?.createdAt || g.lastMessageAt || g.createdAt,
-        archived: archivedSet.has(String(g._id)),
-        e2ee: keyVersion > 0,
-        keyVersion,
-      });
+      return formatGroup(
+        g,
+        {
+          unreadCount,
+          lastMessage: last ? formatGroupMessage(last) : null,
+          lastMessageAt: last?.createdAt || g.lastMessageAt || g.createdAt,
+          archived: archivedSet.has(String(g._id)),
+          e2ee: keyVersion > 0,
+          keyVersion,
+        },
+        me,
+        targetSavedViewerSet,
+        blockedSet,
+      );
     }),
   );
 
@@ -394,9 +596,40 @@ export const getGroupMessagesList = async (group, member, me, query) => {
   })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .populate("senderId", "fullName avatar");
+    .populate("senderId", "fullName avatar profilePhotoVisibility");
 
-  return msgs.reverse().map(formatGroupMessage);
+  const senderIds = [
+    ...new Set(
+      msgs.map((m) => m.senderId?._id || m.senderId).filter(Boolean),
+    ),
+  ];
+
+  const contactsWhoSavedMe = await Contact.find({
+    ownerId: { $in: senderIds },
+    contactId: me,
+  })
+    .select("ownerId")
+    .lean();
+  const targetSavedMeSet = new Set(
+    contactsWhoSavedMe.map((c) => String(c.ownerId)),
+  );
+
+  return msgs.reverse().map((m) => {
+    const formatted = formatGroupMessage(m);
+    const sender = m.senderId;
+    if (sender) {
+      const sId = sid(sender);
+      const isSelf = sId === String(me);
+      if (!isSelf) {
+        const vis = sender.profilePhotoVisibility ?? "everyone";
+        const canSeePhoto = canViewSync(vis, sId, me, targetSavedMeSet);
+        if (!canSeePhoto && formatted.sender) {
+          formatted.sender.avatar = "";
+        }
+      }
+    }
+    return formatted;
+  });
 };
 
 export const markGroupMessagesSeen = async (

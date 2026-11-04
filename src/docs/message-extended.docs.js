@@ -34,6 +34,7 @@
  *           type: string
  *           enum: [pending, sent, cancelled, failed]
  *         e2ee: { type: boolean, nullable: true }
+ *         iv: { type: string, nullable: true }
  *         createdAt: { type: string, format: date-time }
  *
  * /messages/forward/{messageId}:

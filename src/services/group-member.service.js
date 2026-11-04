@@ -18,6 +18,7 @@ import {
   loadGroup,
   presentGroup,
   emitToMembers,
+  emitGroupToMembers,
   joinRoom,
   leaveRoom,
   stopUserShares,
@@ -59,10 +60,9 @@ export const createGroupWithMembers = async ({
   [String(me), ...memberIds].forEach((id) => joinRoom(id, created._id));
 
   const group = await loadGroup(created._id);
-  const payload = await presentGroup(group);
-  emitToMembers(group, "group:created", payload);
+  await emitGroupToMembers(group, "group:created");
 
-  return payload;
+  return presentGroup(group, {}, me);
 };
 
 export const addMembersToGroup = async ({ group, me, rawMemberIds }) => {
@@ -92,13 +92,12 @@ export const addMembersToGroup = async ({ group, me, rawMemberIds }) => {
   newIds.forEach((id) => joinRoom(id, group._id));
 
   const full = await loadGroup(group._id);
-  const payload = await presentGroup(full);
-  emitToMembers(full, "group:created", payload, [...existing]);
-  emitToMembers(full, "group:updated", payload, newIds);
+  await emitGroupToMembers(full, "group:created", [...existing]);
+  await emitGroupToMembers(full, "group:updated", newIds);
 
   await notifyKeysNeeded(full, newIds);
 
-  return payload;
+  return presentGroup(full, {}, me);
 };
 
 export const removeMemberFromGroup = async ({ group, me, targetId }) => {
@@ -144,12 +143,11 @@ export const removeMemberFromGroup = async ({ group, me, targetId }) => {
   });
 
   const full = await loadGroup(group._id);
-  const payload = await presentGroup(full);
-  emitToMembers(full, "group:updated", payload);
+  await emitGroupToMembers(full, "group:updated");
 
   await requestKeyRotation(group, "member_removed");
 
-  return payload;
+  return presentGroup(full, {}, me);
 };
 
 export const changeMemberRole = async ({ group, me, targetId, role }) => {
@@ -193,10 +191,9 @@ export const changeMemberRole = async ({ group, me, targetId, role }) => {
   await group.save();
 
   const full = await loadGroup(group._id);
-  const payload = await presentGroup(full);
-  emitToMembers(full, "group:updated", payload);
+  await emitGroupToMembers(full, "group:updated");
 
-  return payload;
+  return presentGroup(full, {}, me);
 };
 
 export const leaveGroupFlow = async ({ group, me }) => {
@@ -231,7 +228,7 @@ export const leaveGroupFlow = async ({ group, me }) => {
   });
 
   const full = await loadGroup(group._id);
-  emitToMembers(full, "group:updated", await presentGroup(full));
+  await emitGroupToMembers(full, "group:updated");
 
   await requestKeyRotation(group, "member_left");
 

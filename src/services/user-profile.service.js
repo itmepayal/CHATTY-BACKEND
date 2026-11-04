@@ -8,7 +8,10 @@ import {
 import formatUser from "../utils/format-user.js";
 import { RULES } from "../utils/profile-rules.js";
 import { EDITABLE_FIELDS } from "../constants/constants.js";
-import { filterUserForViewer } from "./privacy-visibility.service.js";
+import {
+  filterUserForViewer,
+  getVisibleUserProfile,
+} from "./privacy-visibility.service.js";
 
 export const updateProfileData = async (userId, body) => {
   const $set = {};
@@ -158,23 +161,6 @@ export const fetchCurrentUser = async (userId) => {
 };
 
 export const fetchUserProfileForViewer = async (targetId, viewerId) => {
-  const user = await User.findById(targetId).select(
-    "fullName username avatar bio lastSeen location website lastSeenVisibility profilePhotoVisibility aboutVisibility",
-  );
-  if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
-  }
-
-  const safe = await filterUserForViewer(user, viewerId);
-
-  return {
-    user: {
-      id: safe._id,
-      fullName: safe.fullName,
-      username: safe.username || "",
-      avatar: safe.avatar?.url || "",
-      bio: safe.bio || "",
-      lastSeen: safe.lastSeen || null,
-    },
-  };
+  const safe = await getVisibleUserProfile(viewerId, targetId);
+  return { user: safe };
 };

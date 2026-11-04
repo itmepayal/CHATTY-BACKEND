@@ -145,8 +145,33 @@ const options = {
           type: "object",
           properties: {
             showOnlineStatus: { type: "boolean" },
+            onlineStatusVisibility: {
+              type: "string",
+              enum: ["everyone", "contacts", "nobody"],
+              default: "everyone",
+            },
             readReceipts: { type: "boolean" },
             typingIndicator: { type: "boolean" },
+            lastSeenVisibility: {
+              type: "string",
+              enum: ["everyone", "contacts", "nobody"],
+              default: "contacts",
+            },
+            profilePhotoVisibility: {
+              type: "string",
+              enum: ["everyone", "contacts", "nobody"],
+              default: "everyone",
+            },
+            aboutVisibility: {
+              type: "string",
+              enum: ["everyone", "contacts", "nobody"],
+              default: "contacts",
+            },
+            groupAddPermission: {
+              type: "string",
+              enum: ["everyone", "contacts", "nobody"],
+              default: "contacts",
+            },
           },
         },
         ChatPrefs: {

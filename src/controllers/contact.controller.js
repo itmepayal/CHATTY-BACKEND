@@ -8,6 +8,7 @@ import Message from "../models/message.model.js";
 import Contact from "../models/contact.model.js";
 import { toObjectId } from "../utils/message-helpers.js";
 import { myId } from "../utils/request-helpers.js";
+import { filterUsersForViewer } from "../services/privacy-visibility.service.js";
 
 const contactController = {
   searchUsers: asyncHandler(async (req, res) => {
@@ -27,7 +28,7 @@ const contactController = {
       _id: { $ne: myId(req), $nin: me.blockedUsers },
       $or: [{ fullName: rx }, { username: rx }, { email: rx }],
     })
-      .select("fullName username avatar")
+      .select("fullName username avatar profilePhotoVisibility")
       .limit(20)
       .lean();
 
@@ -37,9 +38,16 @@ const contactController = {
     }).select("contactId");
     const set = new Set(mine.map((c) => String(c.contactId)));
 
+    const safeUsers = await filterUsersForViewer(users, myId(req));
+
     return new ApiResponse(
       StatusCodes.OK,
-      { users: users.map((u) => ({ ...u, isContact: set.has(String(u._id)) })) },
+      {
+        users: safeUsers.map((u) => ({
+          ...u,
+          isContact: set.has(String(u._id)),
+        })),
+      },
       "Users fetched successfully.",
     ).send(res);
   }),
@@ -75,17 +83,29 @@ const contactController = {
     const rows = await Contact.find({ ownerId: myId(req) })
       .populate(
         "contactId",
-        "fullName username avatar lastSeen showOnlineStatus",
+        "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility",
       )
       .sort({ createdAt: -1 })
       .lean();
+
+    const populatedUsers = rows
+      .filter((r) => r.contactId)
+      .map((r) => r.contactId);
+    const safeUsers = await filterUsersForViewer(populatedUsers, myId(req));
+    const safeMap = new Map(safeUsers.map((u) => [String(u._id || u.id), u]));
 
     return new ApiResponse(
       StatusCodes.OK,
       {
         contacts: rows
           .filter((r) => r.contactId)
-          .map((r) => ({ ...r.contactId, nickname: r.nickname })),
+          .map((r) => {
+            const safe = safeMap.get(String(r.contactId._id || r.contactId.id));
+            return {
+              ...(safe || r.contactId),
+              nickname: r.nickname,
+            };
+          }),
       },
       "Contacts fetched successfully.",
     ).send(res);
@@ -135,14 +155,23 @@ const contactController = {
     const byUser = new Map(last.map((l) => [String(l._id), l]));
 
     const users = await User.find({ _id: { $in: ids } })
-      .select("fullName username avatar lastSeen showOnlineStatus")
+      .select(
+        "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility",
+      )
       .lean();
+
+    const safeUsers = await filterUsersForViewer(users, me);
+    const safeUserMap = new Map(
+      safeUsers.map((u) => [String(u._id || u.id), u]),
+    );
 
     const chats = users
       .map((u) => {
-        const l = byUser.get(String(u._id));
+        const uid = String(u._id);
+        const l = byUser.get(uid);
+        const safe = safeUserMap.get(uid) || u;
         return {
-          user: u,
+          user: safe,
           lastMessage: l?.lastMessage || null,
           unread: l?.unread || 0,
         };

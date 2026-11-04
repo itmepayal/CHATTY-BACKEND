@@ -370,9 +370,10 @@ export const CHAT_PREF_FIELDS = Object.freeze([
   "autoScroll",
 ]);
 
-export const PRIVACY_VIS_FIELDS = [
+export const PRIVACY_VIS_FIELDS = Object.freeze([
   "lastSeenVisibility",
+  "onlineStatusVisibility",
   "profilePhotoVisibility",
   "aboutVisibility",
   "groupAddPermission",
-];
+]);

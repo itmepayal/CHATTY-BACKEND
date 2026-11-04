@@ -58,6 +58,42 @@
  *       429:
  *         $ref: '#/components/responses/TooManyRequests'
  *
+ * /users/{id}/profile:
+ *   get:
+ *     tags: [Users]
+ *     operationId: getUserProfile
+ *     summary: Get another user's sanitized profile
+ *     description: Fetches another user's public profile filtered by authoritative privacy visibility rules (last seen, profile photo, bio, online status).
+ *     parameters:
+ *       - $ref: '#/components/parameters/UserId'
+ *     responses:
+ *       200:
+ *         description: User profile fetched successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         user:
+ *                           type: object
+ *                           properties:
+ *                             id: { type: string }
+ *                             fullName: { type: string }
+ *                             username: { type: string }
+ *                             avatar: { type: string, nullable: true }
+ *                             bio: { type: string }
+ *                             lastSeen: { type: string, format: date-time, nullable: true }
+ *                             showOnlineStatus: { type: boolean }
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *
  * /users/{id}/public-key:
  *   get:
  *     tags: [Users]

@@ -55,10 +55,8 @@ import {
   REPORT_REASONS,
   LIVE_DURATIONS_MIN,
 } from "../constants/constants.js";
-import {
-  getContactIdSet,
-  canViewSync,
-} from "../services/privacy-visibility.service.js";
+import { canViewSync } from "../services/privacy-visibility.service.js";
+import Contact from "../models/contact.model.js";
 
 const messageController = {
   getUsersForSidebar: asyncHandler(async (req, res) => {
@@ -67,16 +65,30 @@ const messageController = {
 
     const uid = toObjectId(userId);
 
-    const [users, me, archivedSet, contactSet] = await Promise.all([
+    const [users, me, archivedSet] = await Promise.all([
       User.find({ _id: { $ne: userId } }).select(
-        "fullName email avatar bio lastSeen lastSeenVisibility profilePhotoVisibility aboutVisibility +publicKey",
+        "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility +publicKey",
       ),
       User.findById(userId).select("blockedUsers"),
       getArchivedSet(userId),
-      getContactIdSet(userId),
     ]);
 
-    const blockedSet = new Set((me?.blockedUsers || []).map(String));
+    const userIds = users.map((u) => u._id);
+
+    const [blockers, contactsWhoSavedMe] = await Promise.all([
+      User.find({ _id: { $in: userIds }, blockedUsers: userId })
+        .select("_id")
+        .lean(),
+      Contact.find({ ownerId: { $in: userIds }, contactId: userId })
+        .select("ownerId")
+        .lean(),
+    ]);
+
+    const myBlockedSet = new Set((me?.blockedUsers || []).map(String));
+    const blockerSet = new Set(blockers.map((b) => String(b._id)));
+    const targetSavedMeSet = new Set(
+      contactsWhoSavedMe.map((c) => String(c.ownerId)),
+    );
 
     const convoAgg = await Message.aggregate([
       {
@@ -120,14 +132,25 @@ const messageController = {
       .map((user) => {
         const otherId = user._id.toString();
         const c = convoMap.get(otherId);
-        const isBlocked = blockedSet.has(otherId);
+        const isBlocked = myBlockedSet.has(otherId) || blockerSet.has(otherId);
 
         const canSee = (visibility, fallback) =>
-          canViewSync(visibility ?? fallback, otherId, userId, contactSet);
+          !isBlocked &&
+          canViewSync(
+            visibility ?? fallback,
+            otherId,
+            userId,
+            targetSavedMeSet,
+          );
 
         const showPhoto = canSee(user.profilePhotoVisibility, "everyone");
         const showLastSeen = canSee(user.lastSeenVisibility, "contacts");
         const showAbout = canSee(user.aboutVisibility, "contacts");
+        const onlineVis =
+          user.showOnlineStatus === false
+            ? "nobody"
+            : (user.onlineStatusVisibility ?? "everyone");
+        const showOnline = canSee(onlineVis, "everyone");
 
         return {
           id: user._id,
@@ -136,6 +159,7 @@ const messageController = {
           avatar: showPhoto ? user.avatar?.url || "" : "",
           bio: showAbout ? user.bio || "" : "",
           lastSeen: showLastSeen ? user.lastSeen || null : null,
+          showOnlineStatus: showOnline,
           isBlocked,
           isArchived: archivedSet.has(otherId),
           hasPublicKey: Boolean(user.publicKey),
@@ -721,7 +745,9 @@ const messageController = {
 
     assertValidId(otherUserId, "user ID");
 
-    const { readReceipts } = getPrivacy(userId);
+    const canReceipt =
+      getPrivacy(userId).readReceipts !== false &&
+      getPrivacy(otherUserId).readReceipts !== false;
 
     const unseen = await Message.find({
       senderId: otherUserId,
@@ -736,7 +762,7 @@ const messageController = {
     if (ids.length) {
       const now = new Date();
 
-      if (readReceipts) {
+      if (canReceipt) {
         await Message.updateMany({ _id: { $in: ids } }, [
           {
             $set: {

@@ -17,6 +17,7 @@ router
 router
   .route("/privacy")
   .get(usersController.getPrivacySettings)
+  .put(settingsLimiter, usersController.updatePrivacySettings)
   .patch(settingsLimiter, usersController.updatePrivacySettings);
 router
   .route("/chat-prefs")
@@ -27,6 +28,7 @@ router
   .get(usersController.getAppearance)
   .patch(settingsLimiter, usersController.updateAppearance);
 router.put("/me/public-key", settingsLimiter, usersController.setMyPublicKey);
+router.get("/:id/profile", usersController.getUserProfile);
 router.get("/:id/public-key", usersController.getUserPublicKey);
 router
   .route("/:id/block")

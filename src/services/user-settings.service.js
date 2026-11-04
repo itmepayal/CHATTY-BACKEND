@@ -13,17 +13,23 @@ import {
 } from "../constants/constants.js";
 
 const PRIVACY_SELECT =
-  "showOnlineStatus readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission";
+  "showOnlineStatus onlineStatusVisibility readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission";
 
-const formatPrivacy = (u) => ({
-  showOnlineStatus: u.showOnlineStatus !== false,
-  readReceipts: u.readReceipts !== false,
-  typingIndicator: u.typingIndicator !== false,
-  lastSeenVisibility: u.lastSeenVisibility ?? "contacts",
-  profilePhotoVisibility: u.profilePhotoVisibility ?? "everyone",
-  aboutVisibility: u.aboutVisibility ?? "contacts",
-  groupAddPermission: u.groupAddPermission ?? "contacts",
-});
+const formatPrivacy = (u) => {
+  const onlineStatusVisibility =
+    u.onlineStatusVisibility ??
+    (u.showOnlineStatus === false ? "nobody" : "everyone");
+  return {
+    showOnlineStatus: onlineStatusVisibility !== "nobody",
+    readReceipts: u.readReceipts !== false,
+    typingIndicator: u.typingIndicator !== false,
+    lastSeenVisibility: u.lastSeenVisibility ?? "contacts",
+    onlineStatusVisibility,
+    profilePhotoVisibility: u.profilePhotoVisibility ?? "everyone",
+    aboutVisibility: u.aboutVisibility ?? "contacts",
+    groupAddPermission: u.groupAddPermission ?? "contacts",
+  };
+};
 
 export const getPrivacy = async (userId) => {
   const user = await User.findById(userId).select(PRIVACY_SELECT);
@@ -68,6 +74,13 @@ export const setPrivacy = async (userId, body = {}) => {
       );
     }
     $set[key] = value;
+  }
+
+  // Bidirectional synchronization between onlineStatusVisibility and legacy showOnlineStatus
+  if (visBody.onlineStatusVisibility) {
+    $set.showOnlineStatus = visBody.onlineStatusVisibility !== "nobody";
+  } else if (boolBody.showOnlineStatus !== undefined) {
+    $set.onlineStatusVisibility = boolBody.showOnlineStatus ? "everyone" : "nobody";
   }
 
   if (!Object.keys($set).length) {
@@ -172,7 +185,10 @@ export const setAppearanceSettings = async (userId, body) => {
           StatusCodes.BAD_REQUEST,
           `"${key}" must be a boolean.`,
         );
-      $set.appearanceTimestamps = body[key];
+      const dbKey =
+        APPEARANCE_DB_KEY[key] ??
+        `appearance${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+      $set[dbKey] = body[key];
     }
   }
 
@@ -185,7 +201,7 @@ export const setAppearanceSettings = async (userId, body) => {
   const updated = await User.findByIdAndUpdate(
     userId,
     { $set },
-    { new: true, runValidators: false },
+    { new: true, runValidators: true },
   ).select(
     "appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
   );

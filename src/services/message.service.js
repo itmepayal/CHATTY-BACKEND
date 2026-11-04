@@ -32,7 +32,10 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
     getExpiry(senderId, receiverId),
   ]);
 
-  const seenNow = viewing && getPrivacy(receiverId).readReceipts;
+  const canSendReceipt =
+    getPrivacy(receiverId).readReceipts !== false &&
+    getPrivacy(senderId).readReceipts !== false;
+  const seenNow = viewing && canSendReceipt;
   const now = new Date();
 
   const message = await Message.create({

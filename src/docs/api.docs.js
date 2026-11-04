@@ -120,6 +120,22 @@
  *                       $ref: '#/components/schemas/PrivacySettings'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *   put:
+ *     tags: [Users]
+ *     summary: Replace privacy settings
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/PrivacySettings'
+ *     responses:
+ *       200:
+ *         description: Privacy settings updated
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *   patch:
  *     tags: [Users]
  *     summary: Update privacy settings

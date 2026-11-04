@@ -20,6 +20,7 @@ import {
   loadGroup,
   presentGroup,
   emitToMembers,
+  emitGroupToMembers,
   broadcastGroupMessage,
   deleteMedia,
   destroyGroup,
@@ -29,7 +30,10 @@ import {
   validateGroupMessageInput,
   findGroupMessageDuplicate,
 } from "../services/group.service.js";
-import { uploadImage, uploadAttachment } from "../services/group-media.service.js";
+import {
+  uploadImage,
+  uploadAttachment,
+} from "../services/group-media.service.js";
 import {
   validateInitialKeyEntries,
   getMyKeysPayload,
@@ -111,7 +115,7 @@ const groupController = {
     }));
     return new ApiResponse(
       StatusCodes.OK,
-      await presentGroup(group, { archived }),
+      await presentGroup(group, { archived }, me),
       "Group fetched.",
     ).send(res);
   }),
@@ -176,11 +180,11 @@ const groupController = {
     }
 
     await group.save();
-    if (oldPublicId) await deleteFileToCloudinary(oldPublicId).catch(() => { });
+    if (oldPublicId) await deleteFileToCloudinary(oldPublicId).catch(() => {});
 
     const full = await loadGroup(group._id);
-    const payload = await presentGroup(full);
-    emitToMembers(full, "group:updated", payload);
+    await emitGroupToMembers(full, "group:updated");
+    const payload = await presentGroup(full, {}, me);
 
     return new ApiResponse(StatusCodes.OK, payload, "Group updated.").send(res);
   }),
@@ -301,12 +305,13 @@ const groupController = {
 
     const entries = parseKeyEntries(req.body.keys, toNum(req.body.version));
 
-    const { latestVersion, stored, isNewVersion, latest } = await applyGroupKeys({
-      group,
-      member,
-      entries,
-      me,
-    });
+    const { latestVersion, stored, isNewVersion, latest } =
+      await applyGroupKeys({
+        group,
+        member,
+        entries,
+        me,
+      });
 
     return new ApiResponse(
       StatusCodes.OK,
@@ -356,10 +361,10 @@ const groupController = {
 
     const attachment = req.file?.path
       ? await uploadAttachment(req.file, {
-        isVoice,
-        isVideo,
-        duration: req.body.duration,
-      })
+          isVoice,
+          isVideo,
+          duration: req.body.duration,
+        })
       : {};
 
     let message;
@@ -401,7 +406,12 @@ const groupController = {
     const { group, member } = await getGroupAndMember(req.params.id, me);
     const { readReceipts } = getPrivacy(me);
 
-    const { count } = await markGroupMessagesSeen(group, member, me, readReceipts);
+    const { count } = await markGroupMessagesSeen(
+      group,
+      member,
+      me,
+      readReceipts,
+    );
 
     return new ApiResponse(
       StatusCodes.OK,
@@ -431,7 +441,12 @@ const groupController = {
       ).send(res);
     };
 
-    const result = await startCurrentShare({ group, me, body: req.body, file: req.file });
+    const result = await startCurrentShare({
+      group,
+      me,
+      body: req.body,
+      file: req.file,
+    });
 
     if (result.duplicate) {
       return respondDuplicate(result.dup, result.mode);
@@ -468,9 +483,11 @@ const groupController = {
       ).send(res);
     }
 
-    return new ApiResponse(StatusCodes.OK, result.locationPayload, "Location updated.").send(
-      res,
-    );
+    return new ApiResponse(
+      StatusCodes.OK,
+      result.locationPayload,
+      "Location updated.",
+    ).send(res);
   }),
 
   stopGroupShare: asyncHandler(async (req, res) => {

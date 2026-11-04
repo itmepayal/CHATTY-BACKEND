@@ -25,9 +25,13 @@ export const startScheduler = () => {
           const { message } = await deliverMessage({
             senderId: s.senderId,
             receiverId: s.receiverId,
-            data: { text: s.text },
+            data: {
+              text: s.text,
+              e2ee: Boolean(s.e2ee),
+              ...(s.iv ? { iv: s.iv } : {}),
+            },
           });
-          attachLinkPreview(message);
+          if (!s.e2ee) attachLinkPreview(message);
 
           await ScheduledMessage.updateOne(
             { _id: s._id },

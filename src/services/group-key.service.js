@@ -12,6 +12,7 @@ import {
   loadGroup,
   presentGroup,
   emitToMembers,
+  emitGroupToMembers,
 } from "./group.service.js";
 
 export const validateInitialKeyEntries = ({ keyEntries, me, memberIds }) => {
@@ -178,7 +179,7 @@ export const applyGroupKeys = async ({ group, member, entries, me }) => {
 
   if (isNewVersion) {
     const full = await loadGroup(group._id);
-    emitToMembers(full, "group:updated", await presentGroup(full));
+    await emitGroupToMembers(full, "group:updated");
   }
 
   return { latestVersion, stored: entries.length, isNewVersion, latest };

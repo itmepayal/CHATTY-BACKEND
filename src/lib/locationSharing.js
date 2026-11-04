@@ -21,7 +21,7 @@ export const registerLocationHandlers = (
   socket.on("disconnect", () => lastEmitAt.clear());
 
   socket.on("location:update", async (payload, ack) => {
-    const done = typeof ack === "function" ? ack : () => { };
+    const done = typeof ack === "function" ? ack : () => {};
 
     try {
       const { shareId, lat, lng, accuracy, heading, speed } = payload || {};
@@ -109,7 +109,10 @@ export const registerLocationHandlers = (
   });
 };
 
-export const startLocationExpirySweeper = (io, everyMs = LOCATION_EXPIRY_SWEEP_INTERVAL_MS) => {
+export const startLocationExpirySweeper = (
+  io,
+  everyMs = LOCATION_EXPIRY_SWEEP_INTERVAL_MS,
+) => {
   let running = false;
 
   const timer = setInterval(async () => {

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { MAX_CIPHERTEXT_LENGTH } from "../constants/constants.js";
 
 const ScheduledMessageSchema = new mongoose.Schema(
   {
@@ -12,7 +13,9 @@ const ScheduledMessageSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    text: { type: String, required: true, maxlength: 4000 },
+    text: { type: String, required: true, maxlength: MAX_CIPHERTEXT_LENGTH },
+    e2ee: { type: Boolean, default: false },
+    iv: { type: String, default: null },
     scheduledFor: { type: Date, required: true },
     status: {
       type: String,

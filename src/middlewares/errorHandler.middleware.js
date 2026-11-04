@@ -37,9 +37,13 @@ export const errorHandler = (err, _req, res, _next) => {
     message = "Internal Server Error";
   }
 
+  const errorCode =
+    err.errorCode || (typeof err.code === "string" ? err.code : undefined);
+
   res.status(statusCode).json({
     success: false,
     statusCode,
+    ...(errorCode ? { code: errorCode } : {}),
     message,
   });
 };

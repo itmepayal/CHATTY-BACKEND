@@ -22,11 +22,13 @@ import {
   savePublicKey,
   fetchUserPublicKey,
 } from "../services/user-key.service.js";
+import { io } from "../lib/socket.js";
 
 const usersController = {
   updateProfile: asyncHandler(async (req, res) => {
     const userId = requireUserId(req);
     const data = await updateProfileData(userId, req.body);
+    io.emit("user:profile-updated", { userId: String(userId) });
     return new ApiResponse(
       StatusCodes.OK,
       data,
@@ -37,6 +39,7 @@ const usersController = {
   updateAvatar: asyncHandler(async (req, res) => {
     const userId = requireUserId(req);
     const data = await updateUserAvatar(userId, req.file);
+    io.emit("user:profile-updated", { userId: String(userId) });
     return new ApiResponse(
       StatusCodes.OK,
       data,
@@ -47,6 +50,7 @@ const usersController = {
   deleteAvatar: asyncHandler(async (req, res) => {
     const userId = requireUserId(req);
     const data = await deleteUserAvatar(userId);
+    io.emit("user:profile-updated", { userId: String(userId) });
     return new ApiResponse(
       StatusCodes.OK,
       data,
