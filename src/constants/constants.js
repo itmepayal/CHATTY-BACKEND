@@ -7,6 +7,32 @@ export const mongoDbName = process.env.MONGO_DB;
 export const serverUrl = process.env.SERVER_URL || `http://localhost:${port}`;
 export const appSchemeUrl = process.env.APP_SCHEME_URL || "chatty://";
 
+export const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:8080",
+  "http://localhost:8081",
+  "http://localhost:19006",
+  "https://chatty-app-sigma.vercel.app",
+  "https://chatty-backend-2l2t.onrender.com",
+  clientUrl,
+]
+  .filter(Boolean)
+  .map((url) => url.replace(/\/+$/, ""));
+
+export const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  const normalized = String(origin).trim().replace(/\/+$/, "");
+  return ALLOWED_ORIGINS.includes(normalized);
+};
+
+export const corsOriginValidator = (origin, callback) => {
+  if (isAllowedOrigin(origin)) {
+    return callback(null, true);
+  }
+  return callback(new Error(`CORS blocked for origin: ${origin}`));
+};
+
 export const cloudinaryName = process.env.CLOUDINARY_NAME;
 export const cloudinaryApiKey = process.env.CLOUDINARY_API_KEY;
 export const cloudinaryApiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -14,7 +40,8 @@ export const cloudinaryApiSecret = process.env.CLOUDINARY_API_SECRET;
 export const accessToken = process.env.ACCESS_TOKEN_SECRET;
 export const accessTokenExpiresIn = process.env.ACCESS_TOKEN_EXPIRES_IN;
 
-export const refreshTokenScret = process.env.REFRESH_TOKEN_SECRET;
+export const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET;
+export const refreshTokenScret = refreshTokenSecret;
 export const refreshTokenExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN;
 
 export const salt = 15;

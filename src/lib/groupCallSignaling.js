@@ -4,6 +4,7 @@ import Group from "../models/group.model.js";
 import User from "../models/users.model.js";
 import GroupCall from "../models/group-call.model.js";
 import { isUserInCall } from "./callSignaling.js";
+import { canViewProfilePhoto } from "../services/privacy-visibility.service.js";
 import {
   MAX_CALL_PARTICIPANTS,
   GROUP_CALL_RING_TIMEOUT_MS,
@@ -182,8 +183,16 @@ export function registerGroupCallHandlers(io, socket) {
         starter: profile,
       };
       for (const memberId of call.memberIds) {
-        if (memberId !== userId)
-          io.to(memberId).emit("gcall:incoming", incoming);
+        if (memberId !== userId) {
+          const canView = await canViewProfilePhoto(memberId, userId);
+          io.to(memberId).emit("gcall:incoming", {
+            ...incoming,
+            starter: {
+              ...profile,
+              avatar: canView ? profile.avatar : "",
+            },
+          });
+        }
       }
 
       reply({ ok: true, callId, me: profile });
@@ -251,13 +260,28 @@ export function registerGroupCallHandlers(io, socket) {
       });
 
       for (const p of peers) {
+        const canView = await canViewProfilePhoto(p.userId, userId);
         io.to(call.participants.get(p.userId).socketId).emit(
           "gcall:peer-joined",
-          { callId: call.callId, ...profile },
+          {
+            callId: call.callId,
+            ...profile,
+            avatar: canView ? profile.avatar : "",
+          },
         );
       }
 
-      reply({ ok: true, callId: call.callId, type: call.type, peers });
+      const safePeers = await Promise.all(
+        peers.map(async (p) => {
+          const canView = await canViewProfilePhoto(userId, p.userId);
+          return {
+            ...p,
+            avatar: canView ? p.avatar : "",
+          };
+        }),
+      );
+
+      reply({ ok: true, callId: call.callId, type: call.type, peers: safePeers });
     } catch (err) {
       console.error("[gcall] join failed:", err?.message || err);
       reply({ ok: false, reason: "error" });

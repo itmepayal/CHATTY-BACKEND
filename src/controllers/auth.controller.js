@@ -7,14 +7,17 @@ import ApiError from "../utils/api-error.js";
 import ApiResponse from "../utils/api-response.js";
 import {
   options,
-  refreshTokenScret,
+  refreshTokenSecret,
   clientUrl,
   serverUrl,
   appSchemeUrl,
   RESET_TOKEN_BYTES,
   RESET_TOKEN_TTL_MS,
 } from "../constants/constants.js";
-import { uploadFileToCloudinary } from "../config/cloudinary.config.js";
+import {
+  uploadFileToCloudinary,
+  deleteFileToCloudinary,
+} from "../config/cloudinary.config.js";
 import User from "../models/users.model.js";
 import Session from "../models/session.model.js";
 import {
@@ -25,6 +28,12 @@ import { signChallengeToken } from "../utils/totp.js";
 import { prefsPayload } from "../utils/user-prefs.js";
 import { createLoginSession } from "../services/session.service.js";
 import { hashToken, isValidResetToken } from "../utils/token-hash.js";
+import {
+  io,
+  disconnectUser,
+  disconnectUserSession,
+  disconnectOtherUserSessions,
+} from "../lib/socket.js";
 
 const authController = {
   registerUser: asyncHandler(async (req, res) => {
@@ -55,17 +64,29 @@ const authController = {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Failed to upload avatar.");
     }
 
-    const user = await User.create({
-      fullName,
-      email,
-      password,
-      avatar: {
-        public_id: avatar.public_id,
-        url: avatar.secure_url,
-      },
-    });
+    let user;
+    let accessToken;
+    let refreshToken;
+    try {
+      user = await User.create({
+        fullName,
+        email,
+        password,
+        avatar: {
+          public_id: avatar.public_id,
+          url: avatar.secure_url,
+        },
+      });
 
-    const { accessToken, refreshToken } = await User.generateToken(user._id);
+      const session = await createLoginSession(req, user);
+      accessToken = session.accessToken;
+      refreshToken = session.refreshToken;
+    } catch (err) {
+      if (avatar?.public_id) {
+        await deleteFileToCloudinary(avatar.public_id, "image").catch(() => {});
+      }
+      throw err;
+    }
 
     res
       .cookie("accessToken", accessToken, options)
@@ -125,7 +146,7 @@ const authController = {
       .cookie("refreshToken", refreshToken, options);
 
     return new ApiResponse(
-      StatusCodes.CREATED,
+      StatusCodes.OK,
       {
         id: user._id,
         fullName: user.fullName,
@@ -139,34 +160,39 @@ const authController = {
   }),
 
   logoutUser: asyncHandler(async (req, res) => {
-    const token = req.cookies?.refreshToken;
+    const token =
+      req.cookies?.refreshToken ||
+      req.body?.refreshToken ||
+      req.header("X-Refresh-Token") ||
+      req.header("x-refresh-token");
 
-    if (!token) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Refresh token is required.");
-    }
+    let sessionIdToRevoke = req.sessionId || null;
 
-    let decoded;
-    try {
-      decoded = jwt.verify(token, refreshTokenScret);
-    } catch (error) {
-      if (error instanceof jwt.TokenExpiredError) {
-        throw new ApiError(
-          StatusCodes.UNAUTHORIZED,
-          "Refresh token has expired.",
-        );
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, refreshTokenSecret);
+        if (decoded?.sessionId) {
+          sessionIdToRevoke = decoded.sessionId;
+        }
+      } catch (error) {
+        const decoded = jwt.decode(token);
+        if (decoded?.sessionId) {
+          sessionIdToRevoke = decoded.sessionId;
+        }
       }
-      throw new ApiError(StatusCodes.UNAUTHORIZED, "Invalid refresh token.");
     }
 
-    const user = await User.findById(decoded.id);
-    if (!user) {
-      throw new ApiError(StatusCodes.UNAUTHORIZED, "User not found.");
-    }
+    const userId = req.user?._id;
 
-    if (req.sessionId) {
-      await Session.findByIdAndUpdate(req.sessionId, {
+    if (sessionIdToRevoke) {
+      await Session.findByIdAndUpdate(sessionIdToRevoke, {
         $set: { revoked: true },
       }).catch(() => {});
+      if (userId) {
+        await disconnectUserSession(userId, sessionIdToRevoke);
+      }
+    } else if (userId) {
+      await disconnectUser(userId);
     }
 
     res
@@ -305,7 +331,7 @@ const authController = {
     const user = await User.findOne({
       passwordResetToken: hashToken(token),
       passwordResetExpires: { $gt: new Date() },
-    }).select("+passwordResetToken +passwordResetExpires");
+    }).select("+passwordResetToken +passwordResetExpires +tokenVersion");
 
     if (!user) {
       throw new ApiError(
@@ -317,12 +343,17 @@ const authController = {
     user.password = password;
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
 
     await Session.updateMany(
-      { user: user._id },
+      { userId: user._id },
       { $set: { revoked: true } },
     ).catch(() => {});
+
+    io.to(String(user._id)).emit("session:revoked", { all: true });
+
+    await disconnectUser(user._id);
 
     return new ApiResponse(
       StatusCodes.OK,
@@ -385,6 +416,20 @@ const authController = {
 
     user.password = newPassword;
     await user.save();
+
+    const currentSessionId = req.sessionId;
+    await Session.updateMany(
+      {
+        userId: user._id,
+        ...(currentSessionId ? { _id: { $ne: currentSessionId } } : {}),
+      },
+      { $set: { revoked: true } },
+    ).catch(() => {});
+
+    io.to(String(user._id)).emit("session:revoke-others", {
+      keepSessionId: currentSessionId || null,
+    });
+    await disconnectOtherUserSessions(user._id, currentSessionId);
 
     return new ApiResponse(
       StatusCodes.OK,

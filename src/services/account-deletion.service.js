@@ -6,8 +6,20 @@ import Session from "../models/session.model.js";
 import Message from "../models/message.model.js";
 import Group from "../models/group.model.js";
 import GroupMessage from "../models/group-message.model.js";
+import Contact from "../models/contact.model.js";
+import LocationShare from "../models/location-share.model.js";
+import GroupKey from "../models/group-key.model.js";
+import ScheduledMessage from "../models/scheduled-message.model.js";
+import Call from "../models/call.model.js";
+import ChatArchive from "../models/chat-archive.model.js";
+import GroupArchive from "../models/group-archive.model.js";
 import { deleteFileToCloudinary } from "../config/cloudinary.config.js";
-import { io, privacyByUser, broadcastOnline } from "../lib/socket.js";
+import {
+  io,
+  privacyByUser,
+  broadcastOnline,
+  disconnectUser,
+} from "../lib/socket.js";
 import { verifyTotpToken, consumeRecoveryCode } from "../utils/totp.js";
 import {
   checkRateLimit,
@@ -335,6 +347,54 @@ export const deleteUserAccount = async ({
 
     await Session.deleteMany({ userId }, sessionOpt);
 
+    await Contact.deleteMany(
+      { $or: [{ ownerId: userId }, { contactId: userId }] },
+      sessionOpt,
+    );
+
+    await LocationShare.deleteMany(
+      {
+        $or: [
+          { sharerId: userId },
+          { receiverId: userId },
+          ...(deletedGroupIds.length ? [{ groupId: { $in: deletedGroupIds } }] : []),
+        ],
+      },
+      sessionOpt,
+    );
+
+    await GroupKey.deleteMany(
+      {
+        $or: [
+          { userId },
+          ...(deletedGroupIds.length ? [{ groupId: { $in: deletedGroupIds } }] : []),
+        ],
+      },
+      sessionOpt,
+    );
+
+    await ScheduledMessage.deleteMany({ senderId: userId }, sessionOpt);
+
+    await Call.deleteMany(
+      { $or: [{ callerId: userId }, { receiverId: userId }] },
+      sessionOpt,
+    );
+
+    await ChatArchive.deleteMany(
+      { $or: [{ ownerId: userId }, { otherId: userId }] },
+      sessionOpt,
+    );
+
+    await GroupArchive.deleteMany(
+      {
+        $or: [
+          { ownerId: userId },
+          ...(deletedGroupIds.length ? [{ groupId: { $in: deletedGroupIds } }] : []),
+        ],
+      },
+      sessionOpt,
+    );
+
     await User.updateMany(
       { $or: [{ blockedUsers: userId }, { favorites: userId }] },
       { $pull: { blockedUsers: userId, favorites: userId } },
@@ -375,5 +435,6 @@ export const deleteUserAccount = async ({
 
   emitAccountDeletionNotifications({ notices, userId, contactIds });
   privacyByUser.delete(String(userId));
+  disconnectUser(userId);
   broadcastOnline();
 };

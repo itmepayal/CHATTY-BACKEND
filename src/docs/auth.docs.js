@@ -84,19 +84,8 @@
  *               email: { type: string, format: email, example: jane@example.com }
  *               password: { type: string, example: secret123 }
  *     responses:
- *       201:
- *         description: Logged in successfully
- *         content:
- *           application/json:
- *             schema:
- *               allOf:
- *                 - $ref: '#/components/schemas/ApiResponse'
- *                 - type: object
- *                   properties:
- *                     data:
- *                       $ref: '#/components/schemas/AuthUserPayload'
  *       200:
- *         description: Two-factor verification required
+ *         description: Logged in successfully or Two-factor verification required
  *         content:
  *           application/json:
  *             schema:
@@ -105,7 +94,9 @@
  *                 - type: object
  *                   properties:
  *                     data:
- *                       $ref: '#/components/schemas/TwoFactorChallenge'
+ *                       oneOf:
+ *                         - $ref: '#/components/schemas/AuthUserPayload'
+ *                         - $ref: '#/components/schemas/TwoFactorChallenge'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       401:

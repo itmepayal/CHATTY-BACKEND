@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import ApiError from "../utils/api-error.js";
@@ -13,7 +14,7 @@ import {
   getBlockedByMe,
   getBlockersOf,
 } from "../utils/group-guard.js";
-import { parseKeyEntries, parseBool } from "../utils/e2ee.js";
+import { parseKeyEntries, parseBool, assertValidCipher } from "../utils/e2ee.js";
 import { toNum, readClientId, parseIds } from "../utils/validators.js";
 import {
   sid,
@@ -22,6 +23,7 @@ import {
   emitToMembers,
   emitGroupToMembers,
   broadcastGroupMessage,
+  emitGroupConversation,
   deleteMedia,
   destroyGroup,
   getMyGroupsList,
@@ -55,7 +57,12 @@ import {
   formatGroupMessage,
 } from "../services/group-share.service.js";
 import { validName } from "../utils/group-validators.js";
-import { MAX_GROUP_MEMBERS } from "../constants/constants.js";
+import {
+  MAX_GROUP_MEMBERS,
+  EDIT_WINDOW_MS,
+  MAX_TEXT_LENGTH,
+  MAX_CIPHERTEXT_LENGTH,
+} from "../constants/constants.js";
 
 const groupController = {
   createGroup: asyncHandler(async (req, res) => {
@@ -399,6 +406,153 @@ const groupController = {
     return new ApiResponse(StatusCodes.CREATED, payload, "Message sent.").send(
       res,
     );
+  }),
+
+  deleteGroupMessage: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { id: groupId, messageId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(messageId)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid message ID.");
+    }
+
+    const { group, member } = await getGroupAndMember(groupId, me);
+
+    const message = await GroupMessage.findById(messageId);
+    if (!message) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
+    }
+
+    if (String(message.groupId) !== String(group._id)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Message does not belong to this group.",
+      );
+    }
+
+    const isSender = String(message.senderId) === String(me);
+    const isAdminOrOwner =
+      member.role === "admin" || String(group.owner) === String(me);
+
+    if (!isSender && !isAdminOrOwner) {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "You do not have permission to delete this message.",
+      );
+    }
+
+    await Promise.allSettled(deleteMedia(message));
+
+    await GroupMessage.deleteOne({ _id: messageId });
+
+    const payload = {
+      groupId: String(group._id),
+      messageId: String(messageId),
+    };
+
+    io.to(groupRoom(group._id)).emit("group:messageDeleted", payload);
+    emitToMembers(group, "group:messageDeleted", payload);
+
+    await emitGroupConversation(group);
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      payload,
+      "Group message deleted successfully.",
+    ).send(res);
+  }),
+
+  editGroupMessage: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { id: groupId, messageId } = req.params;
+    const text = req.body.text?.trim();
+    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
+    const iv = req.body.iv;
+
+    if (!mongoose.Types.ObjectId.isValid(messageId)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid message ID.");
+    }
+
+    const { group } = await getGroupAndMember(groupId, me);
+
+    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
+    if (!text || text.length > maxLen) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        wantsE2EE
+          ? "Encrypted payload is invalid or too large."
+          : `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
+      );
+    }
+
+    const message = await GroupMessage.findById(messageId);
+    if (!message) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
+    }
+
+    if (String(message.groupId) !== String(group._id)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Message does not belong to this group.",
+      );
+    }
+
+    if (String(message.senderId) !== String(me)) {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "Only the sender can edit this message.",
+      );
+    }
+
+    if (
+      message.image?.url ||
+      message.file?.url ||
+      message.audio?.url ||
+      message.video?.url ||
+      message.location?.lat
+    ) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Only text messages can be edited.",
+      );
+    }
+
+    if (Date.now() - message.createdAt.getTime() > EDIT_WINDOW_MS) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Edit time is over.");
+    }
+
+    if (Boolean(message.e2ee) !== wantsE2EE) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Encryption mode of a message can't be changed.",
+      );
+    }
+
+    if (wantsE2EE) assertValidCipher(text, iv);
+
+    if (!wantsE2EE && message.text === text) {
+      const formatted = formatGroupMessage(message);
+      return new ApiResponse(StatusCodes.OK, formatted, "No changes.").send(res);
+    }
+
+    message.text = text;
+    if (wantsE2EE) message.iv = iv;
+    message.isEdited = true;
+    message.editedAt = new Date();
+    await message.save();
+
+    await message.populate("senderId", "fullName avatar profilePhotoVisibility");
+    const payload = formatGroupMessage(message);
+
+    io.to(groupRoom(group._id)).emit("group:messageEdited", payload);
+    emitToMembers(group, "group:messageEdited", payload);
+    await emitGroupConversation(group);
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      payload,
+      "Group message edited successfully.",
+    ).send(res);
   }),
 
   markGroupSeen: asyncHandler(async (req, res) => {

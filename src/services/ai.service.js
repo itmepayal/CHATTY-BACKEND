@@ -10,16 +10,27 @@ import {
   AI_RETRYABLE_STATUS,
 } from "../constants/constants.js";
 
-if (!geminiApiKey) {
-  throw new Error("GEMINI_API_KEY is missing. Set it in your .env file.");
-}
+let aiClient = null;
 
-const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+const getAiClient = () => {
+  if (!geminiApiKey) {
+    throw new ApiError(
+      StatusCodes.SERVICE_UNAVAILABLE,
+      "AI service is not configured. Please set GEMINI_API_KEY in your environment.",
+    );
+  }
+  if (!aiClient) {
+    aiClient = new GoogleGenAI({ apiKey: geminiApiKey });
+  }
+  return aiClient;
+};
 
 const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+
 const FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS || "gemini-3.5-flash-lite"
 )
+
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
@@ -48,6 +59,8 @@ export const isRetryableError = (error) => {
 };
 
 const mapProviderFailure = (error) => {
+  if (error instanceof ApiError) return error;
+
   const status = statusOf(error);
 
   if (status === 429) {
@@ -99,6 +112,7 @@ const generate = async (model, system, input, json, options, deadlineMs) => {
   }
 
   try {
+    const ai = getAiClient();
     const providerCall =
       testGenerateContentOverride || ai.models.generateContent.bind(ai.models);
     const response = await providerCall({
@@ -133,6 +147,10 @@ const generate = async (model, system, input, json, options, deadlineMs) => {
 };
 
 export const callAI = async (system, input, json = false, options = {}) => {
+  if (!testGenerateContentOverride) {
+    getAiClient();
+  }
+
   const deadlineMs = Date.now() + AI_REQUEST_DEADLINE_MS;
   let firstError = null;
   let lastError = null;

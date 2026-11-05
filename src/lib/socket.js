@@ -6,9 +6,10 @@ import Message from "../models/message.model.js";
 import Group from "../models/group.model.js";
 import User from "../models/users.model.js";
 import Contact from "../models/contact.model.js";
+import Session from "../models/session.model.js";
 import {
   accessToken as accessTokenSecret,
-  clientUrl,
+  corsOriginValidator,
 } from "../constants/constants.js";
 import {
   BLOCK_CACHE_TTL_MS,
@@ -26,7 +27,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: clientUrl,
+    origin: corsOriginValidator,
     credentials: true,
   },
 });
@@ -123,8 +124,45 @@ export const isUserViewingChat = async (receiverId, senderId) => {
   return sockets.some((s) => s.data.activeChatId === senderId.toString());
 };
 
-export const disconnectUser = (userId) =>
+export const disconnectUser = (userId) => {
+  if (!userId) return;
   io.in(String(userId)).disconnectSockets(true);
+};
+
+export const disconnectUserSession = async (userId, sessionId) => {
+  if (!userId || !sessionId) return;
+  try {
+    const sockets = await io.in(String(userId)).fetchSockets();
+    for (const s of sockets) {
+      if (s.data?.sessionId && String(s.data.sessionId) === String(sessionId)) {
+        s.disconnect(true);
+      }
+    }
+  } catch (err) {
+    console.error("[socket] disconnectUserSession error:", err?.message || err);
+  }
+};
+
+export const disconnectOtherUserSessions = async (userId, keepSessionId) => {
+  if (!userId) return;
+  try {
+    const sockets = await io.in(String(userId)).fetchSockets();
+    for (const s of sockets) {
+      if (
+        !keepSessionId ||
+        (s.data?.sessionId &&
+          String(s.data.sessionId) !== String(keepSessionId))
+      ) {
+        s.disconnect(true);
+      }
+    }
+  } catch (err) {
+    console.error(
+      "[socket] disconnectOtherUserSessions error:",
+      err?.message || err,
+    );
+  }
+};
 
 const parseCookies = (header = "") =>
   Object.fromEntries(
@@ -143,20 +181,59 @@ const parseCookies = (header = "") =>
       .filter(Boolean),
   );
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   try {
     const cookies = parseCookies(socket.handshake.headers.cookie);
-    const token = cookies.accessToken || socket.handshake.auth?.token;
+    const authHeader = socket.handshake.headers.authorization;
+    const token =
+      cookies.accessToken ||
+      socket.handshake.auth?.token ||
+      (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : authHeader);
 
     if (!token) {
-      console.log("[socket] rejected: no token (cookie not sent?)");
+      console.log("[socket] rejected: no token");
       return next(new Error("Unauthorized"));
     }
 
-    const decoded = jwt.verify(token, accessTokenSecret);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, accessTokenSecret);
+    } catch (err) {
+      console.log("[socket] rejected: invalid token:", err.message);
+      return next(new Error("Unauthorized"));
+    }
+
+    if (decoded.sessionId) {
+      const session = await Session.findById(decoded.sessionId)
+        .select("revoked expiresAt userId")
+        .lean();
+
+      if (!session || session.revoked || session.expiresAt < new Date()) {
+        console.log("[socket] rejected: session revoked or expired");
+        return next(new Error("Unauthorized: Session revoked"));
+      }
+    }
+
+    const user = await User.findById(decoded.id)
+      .select("fullName tokenVersion")
+      .lean();
+
+    if (!user) {
+      console.log("[socket] rejected: user not found");
+      return next(new Error("Unauthorized: User not found"));
+    }
+
+    if (
+      decoded.tokenVersion !== undefined &&
+      user.tokenVersion !== undefined &&
+      decoded.tokenVersion < user.tokenVersion
+    ) {
+      console.log("[socket] rejected: token version invalidated");
+      return next(new Error("Unauthorized: Token invalidated"));
+    }
 
     socket.data.userId = String(decoded.id);
-    socket.data.fullName = decoded.fullName;
+    socket.data.fullName = user.fullName || decoded.fullName;
     socket.data.sessionId = decoded.sessionId || null;
 
     next();
@@ -419,9 +496,7 @@ export const refreshPrivacy = async (userId) => {
 
       for (const vId of otherActiveViewers) {
         const canSee =
-          allowedSet.has(vId) &&
-          !blockerSet.has(vId) &&
-          !myBlockedSet.has(vId);
+          allowedSet.has(vId) && !blockerSet.has(vId) && !myBlockedSet.has(vId);
 
         io.to(vId).emit("presence:updated", {
           userId: uId,
@@ -529,7 +604,9 @@ io.on("connection", (socket) => {
     }
 
     try {
-      const group = await Group.findById(groupId).select("members.userId").lean();
+      const group = await Group.findById(groupId)
+        .select("members.userId")
+        .lean();
       if (!group) return;
 
       const memberIds = group.members
@@ -577,7 +654,9 @@ io.on("connection", (socket) => {
       const groupIds = Array.from(socket.data.typingGroups);
       for (const groupId of groupIds) {
         try {
-          const group = await Group.findById(groupId).select("members.userId").lean();
+          const group = await Group.findById(groupId)
+            .select("members.userId")
+            .lean();
           if (!group) continue;
 
           const memberIds = group.members

@@ -83,6 +83,12 @@
  *           type: array
  *           items:
  *             type: string
+ *         isEdited:
+ *           type: boolean
+ *         editedAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
  *         createdAt:
  *           type: string
  *           format: date-time
@@ -525,6 +531,82 @@
  *         $ref: '#/components/responses/Unauthorized'
  *       403:
  *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *
+ * /groups/{groupId}/messages/{messageId}:
+ *   delete:
+ *     tags: [Groups]
+ *     operationId: deleteGroupMessage
+ *     summary: Delete a group message
+ *     description: >
+ *       Deletes a message in the group. Allowed for the sender of the message or a group admin/owner.
+ *       Permanently deletes any attached media from storage and broadcasts the deletion to group members.
+ *     parameters:
+ *       - $ref: '#/components/parameters/GroupId'
+ *       - name: messageId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Message ID to delete
+ *     responses:
+ *       200:
+ *         description: Group message deleted successfully
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *   patch:
+ *     tags: [Groups]
+ *     operationId: editGroupMessage
+ *     summary: Edit a group message
+ *     description: >
+ *       Edits an existing text message in the group within the 15-minute edit window.
+ *       Only the original sender can edit the message.
+ *     parameters:
+ *       - $ref: '#/components/parameters/GroupId'
+ *       - name: messageId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Message ID to edit
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [text]
+ *             properties:
+ *               text:
+ *                 type: string
+ *                 description: Updated message text or ciphertext
+ *               encrypted:
+ *                 type: boolean
+ *               iv:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Group message edited successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/GroupMessageView'
+ *       400:
+ *         description: Edit window expired, non-text message, or validation error
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         description: Not the sender or not a group member
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *

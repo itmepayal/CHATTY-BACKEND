@@ -3,7 +3,7 @@ import GroupMessage from "../models/group-message.model.js";
 import GroupKey from "../models/group-key.model.js";
 import User from "../models/users.model.js";
 import Contact from "../models/contact.model.js";
-import { canViewSync } from "./privacy-visibility.service.js";
+import { canViewSync, canViewProfilePhoto } from "./privacy-visibility.service.js";
 import GroupArchive, {
   getArchivedGroupSet,
 } from "../models/group-archive.model.js";
@@ -233,6 +233,8 @@ export const formatGroupMessage = (msg) => {
       : null,
     clientId: msg.clientId,
     readBy: (msg.readBy || []).map(String),
+    isEdited: Boolean(msg.isEdited),
+    editedAt: msg.editedAt || null,
     createdAt: msg.createdAt,
   };
 };
@@ -353,7 +355,7 @@ export const getLast = (groupId, joinedAt, blockedIds) =>
     senderId: { $nin: blockedIds },
   })
     .sort({ createdAt: -1 })
-    .populate("senderId", "fullName avatar");
+    .populate("senderId", "fullName avatar profilePhotoVisibility");
 
 export const emitMemberConversation = async (groupId, member) => {
   const uid = sid(member.userId);
@@ -362,10 +364,25 @@ export const emitMemberConversation = async (groupId, member) => {
     getUnread(groupId, uid, member.joinedAt, blocked),
     getLast(groupId, member.joinedAt, blocked),
   ]);
+
+  let formattedLast = null;
+  if (last) {
+    formattedLast = formatGroupMessage(last);
+    if (formattedLast?.sender && last.senderId) {
+      const sId = sid(last.senderId);
+      if (sId !== uid) {
+        const canView = await canViewProfilePhoto(uid, sId);
+        if (!canView) {
+          formattedLast.sender.avatar = "";
+        }
+      }
+    }
+  }
+
   io.to(uid).emit("group:conversationUpdated", {
     groupId: String(groupId),
     unreadCount,
-    lastMessage: last ? formatGroupMessage(last) : null,
+    lastMessage: formattedLast,
     lastMessageAt: last?.createdAt ?? null,
     ts: Date.now(),
   });
@@ -556,12 +573,36 @@ export const getMyGroupsList = async (me) => {
         getUnread(g._id, me, mine.joinedAt, blocked),
         getLast(g._id, mine.joinedAt, blocked),
       ]);
+
+      let formattedLast = null;
+      if (last) {
+        formattedLast = formatGroupMessage(last);
+        if (formattedLast?.sender && last.senderId) {
+          const sId = sid(last.senderId);
+          if (sId !== String(me)) {
+            const isBlocked = blockedSet.has(sId);
+            const inContacts = targetSavedViewerSet.has(sId);
+            const canView =
+              !isBlocked &&
+              canViewSync(
+                last.senderId.profilePhotoVisibility ?? "everyone",
+                sId,
+                me,
+                inContacts,
+              );
+            if (!canView) {
+              formattedLast.sender.avatar = "";
+            }
+          }
+        }
+      }
+
       const keyVersion = versions.get(String(g._id)) || 0;
       return formatGroup(
         g,
         {
           unreadCount,
-          lastMessage: last ? formatGroupMessage(last) : null,
+          lastMessage: formattedLast,
           lastMessageAt: last?.createdAt || g.lastMessageAt || g.createdAt,
           archived: archivedSet.has(String(g._id)),
           e2ee: keyVersion > 0,

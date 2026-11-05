@@ -9,6 +9,7 @@ import Contact from "../models/contact.model.js";
 import { toObjectId } from "../utils/message-helpers.js";
 import { myId } from "../utils/request-helpers.js";
 import { filterUsersForViewer } from "../services/privacy-visibility.service.js";
+import { refreshPrivacy, io } from "../lib/socket.js";
 
 const contactController = {
   searchUsers: asyncHandler(async (req, res) => {
@@ -21,14 +22,19 @@ const contactController = {
       ).send(res);
     }
 
-    const me = await User.findById(myId(req)).select("blockedUsers");
+    const currentUserId = myId(req);
+    const me = await User.findById(currentUserId).select("blockedUsers").lean();
+    const myBlocked = me?.blockedUsers || [];
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 
     const users = await User.find({
-      _id: { $ne: myId(req), $nin: me.blockedUsers },
+      _id: { $ne: currentUserId, $nin: myBlocked },
+      blockedUsers: { $ne: currentUserId },
       $or: [{ fullName: rx }, { username: rx }, { email: rx }],
     })
-      .select("fullName username avatar profilePhotoVisibility")
+      .select(
+        "fullName username avatar bio profilePhotoVisibility aboutVisibility",
+      )
       .limit(20)
       .lean();
 
@@ -67,7 +73,16 @@ const contactController = {
       { upsert: true },
     );
 
-    return new ApiResponse(StatusCodes.CREATED, null, "Contact added.").send(res);
+    try {
+      await refreshPrivacy(myId(req));
+      io.emit("user:profile-updated", { userId: String(myId(req)) });
+    } catch (e) {
+      console.error("[contact] refreshPrivacy error:", e?.message || e);
+    }
+
+    return new ApiResponse(StatusCodes.CREATED, null, "Contact added.").send(
+      res,
+    );
   }),
 
   removeContact: asyncHandler(async (req, res) => {
@@ -75,6 +90,13 @@ const contactController = {
       ownerId: myId(req),
       contactId: req.params.userId,
     });
+
+    try {
+      await refreshPrivacy(myId(req));
+      io.emit("user:profile-updated", { userId: String(myId(req)) });
+    } catch (e) {
+      console.error("[contact] refreshPrivacy error:", e?.message || e);
+    }
 
     return new ApiResponse(StatusCodes.OK, null, "Contact removed.").send(res);
   }),

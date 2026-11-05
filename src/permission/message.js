@@ -1,7 +1,8 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
-import User from "../models/user.model.js";
+import User from "../models/users.model.js";
 import Contact from "../models/contact.model.js";
+export { assertCanMessage as default } from "../utils/chat-guard.js";
 
 export const assertCanMessage = async (senderId, receiverId) => {
   const receiver = await User.findById(receiverId).select(
@@ -9,7 +10,7 @@ export const assertCanMessage = async (senderId, receiverId) => {
   );
   if (!receiver) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
-  if (receiver.blockedUsers.some((id) => String(id) === String(senderId)))
+  if ((receiver.blockedUsers || []).some((id) => String(id) === String(senderId)))
     throw new ApiError(StatusCodes.FORBIDDEN, "You can't message this user.");
 
   if (receiver.whoCanMessage === "contacts") {

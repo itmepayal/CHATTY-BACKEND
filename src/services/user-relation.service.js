@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import User from "../models/users.model.js";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { io } from "../lib/socket.js";
+import { io, refreshPrivacy } from "../lib/socket.js";
 import formatUser from "../utils/format-user.js";
 
 export const applyRelation = async (myId, targetId, field, action, message) => {
@@ -53,6 +53,15 @@ export const applyRelation = async (myId, targetId, field, action, message) => {
     blockedUsers: (updatedUser.blockedUsers || []).map(String),
     favorites: (updatedUser.favorites || []).map(String),
   });
+
+  if (field === "blockedUsers") {
+    try {
+      await refreshPrivacy(myId);
+      await refreshPrivacy(targetId);
+    } catch (e) {
+      console.error("[user-relation] refreshPrivacy error:", e?.message || e);
+    }
+  }
 
   return { user: formatUser(updatedUser) };
 };

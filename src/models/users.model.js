@@ -4,7 +4,7 @@ import {
   salt,
   accessToken,
   accessTokenExpiresIn,
-  refreshTokenScret,
+  refreshTokenSecret,
   refreshTokenExpiresIn,
 } from "../constants/constants.js";
 
@@ -298,6 +298,7 @@ const UserSchema = new mongoose.Schema(
 );
 
 UserSchema.index({ blockedUsers: 1 });
+UserSchema.index({ fullName: 1 });
 
 UserSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
@@ -336,7 +337,7 @@ UserSchema.methods.generateRefreshToken = function () {
       email: this.email,
       fullName: this.fullName,
     },
-    refreshTokenScret,
+    refreshTokenSecret,
     { expiresIn: refreshTokenExpiresIn },
   );
 };

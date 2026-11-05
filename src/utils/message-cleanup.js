@@ -40,3 +40,29 @@ export const wipeMessage = async (message) => {
   message.pinnedAt = undefined;
   await message.save();
 };
+
+export const deleteAttachmentMedia = async (attachment = {}) => {
+  const deletes = [
+    attachment.image?.public_id &&
+      deleteFileToCloudinary(attachment.image.public_id, "image"),
+    attachment.file?.public_id &&
+      deleteFileToCloudinary(
+        attachment.file.public_id,
+        attachment.file.resourceType || "raw",
+      ),
+    attachment.audio?.public_id &&
+      deleteFileToCloudinary(
+        attachment.audio.public_id,
+        attachment.audio.resourceType || "video",
+      ),
+    attachment.video?.public_id &&
+      deleteFileToCloudinary(
+        attachment.video.public_id,
+        attachment.video.resourceType || "video",
+      ),
+  ].filter(Boolean);
+
+  if (deletes.length) {
+    await Promise.allSettled(deletes);
+  }
+};

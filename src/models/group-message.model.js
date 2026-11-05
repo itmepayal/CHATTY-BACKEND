@@ -62,6 +62,9 @@ const GroupMessageSchema = new mongoose.Schema(
     e2ee: { type: Boolean, default: false },
     iv: { type: String },
     keyVersion: { type: Number },
+
+    isEdited: { type: Boolean, default: false },
+    editedAt: { type: Date },
   },
   { timestamps: true },
 );

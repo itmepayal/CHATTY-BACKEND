@@ -29,6 +29,12 @@ router
     enforceTypeSizeLimit,
     groupController.sendGroupMessage,
   );
+router.delete("/:id/messages/:messageId", groupController.deleteGroupMessage);
+router.patch(
+  "/:id/messages/:messageId",
+  sendMessageLimiter,
+  groupController.editGroupMessage,
+);
 
 router.post("/:id/seen", groupController.markGroupSeen);
 router.post("/:id/location", settingsLimiter, groupController.startGroupShare);

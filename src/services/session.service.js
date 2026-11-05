@@ -4,7 +4,11 @@ import { parseDevice, getIp, sanitizeIp } from "../utils/device-info.js";
 import { sendLoginAlertEmail } from "../utils/email-service.js";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { io } from "../lib/socket.js";
+import {
+  io,
+  disconnectUserSession,
+  disconnectOtherUserSessions,
+} from "../lib/socket.js";
 import { formatDistanceToNow } from "../utils/time-utils.js";
 
 export const createLoginSession = async (req, user) => {
@@ -96,6 +100,7 @@ export const revokeUserSession = async ({ userId, sessionId }) => {
   emitSessionEvent(userId, "session:revoked", {
     sessionId: String(session._id),
   });
+  await disconnectUserSession(userId, session._id);
 };
 
 export const revokeOtherUserSessions = async ({ userId, currentSessionId }) => {
@@ -110,6 +115,7 @@ export const revokeOtherUserSessions = async ({ userId, currentSessionId }) => {
   emitSessionEvent(userId, "session:revoke-others", {
     keepSessionId: currentSessionId || null,
   });
+  await disconnectOtherUserSessions(userId, currentSessionId);
 
   return { revokedCount: modifiedCount };
 };

@@ -23,7 +23,7 @@ import {
   processAttachment,
 } from "../services/message.service.js";
 import { attachLinkPreview } from "../utils/link-preview.js";
-import { wipeMessage } from "../utils/message-cleanup.js";
+import { wipeMessage, deleteAttachmentMedia } from "../utils/message-cleanup.js";
 import {
   toObjectId,
   formatMessage,
@@ -64,32 +64,19 @@ const messageController = {
     assertValidId(userId, "User ID");
 
     const uid = toObjectId(userId);
+    const search = String(req.query.search || req.query.q || "").trim();
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(Math.max(1, Number(req.query.limit) || 50), 100);
 
-    const [users, me, archivedSet] = await Promise.all([
-      User.find({ _id: { $ne: userId } }).select(
-        "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility +publicKey",
-      ),
-      User.findById(userId).select("blockedUsers"),
+    // 1. Fetch current user blocked list and archived set
+    const [me, archivedSet] = await Promise.all([
+      User.findById(userId).select("blockedUsers").lean(),
       getArchivedSet(userId),
     ]);
 
-    const userIds = users.map((u) => u._id);
-
-    const [blockers, contactsWhoSavedMe] = await Promise.all([
-      User.find({ _id: { $in: userIds }, blockedUsers: userId })
-        .select("_id")
-        .lean(),
-      Contact.find({ ownerId: { $in: userIds }, contactId: userId })
-        .select("ownerId")
-        .lean(),
-    ]);
-
     const myBlockedSet = new Set((me?.blockedUsers || []).map(String));
-    const blockerSet = new Set(blockers.map((b) => String(b._id)));
-    const targetSavedMeSet = new Set(
-      contactsWhoSavedMe.map((c) => String(c.ownerId)),
-    );
 
+    // 2. Primary Source: Existing active conversations
     const convoAgg = await Message.aggregate([
       {
         $match: {
@@ -126,16 +113,92 @@ const messageController = {
     ]);
 
     const convoMap = new Map(convoAgg.map((c) => [c._id.toString(), c]));
-    const ts = Date.now();
+    const convoUserIds = convoAgg.map((c) => c._id.toString());
 
-    const response = users
-      .map((user) => {
-        const otherId = user._id.toString();
+    let targetUserIds = [];
+
+    if (search) {
+      // 5. Database-level filtering for search
+      const rx = new RegExp(escapeRegex(search), "i");
+      const matchedUsers = await User.find({
+        _id: { $ne: userId, $nin: [...myBlockedSet] },
+        blockedUsers: { $ne: userId },
+        $or: [{ fullName: rx }, { username: rx }, { email: rx }],
+      })
+        .select("_id")
+        .limit(limit)
+        .lean();
+
+      targetUserIds = matchedUsers.map((u) => u._id.toString());
+    } else {
+      // 3. Existing conversations as primary source + 4. Saved contacts
+      const contacts = await Contact.find({ ownerId: userId })
+        .select("contactId")
+        .lean();
+      const contactUserIds = contacts.map((c) => c.contactId.toString());
+
+      const combinedSet = new Set([...convoUserIds, ...contactUserIds]);
+
+      // If user has neither conversations nor contacts, fetch a bounded set of discoverable users
+      if (combinedSet.size === 0) {
+        const discoverUsers = await User.find({
+          _id: { $ne: userId, $nin: [...myBlockedSet] },
+          blockedUsers: { $ne: userId },
+        })
+          .select("_id")
+          .limit(limit)
+          .lean();
+        discoverUsers.forEach((u) => combinedSet.add(u._id.toString()));
+      }
+
+      // Paginate target IDs before querying full user documents
+      const allTargetIds = Array.from(combinedSet);
+      const skip = (page - 1) * limit;
+      targetUserIds = allTargetIds.slice(skip, skip + limit);
+    }
+
+    if (!targetUserIds.length) {
+      return new ApiResponse(
+        StatusCodes.OK,
+        [],
+        "Users fetched successfully.",
+      ).send(res);
+    }
+
+    // 6. Query ONLY the target subset (at most `limit`, e.g. 50 users instead of 10,000!)
+    const [users, blockers, contactsWhoSavedMe] = await Promise.all([
+      User.find({ _id: { $in: targetUserIds } })
+        .select(
+          "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility +publicKey",
+        )
+        .lean(),
+      User.find({ _id: { $in: targetUserIds }, blockedUsers: userId })
+        .select("_id")
+        .lean(),
+      Contact.find({ ownerId: { $in: targetUserIds }, contactId: userId })
+        .select("ownerId")
+        .lean(),
+    ]);
+
+    const blockerSet = new Set(blockers.map((b) => String(b._id)));
+    const targetSavedMeSet = new Set(
+      contactsWhoSavedMe.map((c) => String(c.ownerId)),
+    );
+
+    const ts = Date.now();
+    const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+
+    const response = targetUserIds
+      .map((otherId) => {
+        const user = userMap.get(otherId);
+        if (!user) return null;
+
         const c = convoMap.get(otherId);
-        const isBlocked = myBlockedSet.has(otherId) || blockerSet.has(otherId);
+        const isBlockedByMe = myBlockedSet.has(otherId);
+        const isBlockedEither = isBlockedByMe || blockerSet.has(otherId);
 
         const canSee = (visibility, fallback) =>
-          !isBlocked &&
+          !isBlockedEither &&
           canViewSync(
             visibility ?? fallback,
             otherId,
@@ -160,15 +223,16 @@ const messageController = {
           bio: showAbout ? user.bio || "" : "",
           lastSeen: showLastSeen ? user.lastSeen || null : null,
           showOnlineStatus: showOnline,
-          isBlocked,
+          isBlocked: isBlockedByMe,
           isArchived: archivedSet.has(otherId),
           hasPublicKey: Boolean(user.publicKey),
-          unreadCount: isBlocked ? 0 : c?.unreadCount || 0,
+          unreadCount: isBlockedEither ? 0 : c?.unreadCount || 0,
           lastMessage: c ? formatMessage(c.lastMessage) : null,
-          lastMessageAt: c?.lastMessage.createdAt || null,
+          lastMessageAt: c?.lastMessage?.createdAt || null,
           ts,
         };
       })
+      .filter(Boolean)
       .sort((a, b) => {
         const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
         const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
@@ -292,16 +356,17 @@ const messageController = {
       replyTo = original._id;
     }
 
+    const attachment = await processAttachment(req.file, {
+      isVoice: parseBool(isVoice),
+      isVideo: parseBool(isVideo),
+      duration,
+    });
     const {
       image: uploadedImage,
       file: uploadedFile,
       audio: uploadedAudio,
       video: uploadedVideo,
-    } = await processAttachment(req.file, {
-      isVoice: parseBool(isVoice),
-      isVideo: parseBool(isVideo),
-      duration,
-    });
+    } = attachment;
 
     let result;
     try {
@@ -320,6 +385,8 @@ const messageController = {
         },
       });
     } catch (error) {
+      await deleteAttachmentMedia(attachment);
+
       if (error?.code === 11000 && clientId) {
         const existing = await Message.findOne({ senderId, clientId });
         if (existing) {

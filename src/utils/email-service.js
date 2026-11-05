@@ -1,11 +1,22 @@
 import { Resend } from "resend";
 import { clientUrl } from "../constants/constants.js";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resendClient = null;
+function getResend() {
+  if (!resendClient) {
+    const key = process.env.RESEND_API_KEY;
+    if (!key) {
+      throw new Error("RESEND_API_KEY is not configured.");
+    }
+    resendClient = new Resend(key);
+  }
+  return resendClient;
+}
 
 const FROM = "Chatty <onboarding@resend.dev>";
 
 export async function sendPasswordResetEmail(toEmail, resetUrl) {
+  const resend = getResend();
   const { error } = await resend.emails.send({
     from: FROM,
     to: toEmail,
@@ -119,6 +130,7 @@ Your account remains secure.
 export async function sendLoginAlertEmail(toEmail, info) {
   const sessionsUrl = `${clientUrl}/profile?tab=security`;
   try {
+    const resend = getResend();
     const { error } = await resend.emails.send({
       from: FROM,
       to: toEmail,
