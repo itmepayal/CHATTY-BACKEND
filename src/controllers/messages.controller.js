@@ -9,6 +9,7 @@ import * as scheduleService from "../services/messaging/message-schedule.service
 import * as locationService from "../services/messaging/message-location.service.js";
 import * as queryService from "../services/messaging/message-query.service.js";
 import * as lifecycleService from "../services/messaging/message-lifecycle.service.js";
+import * as forwardService from "../services/messaging/message-forward.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -79,7 +80,6 @@ const messageController = {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(Math.max(1, Number(req.query.limit) || 50), 100);
 
-    // 1. Fetch current user blocked list and archived set
     const [me, archivedSet] = await Promise.all([
       User.findById(userId).select("blockedUsers").lean(),
       getArchivedSet(userId),
@@ -87,7 +87,6 @@ const messageController = {
 
     const myBlockedSet = new Set((me?.blockedUsers || []).map(String));
 
-    // 2. Primary Source: Existing active conversations
     const convoAgg = await Message.aggregate([
       {
         $match: {
@@ -129,7 +128,6 @@ const messageController = {
     let targetUserIds = [];
 
     if (search) {
-      // 5. Database-level filtering for search
       const rx = new RegExp(escapeRegex(search), "i");
       const matchedUsers = await User.find({
         _id: { $ne: userId, $nin: [...myBlockedSet] },
@@ -142,7 +140,6 @@ const messageController = {
 
       targetUserIds = matchedUsers.map((u) => u._id.toString());
     } else {
-      // 3. Existing conversations as primary source + 4. Saved contacts
       const contacts = await Contact.find({ ownerId: userId })
         .select("contactId")
         .lean();
@@ -150,7 +147,6 @@ const messageController = {
 
       const combinedSet = new Set([...convoUserIds, ...contactUserIds]);
 
-      // If user has neither conversations nor contacts, fetch a bounded set of discoverable users
       if (combinedSet.size === 0) {
         const discoverUsers = await User.find({
           _id: { $ne: userId, $nin: [...myBlockedSet] },
@@ -162,7 +158,6 @@ const messageController = {
         discoverUsers.forEach((u) => combinedSet.add(u._id.toString()));
       }
 
-      // Paginate target IDs before querying full user documents
       const allTargetIds = Array.from(combinedSet);
       const skip = (page - 1) * limit;
       targetUserIds = allTargetIds.slice(skip, skip + limit);
@@ -176,7 +171,6 @@ const messageController = {
       ).send(res);
     }
 
-    // 6. Query ONLY the target subset (at most `limit`, e.g. 50 users instead of 10,000!)
     const [users, blockers, contactsWhoSavedMe] = await Promise.all([
       User.find({ _id: { $in: targetUserIds } })
         .select(
@@ -295,7 +289,6 @@ const messageController = {
 
     const isEncryptedReq = parseBool(req.body.encrypted ?? req.body.e2ee);
 
-    // E2EE Media Guard: Media attachments are not client-side encrypted yet.
     if (isEncryptedReq && req.file) {
       if (req.file.path) fs.unlink(req.file.path, () => {});
       throw new ApiError(
@@ -413,97 +406,12 @@ const messageController = {
   }),
 
   forwardMessage: asyncHandler(async (req, res) => {
-    const { messageId } = req.params;
-    const userId = req.user._id;
-
-    assertValidId(messageId, "message ID");
-
-    const userIds = [...new Set((req.body.userIds || []).map(String))].filter(
-      (id) => id !== userId.toString(),
+    const { sent, message } = await forwardService.forwardMessage(
+      req.user._id,
+      req.params.messageId,
+      req.body,
     );
-
-    if (!userIds.length || userIds.length > MAX_FORWARD_TARGETS) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        `Choose 1 to ${MAX_FORWARD_TARGETS} recipients.`,
-      );
-    }
-    userIds.forEach((id) => assertValidId(id, "recipient ID"));
-
-    const original = await Message.findById(messageId);
-    if (
-      !original ||
-      original.isDeleted ||
-      isExpired(original) ||
-      !isParticipantOf(original, userId)
-    ) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You cannot forward this message.",
-      );
-    }
-
-    const o = original.toObject();
-    const isEncrypted = Boolean(o.e2ee) && Boolean(o.text);
-    const encryptedFor =
-      req.body.encrypted && typeof req.body.encrypted === "object"
-        ? req.body.encrypted
-        : {};
-
-    const content = {
-      text: isEncrypted ? undefined : o.text,
-      image: o.image?.url ? o.image : undefined,
-      file: o.file?.url ? o.file : undefined,
-      audio: o.audio?.url ? o.audio : undefined,
-      video: o.video?.url ? o.video : undefined,
-      location:
-        Number.isFinite(o.location?.lat) && Number.isFinite(o.location?.lng)
-          ? {
-              lat: o.location.lat,
-              lng: o.location.lng,
-              accuracy: o.location.accuracy,
-              isLive: false,
-            }
-          : undefined,
-      linkPreview: o.linkPreview?.url ? o.linkPreview : undefined,
-      isForwarded: true,
-    };
-
-    const sent = [];
-    const failed = [];
-    for (const receiverId of userIds) {
-      try {
-        await assertCanMessage(userId, receiverId);
-
-        const data = { ...content };
-        if (isEncrypted) {
-          const enc = encryptedFor[receiverId];
-          assertValidCipher(enc?.text, enc?.iv);
-          await assertE2EEReady(userId, receiverId);
-          data.text = enc.text;
-          data.e2ee = true;
-          data.iv = enc.iv;
-        }
-
-        const { payload } = await deliverMessage({
-          senderId: userId,
-          receiverId,
-          data,
-        });
-        sent.push(payload);
-      } catch (e) {
-        failed.push(receiverId);
-        console.error("forward failed for", receiverId, e?.message || e);
-      }
-    }
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      sent,
-      failed.length
-        ? `Forwarded to ${sent.length} chat(s). ${failed.length} failed.`
-        : `Forwarded to ${sent.length} chat(s).`,
-    ).send(res);
+    return new ApiResponse(StatusCodes.OK, sent, message).send(res);
   }),
 
   editMessage: asyncHandler(async (req, res) => {
@@ -686,11 +594,9 @@ const messageController = {
       req.params.id,
       req.body.archived,
     );
-    return new ApiResponse(
-      StatusCodes.OK,
-      { userId, archived },
-      message,
-    ).send(res);
+    return new ApiResponse(StatusCodes.OK, { userId, archived }, message).send(
+      res,
+    );
   }),
 
   startShare: asyncHandler(async (req, res) => {
