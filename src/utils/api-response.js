@@ -7,12 +7,13 @@ class ApiResponse {
     this.metadata = metadata;
   }
 
-  send(res) {
+  send(res, extra = {}) {
     return res.status(this.statusCode).json({
       success: this.success,
       message: this.message,
       data: this.data,
       ...(Object.keys(this.metadata).length && { meta: this.metadata }),
+      ...extra,
     });
   }
 }
