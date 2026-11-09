@@ -1,7 +1,7 @@
 import LocationShare from "../models/location-share.model.js";
 import Message from "../models/message.model.js";
 import GroupMessage from "../models/group-message.model.js";
-import { groupRoom } from "../lib/socket.js";
+import { groupRoom } from "./socket-state.js";
 import {
   MIN_LOCATION_UPDATE_INTERVAL_MS,
   LOCATION_EXPIRY_SWEEP_INTERVAL_MS,

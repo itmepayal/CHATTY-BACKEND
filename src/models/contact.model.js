@@ -81,13 +81,11 @@ export const isMutualContact = async (a, b) => {
   if (!isValidId(a) || !isValidId(b) || a.toString() === b.toString()) {
     return false;
   }
-  const count = await Contact.countDocuments({
-    $or: [
-      { ownerId: a, contactId: b },
-      { ownerId: b, contactId: a },
-    ],
-  });
-  return count === 2;
+  const [aHasB, bHasA] = await Promise.all([
+    Contact.exists({ ownerId: a, contactId: b }),
+    Contact.exists({ ownerId: b, contactId: a }),
+  ]);
+  return Boolean(aHasB && bHasA);
 };
 
 ContactSchema.statics.isContact = isContact;

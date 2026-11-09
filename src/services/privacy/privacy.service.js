@@ -3,8 +3,9 @@ import User from "../../models/users.model.js";
 import Contact from "../../models/contact.model.js";
 import ApiError from "../../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { toObjectId } from "../../utils/message-helpers.js";
-import { isUserOnline, getPrivacy } from "../../lib/socket.js";
+import { isUserOnline, getPrivacy } from "../../lib/socket-state.js";
+
+const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
 const SENSITIVE_KEYS = [
   "password",

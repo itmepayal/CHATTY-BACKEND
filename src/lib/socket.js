@@ -35,57 +35,29 @@ const io = new Server(server, {
   },
 });
 
-export const groupRoom = (groupId) => `group:${groupId}`;
+import {
+  groupRoom,
+  onlineUsers,
+  DEFAULT_PRIVACY,
+  privacyByUser,
+  cleanPrivacy,
+  getPrivacy,
+  loadPrivacy,
+  isUserOnline,
+} from "./socket-state.js";
+
+export {
+  groupRoom,
+  onlineUsers,
+  DEFAULT_PRIVACY,
+  privacyByUser,
+  cleanPrivacy,
+  getPrivacy,
+  loadPrivacy,
+  isUserOnline,
+};
 
 const isObjectId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);
-
-const onlineUsers = new Map();
-
-const DEFAULT_PRIVACY = {
-  showOnlineStatus: true,
-  onlineStatusVisibility: "everyone",
-  readReceipts: true,
-  typingIndicator: true,
-  lastSeenVisibility: "contacts",
-  profilePhotoVisibility: "everyone",
-  aboutVisibility: "contacts",
-  groupAddPermission: "contacts",
-};
-
-export const privacyByUser = new Map();
-
-const cleanPrivacy = (p = {}) => {
-  const onlineStatusVisibility =
-    p.onlineStatusVisibility ??
-    (p.showOnlineStatus === false ? "nobody" : "everyone");
-  return {
-    showOnlineStatus: onlineStatusVisibility !== "nobody",
-    onlineStatusVisibility,
-    readReceipts: p.readReceipts !== false,
-    typingIndicator: p.typingIndicator !== false,
-    lastSeenVisibility: p.lastSeenVisibility ?? "contacts",
-    profilePhotoVisibility: p.profilePhotoVisibility ?? "everyone",
-    aboutVisibility: p.aboutVisibility ?? "contacts",
-    groupAddPermission: p.groupAddPermission ?? "contacts",
-  };
-};
-
-export const getPrivacy = (userId) =>
-  privacyByUser.get(String(userId)) || DEFAULT_PRIVACY;
-
-export const loadPrivacy = async (userId) => {
-  try {
-    const u = await User.findById(userId)
-      .select(
-        "showOnlineStatus onlineStatusVisibility readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission",
-      )
-      .lean();
-
-    if (u) privacyByUser.set(String(userId), cleanPrivacy(u));
-  } catch (e) {
-    console.error("[socket] loadPrivacy failed:", e?.message || e);
-  }
-};
 
 const blockCache = new Map();
 
@@ -118,8 +90,6 @@ const isBlockedEitherWay = async (a, b) => {
   return value;
 };
 
-export const isUserOnline = (userId) =>
-  (onlineUsers.get(userId.toString())?.size || 0) > 0;
 
 export const isUserViewingChat = async (receiverId, senderId) => {
   const sockets = await io.in(receiverId.toString()).fetchSockets();

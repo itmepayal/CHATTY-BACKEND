@@ -1,85 +1,43 @@
 import { StatusCodes } from "http-status-codes";
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
-import ApiError from "../utils/api-error.js";
 import ApiResponse from "../utils/api-response.js";
-import buildChatContents from "../utils/ai-chat-contents.js";
-import { callAI, __test__ as serviceTest } from "../services/ai.service.js";
-import { SYSTEM_PROMPTS } from "../constants/aiPrompts.js";
-import {
-  validateText,
-  validateTone,
-  validateGeneratedText,
-} from "../utils/ai-validators.js";
-import { parseStructuredGrammar } from "../utils/ai-parsers.js";
+import * as aiService from "../services/ai.service.js";
+import { AI_SUCCESS_MESSAGES } from "../constants/ai.constants.js";
 
 const aiController = {
   correctEnglish: asyncHandler(async (req, res) => {
-    const text = validateText(req.body?.text);
-
-    const output = await callAI(SYSTEM_PROMPTS.correct, text, true);
-    const result = parseStructuredGrammar(output);
-
+    const data = await aiService.correctEnglish(req.body.text);
     return new ApiResponse(
       StatusCodes.OK,
-      {
-        original: text,
-        corrected: result.corrected,
-        changes: result.changes,
-      },
-      "English corrected successfully",
+      data,
+      AI_SUCCESS_MESSAGES.CORRECT,
     ).send(res);
   }),
 
   rewriteText: asyncHandler(async (req, res) => {
-    const text = validateText(req.body?.text);
-    const tone = req.body?.tone;
-
-    validateTone(tone);
-
-    const output = await callAI(SYSTEM_PROMPTS.rewrite(tone), text);
-    const rewritten = validateGeneratedText(output, "rewrite result");
-
+    const data = await aiService.rewriteText(req.body.text, req.body.tone);
     return new ApiResponse(
       StatusCodes.OK,
-      { original: text, tone, rewritten },
-      "Text rewritten successfully",
+      data,
+      AI_SUCCESS_MESSAGES.REWRITE,
     ).send(res);
   }),
 
   hinglishToEnglish: asyncHandler(async (req, res) => {
-    const text = validateText(req.body?.text);
-
-    const output = await callAI(SYSTEM_PROMPTS.hinglish, text);
-    const translated = validateGeneratedText(output, "translation");
-
+    const data = await aiService.hinglishToEnglish(req.body.text);
     return new ApiResponse(
       StatusCodes.OK,
-      { original: text, translated },
-      "Hinglish translated successfully",
+      data,
+      AI_SUCCESS_MESSAGES.HINGLISH,
     ).send(res);
   }),
 
   chatbot: asyncHandler(async (req, res) => {
-    const messages = buildChatContents(req.body?.messages);
-
-    if (!messages.length || messages[messages.length - 1].role !== "user") {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Send at least one user message.",
-      );
-    }
-
-    const output = await callAI(SYSTEM_PROMPTS.chatbot, messages, false, {
-      temperature: 0.5,
-      maxOutputTokens: 1500,
-    });
-
-    const reply = validateGeneratedText(output, "chatbot reply");
-
+    const data = await aiService.chatbotReply(req.body.messages);
     return new ApiResponse(
       StatusCodes.OK,
-      { reply },
-      "Reply generated successfully",
+      data,
+      AI_SUCCESS_MESSAGES.CHATBOT,
     ).send(res);
   }),
 };

@@ -1,69 +1,67 @@
-import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
-import Contact from "../models/contact.model.js";
-import User from "../models/users.model.js";
-import Message from "../models/message.model.js";
+import {
+  assertValidObjectId,
+  isValidObjectId,
+} from "../utils/object-id.util.js";
+import {
+  sanitizeNickname,
+  parsePagination,
+  escapeRegex,
+} from "../utils/sanitize.util.js";
+import {
+  MAX_BULK_CONTACTS,
+  SEARCH_MIN_LENGTH,
+  SEARCH_RESULT_LIMIT,
+  USER_STATUS,
+  CONTACT_ERROR_MESSAGES,
+  CONTACT_SUCCESS_MESSAGES,
+} from "../constants/contact.constants.js";
+import { CHAT_LIST_USER_FIELDS } from "../constants/user-fields.constants.js";
+import * as contactRepo from "../repositories/contact.repository.js";
+import * as contactEvents from "../events/contact.events.js";
 import { filterUsersForViewer } from "./privacy-visibility.service.js";
-import { refreshPrivacy, io } from "../lib/socket.js";
 
-const toObjectId = (id) =>
-  id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(id);
-
-const isValidObjectId = (id) =>
-  id && mongoose.Types.ObjectId.isValid(id) && String(new mongoose.Types.ObjectId(id)) === String(id);
-
-const sanitizeNickname = (nickname) => {
-  if (typeof nickname !== "string") return undefined;
-  const trimmed = nickname.trim();
-  return trimmed.length > 0 ? trimmed.slice(0, 50) : undefined;
-};
-
-/**
- * 1. Add contact
- * Validates target user, disallows self-contact, upserts contact document,
- * handles duplicate keys gracefully, synchronizes privacy and emits socket event.
- */
 export const addContact = async (ownerId, contactId, nickname) => {
-  if (!isValidObjectId(contactId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
-  }
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(contactId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
+
   if (String(ownerId) === String(contactId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "You can't add yourself.");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      CONTACT_ERROR_MESSAGES.CANNOT_ADD_SELF,
+    );
   }
 
-  const targetUser = await User.findById(contactId).select("_id status").lean();
-  if (!targetUser || targetUser.status === "suspended") {
-    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+  const targetUser = await contactRepo.findUserById(contactId);
+  if (!targetUser || targetUser.status === USER_STATUS.SUSPENDED) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.USER_NOT_FOUND,
+    );
+  }
+
+  const isBlocked = await contactRepo.isBlockedBidirectional(
+    ownerId,
+    contactId,
+  );
+  if (isBlocked) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      CONTACT_ERROR_MESSAGES.CANNOT_ADD_BLOCKED,
+    );
   }
 
   const cleanNickname = sanitizeNickname(nickname);
 
-  const updateOp =
-    cleanNickname !== undefined
-      ? { $set: { nickname: cleanNickname } }
-      : { $setOnInsert: { nickname: undefined } };
-
   try {
-    await Contact.updateOne(
-      { ownerId: toObjectId(ownerId), contactId: toObjectId(contactId) },
-      updateOp,
-      { upsert: true },
-    );
+    await contactRepo.upsertContact(ownerId, contactId, cleanNickname);
   } catch (err) {
     if (err.code !== 11000) throw err;
   }
 
-  try {
-    await Promise.all([
-      refreshPrivacy(ownerId),
-      refreshPrivacy(contactId),
-    ]);
-  } catch (e) {
-    console.error("[contact.service] refreshPrivacy error:", e?.message || e);
-  }
-
-  io.to(String(ownerId)).emit("contact:added", {
+  await contactEvents.syncPrivacy([ownerId, contactId]);
+  contactEvents.emitContactAdded(ownerId, {
     contactId: String(contactId),
     nickname: cleanNickname,
   });
@@ -75,33 +73,15 @@ export const addContact = async (ownerId, contactId, nickname) => {
   };
 };
 
-/**
- * 2. Remove contact
- * Deletes directional contact link, synchronizes privacy and emits socket event.
- */
 export const removeContact = async (ownerId, contactId) => {
-  if (!isValidObjectId(contactId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
-  }
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(contactId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
 
-  const result = await Contact.deleteOne({
-    ownerId: toObjectId(ownerId),
-    contactId: toObjectId(contactId),
-  });
+  const result = await contactRepo.deleteContact(ownerId, contactId);
 
   if (result.deletedCount > 0) {
-    try {
-      await Promise.all([
-        refreshPrivacy(ownerId),
-        refreshPrivacy(contactId),
-      ]);
-    } catch (e) {
-      console.error("[contact.service] refreshPrivacy error:", e?.message || e);
-    }
-
-    io.to(String(ownerId)).emit("contact:removed", {
-      contactId: String(contactId),
-    });
+    await contactEvents.syncPrivacy([ownerId, contactId]);
+    contactEvents.emitContactRemoved(ownerId, { contactId: String(contactId) });
   }
 
   return {
@@ -110,70 +90,33 @@ export const removeContact = async (ownerId, contactId) => {
   };
 };
 
-/**
- * 3. Get contacts list
- * Returns contact documents with populated user information, respects privacy visibility,
- * and supports optional pagination and search filters.
- */
-export const getContacts = async (
-  ownerId,
-  { page, limit, search } = {},
-) => {
-  const isPaginated = page !== undefined || limit !== undefined;
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
-  const skip = (pageNum - 1) * limitNum;
+export const getContacts = async (ownerId, query = {}) => {
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
 
-  const filter = { ownerId: toObjectId(ownerId) };
+  const { isPaginated, pageNum, limitNum, skip, search } =
+    parsePagination(query);
 
-  let query = Contact.find(filter)
-    .populate(
-      "contactId",
-      "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility status",
-    )
-    .sort({ createdAt: -1 });
-
-  if (isPaginated && !search) {
-    query = query.skip(skip).limit(limitNum);
-  }
-
-  const rows = await query.lean();
-
-  const validRows = rows.filter(
-    (r) => r.contactId && r.contactId.status !== "suspended",
-  );
-  const populatedUsers = validRows.map((r) => r.contactId);
-  const safeUsers = await filterUsersForViewer(populatedUsers, ownerId);
-  const safeMap = new Map(safeUsers.map((u) => [String(u._id || u.id), u]));
-
-  let contacts = validRows.map((r) => {
-    const uId = String(r.contactId._id || r.contactId.id);
-    const safe = safeMap.get(uId);
-    return {
-      ...(safe || r.contactId),
-      nickname: r.nickname,
-      createdAt: r.createdAt,
-    };
+  const { rows, total } = await contactRepo.findContactsAggregation(ownerId, {
+    skip,
+    limitNum,
+    isPaginated,
+    search,
   });
 
-  let total;
+  const rawUsers = rows.map((r) => r.user);
+  const safeUsers = await filterUsersForViewer(rawUsers, ownerId);
+  const safeMap = new Map(safeUsers.map((u) => [String(u._id || u.id), u]));
 
-  if (search && typeof search === "string" && search.trim().length > 0) {
-    const term = search.trim().toLowerCase();
-    contacts = contacts.filter(
-      (c) =>
-        (c.nickname && c.nickname.toLowerCase().includes(term)) ||
-        (c.fullName && c.fullName.toLowerCase().includes(term)) ||
-        (c.username && c.username.toLowerCase().includes(term)),
-    );
-    total = contacts.length;
-    if (isPaginated) {
-      contacts = contacts.slice(skip, skip + limitNum);
-    }
-  } else if (isPaginated) {
-    total = await Contact.countDocuments(filter);
-  } else {
-    total = contacts.length;
+  const contacts = [];
+  for (const r of rows) {
+    const uId = String(r.user._id);
+    const safe = safeMap.get(uId);
+    if (!safe) continue;
+    contacts.push({
+      ...safe,
+      nickname: r.nickname,
+      createdAt: r.createdAt,
+    });
   }
 
   return {
@@ -182,66 +125,57 @@ export const getContacts = async (
   };
 };
 
-/**
- * 4. Get contact by ID
- * Fetches a single contact for the owner and returns privacy-filtered user information.
- */
 export const getContactById = async (ownerId, contactId) => {
-  if (!isValidObjectId(contactId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
-  }
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(contactId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
 
-  const row = await Contact.findOne({
-    ownerId: toObjectId(ownerId),
-    contactId: toObjectId(contactId),
-  })
-    .populate(
-      "contactId",
-      "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility status",
-    )
-    .lean();
-
-  if (!row || !row.contactId || row.contactId.status === "suspended") {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Contact not found.");
+  const row = await contactRepo.findContactWithUser(ownerId, contactId);
+  if (
+    !row ||
+    !row.contactId ||
+    row.contactId.status === USER_STATUS.SUSPENDED
+  ) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.CONTACT_NOT_FOUND,
+    );
   }
 
   const [safeUser] = await filterUsersForViewer([row.contactId], ownerId);
+  if (!safeUser) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.CONTACT_NOT_FOUND,
+    );
+  }
 
   return {
-    ...(safeUser || row.contactId),
+    ...safeUser,
     nickname: row.nickname,
     createdAt: row.createdAt,
   };
 };
 
-/**
- * 5. Update contact nickname
- * Updates or clears the custom nickname for an existing contact.
- */
 export const updateContactNickname = async (ownerId, contactId, nickname) => {
-  if (!isValidObjectId(contactId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
-  }
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(contactId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
 
   const cleanNickname = sanitizeNickname(nickname);
-
-  const updateOp = cleanNickname
-    ? { $set: { nickname: cleanNickname } }
-    : { $unset: { nickname: 1 } };
-
-  const updated = await Contact.findOneAndUpdate(
-    { ownerId: toObjectId(ownerId), contactId: toObjectId(contactId) },
-    updateOp,
-    { new: true },
-  ).lean();
+  const updated = await contactRepo.updateNickname(
+    ownerId,
+    contactId,
+    cleanNickname,
+  );
 
   if (!updated) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Contact not found.");
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.CONTACT_NOT_FOUND,
+    );
   }
 
   const finalNickname = updated.nickname || null;
-
-  io.to(String(ownerId)).emit("contact:updated", {
+  contactEvents.emitContactUpdated(ownerId, {
     contactId: String(contactId),
     nickname: finalNickname,
   });
@@ -252,10 +186,6 @@ export const updateContactNickname = async (ownerId, contactId, nickname) => {
   };
 };
 
-/**
- * 6. Directional contact check
- * Returns true if ownerId has saved contactId in their contacts.
- */
 export const isContact = async (ownerId, contactId) => {
   if (
     !isValidObjectId(ownerId) ||
@@ -264,18 +194,9 @@ export const isContact = async (ownerId, contactId) => {
   ) {
     return false;
   }
-  return Boolean(
-    await Contact.exists({
-      ownerId: toObjectId(ownerId),
-      contactId: toObjectId(contactId),
-    }),
-  );
+  return contactRepo.existsContact(ownerId, contactId);
 };
 
-/**
- * 7. Mutual contact check
- * Returns true if both users have saved each other as contacts.
- */
 export const isMutualContact = async (userA, userB) => {
   if (
     !isValidObjectId(userA) ||
@@ -284,350 +205,254 @@ export const isMutualContact = async (userA, userB) => {
   ) {
     return false;
   }
-  const count = await Contact.countDocuments({
-    $or: [
-      { ownerId: toObjectId(userA), contactId: toObjectId(userB) },
-      { ownerId: toObjectId(userB), contactId: toObjectId(userA) },
-    ],
-  });
-  return count === 2;
+  const [aHasB, bHasA] = await Promise.all([
+    contactRepo.existsContact(userA, userB),
+    contactRepo.existsContact(userB, userA),
+  ]);
+  return Boolean(aHasB && bHasA);
 };
 
-/**
- * 8. Get mutual contacts
- * Finds all contacts common to both users.
- */
 export const getMutualContacts = async (userId, otherUserId) => {
-  if (!isValidObjectId(userId) || !isValidObjectId(otherUserId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
+  assertValidObjectId(userId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(otherUserId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
+
+  if (String(userId) === String(otherUserId)) return [];
+
+  const otherUser = await contactRepo.findUserById(otherUserId);
+  if (!otherUser || otherUser.status === USER_STATUS.SUSPENDED) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.USER_NOT_FOUND,
+    );
   }
-  if (String(userId) === String(otherUserId)) {
-    return [];
-  }
 
-  const otherUser = await User.findById(otherUserId)
-    .select("_id status")
-    .lean();
-  if (!otherUser || otherUser.status === "suspended") {
-    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
-  }
-
-  const [contactsA, contactsB] = await Promise.all([
-    Contact.find({ ownerId: toObjectId(userId) }).select("contactId").lean(),
-    Contact.find({ ownerId: toObjectId(otherUserId) }).select("contactId").lean(),
-  ]);
-
-  const setA = new Set(contactsA.map((c) => String(c.contactId)));
-  const mutualIds = contactsB
-    .map((c) => String(c.contactId))
-    .filter((id) => setA.has(id));
-
+  const mutualIds = await contactRepo.findMutualContactIds(userId, otherUserId);
   if (!mutualIds.length) return [];
 
-  const users = await User.find({
-    _id: { $in: mutualIds.map(toObjectId) },
-    status: { $ne: "suspended" },
-  })
-    .select(
-      "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility",
-    )
-    .lean();
-
-  return await filterUsersForViewer(users, userId);
+  const users = await contactRepo.findUsersByIds(mutualIds);
+  return filterUsersForViewer(users, userId);
 };
 
-/**
- * 9. Check contact exists
- * Fast check for contact existence.
- */
-export const checkContactExists = async (ownerId, contactId) => {
-  return await isContact(ownerId, contactId);
-};
+export const checkContactExists = async (ownerId, contactId) =>
+  isContact(ownerId, contactId);
 
-/**
- * 10. Search within contacts
- * Searches exclusively through ownerId's saved contacts.
- */
 export const searchContacts = async (
   ownerId,
   searchQuery,
-  { limit = 20 } = {},
+  { limit = SEARCH_RESULT_LIMIT } = {},
 ) => {
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const term = String(searchQuery || "").trim();
   if (!term) return [];
 
-  const rows = await Contact.find({ ownerId: toObjectId(ownerId) })
-    .populate(
-      "contactId",
-      "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility status",
-    )
-    .lean();
-
-  const regex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-  const matched = rows.filter((r) => {
-    if (!r.contactId || r.contactId.status === "suspended") return false;
-    return (
-      (r.nickname && regex.test(r.nickname)) ||
-      regex.test(r.contactId.fullName || "") ||
-      regex.test(r.contactId.username || "")
-    );
+  const result = await getContacts(ownerId, {
+    page: 1,
+    limit,
+    search: term,
   });
 
-  const sliced = matched.slice(0, limitNum);
-  const safeUsers = await filterUsersForViewer(
-    sliced.map((r) => r.contactId),
-    ownerId,
-  );
-  const safeMap = new Map(safeUsers.map((u) => [String(u._id || u.id), u]));
-
-  return sliced.map((r) => {
-    const uId = String(r.contactId._id || r.contactId.id);
-    const safe = safeMap.get(uId);
-    return {
-      ...(safe || r.contactId),
-      nickname: r.nickname,
-      createdAt: r.createdAt,
-    };
-  });
+  return result.contacts;
 };
 
-/**
- * 11. Get contact count
- * Returns the count of contacts saved by the owner.
- */
 export const getContactCount = async (ownerId) => {
-  const count = await Contact.countDocuments({ ownerId: toObjectId(ownerId) });
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  const count = await contactRepo.countContacts(ownerId);
   return { totalContacts: count, count };
 };
 
-/**
- * 12. Bulk add contacts
- * Adds up to 100 contacts in a single operation using bulkWrite.
- */
 export const bulkAddContacts = async (ownerId, contactIds) => {
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+
   if (!Array.isArray(contactIds) || contactIds.length === 0) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      "contactIds must be a non-empty array.",
+      CONTACT_ERROR_MESSAGES.INVALID_BULK_ARRAY,
     );
   }
-  if (contactIds.length > 100) {
+  if (contactIds.length > MAX_BULK_CONTACTS) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      "Cannot add more than 100 contacts at once.",
+      CONTACT_ERROR_MESSAGES.EXCEEDED_BULK_LIMIT,
     );
   }
 
   const ownerStr = String(ownerId);
-  const validTargetIds = Array.from(
-    new Set(
-      contactIds
-        .filter(
-          (id) =>
-            isValidObjectId(id) && String(id) !== ownerStr,
-        )
-        .map(String),
-    ),
+  let invalidCount = 0;
+  const rawValidIds = [];
+
+  for (const id of contactIds) {
+    if (!isValidObjectId(id) || String(id) === ownerStr) {
+      invalidCount++;
+    } else {
+      rawValidIds.push(String(id));
+    }
+  }
+
+  const uniqueCandidates = [...new Set(rawValidIds)];
+  if (!uniqueCandidates.length) {
+    return {
+      addedCount: 0,
+      alreadyExistsCount: 0,
+      invalidCount,
+      blockedCount: 0,
+      totalProcessed: 0,
+      skippedCount: invalidCount,
+    };
+  }
+
+  const existingContactSet = await contactRepo.findExistingContactIdSet(
+    ownerId,
+    uniqueCandidates,
+  );
+  const alreadyExistsCount = uniqueCandidates.filter((id) =>
+    existingContactSet.has(id),
+  ).length;
+  const toProcessIds = uniqueCandidates.filter(
+    (id) => !existingContactSet.has(id),
   );
 
-  if (!validTargetIds.length) {
-    return {
-      addedCount: 0,
-      skippedCount: contactIds.length,
-      totalProcessed: 0,
-    };
+  const targetUsers = await contactRepo.findUsersWithBlocked(toProcessIds);
+  const targetUserMap = new Map(targetUsers.map((u) => [String(u._id), u]));
+
+  const missingCount = toProcessIds.filter(
+    (id) => !targetUserMap.has(id),
+  ).length;
+  invalidCount += missingCount;
+
+  const myBlockedList = new Set(await contactRepo.findUserBlockedList(ownerId));
+  let blockedCount = 0;
+  const eligibleIds = [];
+
+  for (const id of toProcessIds) {
+    const target = targetUserMap.get(id);
+    if (!target) continue;
+
+    const targetBlocked = new Set((target.blockedUsers || []).map(String));
+    if (myBlockedList.has(id) || targetBlocked.has(ownerStr)) {
+      blockedCount++;
+    } else {
+      eligibleIds.push(id);
+    }
   }
 
-  const existingUsers = await User.find({
-    _id: { $in: validTargetIds.map(toObjectId) },
-    status: { $ne: "suspended" },
-  })
-    .select("_id")
-    .lean();
-
-  const existingUserIds = existingUsers.map((u) => String(u._id));
-  if (!existingUserIds.length) {
-    return {
-      addedCount: 0,
-      skippedCount: contactIds.length,
-      totalProcessed: 0,
-    };
+  if (eligibleIds.length > 0) {
+    await contactRepo.bulkUpsertContacts(ownerId, eligibleIds);
+    await contactEvents.syncPrivacy([ownerId, ...eligibleIds]);
+    contactEvents.emitContactsBulkAdded(ownerId, {
+      contactIds: eligibleIds,
+      addedCount: eligibleIds.length,
+    });
   }
 
-  const operations = existingUserIds.map((cId) => ({
-    updateOne: {
-      filter: { ownerId: toObjectId(ownerId), contactId: toObjectId(cId) },
-      update: { $setOnInsert: { nickname: undefined } },
-      upsert: true,
-    },
-  }));
-
-  const result = await Contact.bulkWrite(operations, { ordered: false });
-  const addedCount = result.upsertedCount || 0;
-
-  try {
-    await Promise.all([
-      refreshPrivacy(ownerId),
-      ...existingUserIds.map((cId) => refreshPrivacy(cId).catch(() => {})),
-    ]);
-  } catch (e) {
-    console.error("[contact.service] refreshPrivacy error:", e?.message || e);
-  }
-
-  io.to(String(ownerId)).emit("contacts:bulk-added", {
-    contactIds: existingUserIds,
-    addedCount,
-  });
+  const addedCount = eligibleIds.length;
+  const skippedCount = invalidCount + alreadyExistsCount + blockedCount;
 
   return {
     addedCount,
-    skippedCount: contactIds.length - addedCount,
-    totalProcessed: existingUserIds.length,
+    alreadyExistsCount,
+    invalidCount,
+    blockedCount,
+    totalProcessed: addedCount,
+    skippedCount,
   };
 };
 
-/**
- * 13. Validate contact ownership
- * Ensures contact exists and belongs to the owner.
- */
 export const validateContactOwnership = async (ownerId, contactId) => {
-  if (!isValidObjectId(contactId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
-  }
-  const contact = await Contact.findOne({
-    ownerId: toObjectId(ownerId),
-    contactId: toObjectId(contactId),
-  }).lean();
+  assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(contactId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
 
+  const contact = await contactRepo.findContact(ownerId, contactId);
   if (!contact) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Contact not found.");
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.CONTACT_NOT_FOUND,
+    );
   }
   return contact;
 };
 
-/**
- * 14. Search discoverable users (Existing endpoint support: GET /contacts/search)
- * Finds users matching query (name, username, email), excludes blocked users,
- * checks contact status, and sanitizes via privacy viewer filter.
- */
 export const searchUsers = async (currentUserId, rawQuery) => {
+  assertValidObjectId(currentUserId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+
   const q = String(rawQuery || "").trim();
-  if (q.length < 2) {
-    return { users: [], message: "Type at least 2 characters." };
+  if (q.length < SEARCH_MIN_LENGTH) {
+    return { users: [], message: CONTACT_ERROR_MESSAGES.SEARCH_MIN_LENGTH };
   }
 
-  const me = await User.findById(currentUserId).select("blockedUsers").lean();
-  const myBlocked = me?.blockedUsers || [];
-  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  const blockedList = await contactRepo.findUserBlockedList(currentUserId);
+  const nameOrUsernameRegex = new RegExp(escapeRegex(q), "i");
+  const exactEmail = q.toLowerCase();
 
-  const users = await User.find({
-    _id: { $ne: toObjectId(currentUserId), $nin: myBlocked },
-    blockedUsers: { $ne: toObjectId(currentUserId) },
-    status: { $ne: "suspended" },
-    $or: [{ fullName: rx }, { username: rx }, { email: rx }],
-  })
-    .select(
-      "fullName username avatar bio profilePhotoVisibility aboutVisibility",
-    )
-    .limit(20)
-    .lean();
+  const users = await contactRepo.searchDiscoverableUsers({
+    currentUserId,
+    blockedUserIds: blockedList,
+    nameOrUsernameRegex,
+    exactEmail,
+    limit: SEARCH_RESULT_LIMIT,
+  });
 
-  const mine = await Contact.find({
-    ownerId: toObjectId(currentUserId),
-    contactId: { $in: users.map((u) => u._id) },
-  }).select("contactId");
-  const set = new Set(mine.map((c) => String(c.contactId)));
-
+  const myContactIds = new Set(await contactRepo.findContactIds(currentUserId));
   const safeUsers = await filterUsersForViewer(users, currentUserId);
 
   const resultUsers = safeUsers.map((u) => ({
     ...u,
-    isContact: set.has(String(u._id || u.id)),
+    isContact: myContactIds.has(String(u._id || u.id)),
   }));
 
-  return { users: resultUsers, message: "Users fetched successfully." };
+  return {
+    users: resultUsers,
+    message: CONTACT_SUCCESS_MESSAGES.USERS_FETCHED,
+  };
 };
 
-/**
- * 15. Get contact chat list (Existing endpoint support: GET /contacts/chats)
- * Aggregates latest messages and unread counts for all contacts.
- */
 export const getChatList = async (currentUserId) => {
-  const me = toObjectId(currentUserId);
-  const contacts = await Contact.find({ ownerId: me })
-    .select("contactId")
-    .lean();
-  const ids = contacts.map((c) => c.contactId);
+  assertValidObjectId(currentUserId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
 
-  const last = await Message.aggregate([
-    {
-      $match: {
-        deletedFor: { $ne: me },
-        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-        $and: [
-          {
-            $or: [
-              { senderId: me, receiverId: { $in: ids } },
-              { receiverId: me, senderId: { $in: ids } },
-            ],
-          },
-        ],
-      },
-    },
-    { $sort: { createdAt: -1 } },
-    {
-      $group: {
-        _id: {
-          $cond: [{ $eq: ["$senderId", me] }, "$receiverId", "$senderId"],
-        },
-        lastMessage: { $first: "$$ROOT" },
-        unread: {
-          $sum: {
-            $cond: [
-              {
-                $and: [
-                  { $eq: ["$receiverId", me] },
-                  { $ne: ["$status", "seen"] },
-                ],
-              },
-              1,
-              0,
-            ],
-          },
-        },
-      },
-    },
-  ]);
-  const byUser = new Map(last.map((l) => [String(l._id), l]));
+  const ids = await contactRepo.findContactIds(currentUserId);
+  if (!ids.length) {
+    return { chats: [], totalContacts: 0 };
+  }
 
-  const users = await User.find({ _id: { $in: ids }, status: { $ne: "suspended" } })
-    .select(
-      "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility",
-    )
-    .lean();
+  const activeUsers = await contactRepo.findUsersByIds(
+    ids,
+    CHAT_LIST_USER_FIELDS,
+  );
+  if (!activeUsers.length) {
+    return { chats: [], totalContacts: ids.length };
+  }
 
-  const safeUsers = await filterUsersForViewer(users, me);
-  const safeUserMap = new Map(
-    safeUsers.map((u) => [String(u._id || u.id), u]),
+  const activeContactIds = activeUsers.map((u) => String(u._id));
+  const messagesByUser = await contactRepo.aggregateChatListMessages(
+    currentUserId,
+    activeContactIds,
   );
 
-  const chats = users
-    .map((u) => {
-      const uid = String(u._id);
-      const l = byUser.get(uid);
-      const safe = safeUserMap.get(uid) || u;
-      return {
-        user: safe,
-        lastMessage: l?.lastMessage || null,
-        unread: l?.unread || 0,
-      };
-    })
-    .sort(
-      (a, b) =>
-        new Date(b.lastMessage?.createdAt || 0) -
-        new Date(a.lastMessage?.createdAt || 0),
-    );
+  const safeUsers = await filterUsersForViewer(activeUsers, currentUserId);
+  const safeUserMap = new Map(safeUsers.map((u) => [String(u._id || u.id), u]));
+
+  const chats = [];
+  for (const u of activeUsers) {
+    const uid = String(u._id);
+    const safe = safeUserMap.get(uid);
+    if (!safe) continue; // PRIVACY LEAK FIX
+
+    const l = messagesByUser.get(uid);
+    chats.push({
+      user: safe,
+      lastMessage: l?.lastMessage || null,
+      unread: l?.unread || 0,
+    });
+  }
+
+  chats.sort((a, b) => {
+    const timeA = a.lastMessage?.createdAt
+      ? new Date(a.lastMessage.createdAt).getTime()
+      : 0;
+    const timeB = b.lastMessage?.createdAt
+      ? new Date(b.lastMessage.createdAt).getTime()
+      : 0;
+    if (timeB !== timeA) return timeB - timeA;
+    return (a.user.fullName || "").localeCompare(b.user.fullName || "");
+  });
 
   return { chats, totalContacts: ids.length };
 };

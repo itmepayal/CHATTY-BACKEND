@@ -22,7 +22,7 @@ export const getGroupAndMember = async (groupId, userId) => {
 };
 
 export const assertAdmin = (member) => {
-  if (member.role !== "admin") {
+  if (member?.role !== "admin") {
     throw new ApiError(StatusCodes.FORBIDDEN, "Only group admins can do this.");
   }
 };
@@ -43,11 +43,21 @@ export const getBlockersOf = async (memberIds, senderId) => {
 };
 
 export const assertUsersAddable = async (actorId, targetIds) => {
-  const count = await User.countDocuments({ _id: { $in: targetIds } });
-  if (count !== targetIds.length) {
+  const users = await User.find({ _id: { $in: targetIds } })
+    .select("_id status")
+    .lean();
+
+  if (users.length !== targetIds.length) {
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       "One or more users were not found.",
+    );
+  }
+
+  if (users.some((u) => u.status === "suspended")) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "One or more selected users are suspended or inactive.",
     );
   }
 
