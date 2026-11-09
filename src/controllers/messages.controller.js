@@ -5,6 +5,7 @@ import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
 import * as chatSettingService from "../services/messaging/chat-setting.service.js";
 import * as reportService from "../services/messaging/message-report.service.js";
+import * as scheduleService from "../services/messaging/message-schedule.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -739,90 +740,28 @@ const messageController = {
   }),
 
   scheduleMessage: asyncHandler(async (req, res) => {
-    const { id: receiverId } = req.params;
-    const senderId = req.user._id;
-    const text = req.body.text?.trim();
-    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
-    const iv = req.body.iv;
-    const when = new Date(req.body.scheduledFor);
-
-    assertValidId(receiverId, "receiver ID");
-
-    if (receiverId.toString() === senderId.toString()) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "You cannot message yourself.",
-      );
-    }
-
-    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
-    if (!text || text.length > maxLen) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        wantsE2EE
-          ? "Encrypted payload is invalid or too large."
-          : `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
-      );
-    }
-    if (wantsE2EE) assertValidCipher(text, iv);
-
-    if (
-      Number.isNaN(when.getTime()) ||
-      when.getTime() < Date.now() + 30_000 ||
-      when.getTime() > Date.now() + 30 * 86_400_000
-    ) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Pick a time between 1 minute and 30 days from now.",
-      );
-    }
-
-    await assertCanMessage(senderId, receiverId);
-    if (wantsE2EE) await assertE2EEReady(senderId, receiverId);
-
-    const doc = await ScheduledMessage.create({
-      senderId,
-      receiverId,
-      text,
-      scheduledFor: when,
-      ...(wantsE2EE ? { e2ee: true, iv } : {}),
-    });
-
-    return new ApiResponse(StatusCodes.CREATED, doc, "Message scheduled.").send(
-      res,
+    const { doc, message } = await scheduleService.scheduleMessage(
+      req.user._id,
+      req.params.id,
+      req.body,
     );
+    return new ApiResponse(StatusCodes.CREATED, doc, message).send(res);
   }),
 
   getScheduled: asyncHandler(async (req, res) => {
-    const filter = { senderId: req.user._id, status: "pending" };
-    if (req.query.to && mongoose.Types.ObjectId.isValid(req.query.to)) {
-      filter.receiverId = req.query.to;
-    }
-
-    const list = await ScheduledMessage.find(filter).sort({ scheduledFor: 1 });
-
-    return new ApiResponse(StatusCodes.OK, list, "Scheduled messages.").send(
-      res,
+    const { list, message } = await scheduleService.getScheduled(
+      req.user._id,
+      req.query,
     );
+    return new ApiResponse(StatusCodes.OK, list, message).send(res);
   }),
 
   cancelScheduled: asyncHandler(async (req, res) => {
-    const { scheduleId } = req.params;
-    assertValidId(scheduleId, "schedule ID");
-
-    const doc = await ScheduledMessage.findOneAndUpdate(
-      { _id: scheduleId, senderId: req.user._id, status: "pending" },
-      { status: "cancelled" },
+    const { id, message } = await scheduleService.cancelScheduled(
+      req.user._id,
+      req.params.scheduleId,
     );
-    if (!doc) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "Scheduled message not found.");
-    }
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      { id: doc._id },
-      "Scheduled message cancelled.",
-    ).send(res);
+    return new ApiResponse(StatusCodes.OK, { id }, message).send(res);
   }),
 
   markMessagesSeen: asyncHandler(async (req, res) => {
