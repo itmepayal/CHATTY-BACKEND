@@ -5,7 +5,7 @@ import {
   listUserSessions,
   revokeUserSession,
   revokeOtherUserSessions,
-} from "../services/session.service.js";
+} from "../services/auth/session.service.js";
 
 const sessionController = {
   listSessions: asyncHandler(async (req, res) => {

@@ -16,34 +16,59 @@ const callController = {
     })
       .sort({ createdAt: -1 })
       .limit(limit)
-      .populate("callerId receiverId", "fullName avatar profilePhotoVisibility");
+      .populate(
+        "callerId receiverId",
+        "fullName avatar profilePhotoVisibility",
+      );
 
     const otherUserIds = [];
     for (const c of calls) {
-      const cId = c.callerId?._id ? String(c.callerId._id) : (c.callerId ? String(c.callerId) : null);
-      const rId = c.receiverId?._id ? String(c.receiverId._id) : (c.receiverId ? String(c.receiverId) : null);
+      const cId = c.callerId?._id
+        ? String(c.callerId._id)
+        : c.callerId
+          ? String(c.callerId)
+          : null;
+      const rId = c.receiverId?._id
+        ? String(c.receiverId._id)
+        : c.receiverId
+          ? String(c.receiverId)
+          : null;
       const isCallerMe = cId === String(userId);
       const otherId = isCallerMe ? rId : cId;
       if (otherId && otherId !== String(userId)) otherUserIds.push(otherId);
     }
 
     const [savedContacts, blockers, meDoc] = await Promise.all([
-      Contact.find({ ownerId: { $in: otherUserIds }, contactId: userId }).select("ownerId").lean(),
-      User.find({ _id: { $in: otherUserIds }, blockedUsers: userId }).select("_id").lean(),
+      Contact.find({ ownerId: { $in: otherUserIds }, contactId: userId })
+        .select("ownerId")
+        .lean(),
+      User.find({ _id: { $in: otherUserIds }, blockedUsers: userId })
+        .select("_id")
+        .lean(),
       User.findById(userId).select("blockedUsers").lean(),
     ]);
 
-    const targetSavedViewerSet = new Set(savedContacts.map((c) => String(c.ownerId)));
+    const targetSavedViewerSet = new Set(
+      savedContacts.map((c) => String(c.ownerId)),
+    );
     const blockedSet = new Set([
       ...blockers.map((b) => String(b._id)),
       ...(meDoc?.blockedUsers || []).map(String),
     ]);
 
     const data = calls.map((c) => {
-      const callerIdStr = c.callerId?._id ? String(c.callerId._id) : (c.callerId ? String(c.callerId) : null);
+      const callerIdStr = c.callerId?._id
+        ? String(c.callerId._id)
+        : c.callerId
+          ? String(c.callerId)
+          : null;
       const isOutgoing = callerIdStr === String(userId);
       const other = isOutgoing ? c.receiverId : c.callerId;
-      const otherIdStr = other?._id ? String(other._id) : (other ? String(other) : null);
+      const otherIdStr = other?._id
+        ? String(other._id)
+        : other
+          ? String(other)
+          : null;
 
       let otherUserPayload = {
         id: otherIdStr,
@@ -54,12 +79,14 @@ const callController = {
       if (other && other._id) {
         const isBlocked = blockedSet.has(otherIdStr);
         const inContacts = targetSavedViewerSet.has(otherIdStr);
-        const canSeePhoto = !isBlocked && canViewSync(
-          other.profilePhotoVisibility ?? "everyone",
-          otherIdStr,
-          userId,
-          inContacts,
-        );
+        const canSeePhoto =
+          !isBlocked &&
+          canViewSync(
+            other.profilePhotoVisibility ?? "everyone",
+            otherIdStr,
+            userId,
+            inContacts,
+          );
         otherUserPayload = {
           id: other._id,
           fullName: other.fullName || "User",

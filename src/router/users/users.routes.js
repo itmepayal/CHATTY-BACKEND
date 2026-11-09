@@ -2,7 +2,7 @@ import express from "express";
 import authMiddleware from "../../middlewares/authMidleware.middleware.js";
 import usersController from "../../controllers/users.controller.js";
 import upload from "../../middlewares/multer.middleware.js";
-import { settingsLimiter } from "../../middlewares/rateLimit.middleware.js";
+import { settingsLimiter } from "../../middlewares/rateLimit/index.js";
 
 const router = express.Router();
 

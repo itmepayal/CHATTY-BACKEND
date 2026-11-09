@@ -1,213 +1,129 @@
-import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
-import ApiError from "../utils/api-error.js";
 import ApiResponse from "../utils/api-response.js";
-import User from "../models/users.model.js";
-import Message from "../models/message.model.js";
-import Contact from "../models/contact.model.js";
-import { toObjectId } from "../utils/message-helpers.js";
 import { myId } from "../utils/request-helpers.js";
-import { filterUsersForViewer } from "../services/privacy-visibility.service.js";
-import { refreshPrivacy, io } from "../lib/socket.js";
+import * as contactService from "../services/contact.service.js";
+import { CONTACT_SUCCESS_MESSAGES } from "../constants/contact.constants.js";
 
 const contactController = {
   searchUsers: asyncHandler(async (req, res) => {
-    const q = String(req.query.q || "").trim();
-    if (q.length < 2) {
-      return new ApiResponse(
-        StatusCodes.OK,
-        { users: [] },
-        "Type at least 2 characters.",
-      ).send(res);
-    }
-
-    const currentUserId = myId(req);
-    const me = await User.findById(currentUserId).select("blockedUsers").lean();
-    const myBlocked = me?.blockedUsers || [];
-    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-
-    const users = await User.find({
-      _id: { $ne: currentUserId, $nin: myBlocked },
-      blockedUsers: { $ne: currentUserId },
-      $or: [{ fullName: rx }, { username: rx }, { email: rx }],
-    })
-      .select(
-        "fullName username avatar bio profilePhotoVisibility aboutVisibility",
-      )
-      .limit(20)
-      .lean();
-
-    const mine = await Contact.find({
-      ownerId: myId(req),
-      contactId: { $in: users.map((u) => u._id) },
-    }).select("contactId");
-    const set = new Set(mine.map((c) => String(c.contactId)));
-
-    const safeUsers = await filterUsersForViewer(users, myId(req));
+    const { q } = req.query;
+    const result = await contactService.searchUsers(myId(req), q);
 
     return new ApiResponse(
       StatusCodes.OK,
-      {
-        users: safeUsers.map((u) => ({
-          ...u,
-          isContact: set.has(String(u._id)),
-        })),
-      },
-      "Users fetched successfully.",
+      { users: result.users },
+      result.message,
+    ).send(res);
+  }),
+
+  getContacts: asyncHandler(async (req, res) => {
+    const { page, limit, search } = req.query;
+    const result = await contactService.getContacts(myId(req), {
+      page,
+      limit,
+      search,
+    });
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      result,
+      CONTACT_SUCCESS_MESSAGES.CONTACTS_FETCHED,
+    ).send(res);
+  }),
+
+  getChatList: asyncHandler(async (req, res) => {
+    const result = await contactService.getChatList(myId(req));
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      result,
+      CONTACT_SUCCESS_MESSAGES.CHAT_LIST_FETCHED,
+    ).send(res);
+  }),
+
+  getContactById: asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    const contact = await contactService.getContactById(myId(req), userId);
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      contact,
+      CONTACT_SUCCESS_MESSAGES.CONTACT_FETCHED,
     ).send(res);
   }),
 
   addContact: asyncHandler(async (req, res) => {
     const { userId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(userId))
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
-    if (String(userId) === String(myId(req)))
-      throw new ApiError(StatusCodes.BAD_REQUEST, "You can't add yourself.");
-    if (!(await User.exists({ _id: userId })))
-      throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
-
-    await Contact.updateOne(
-      { ownerId: myId(req), contactId: userId },
-      { $setOnInsert: { nickname: req.body?.nickname } },
-      { upsert: true },
-    );
-
-    try {
-      await refreshPrivacy(myId(req));
-      io.emit("user:profile-updated", { userId: String(myId(req)) });
-    } catch (e) {
-      console.error("[contact] refreshPrivacy error:", e?.message || e);
-    }
-
-    return new ApiResponse(StatusCodes.CREATED, null, "Contact added.").send(
-      res,
-    );
-  }),
-
-  removeContact: asyncHandler(async (req, res) => {
-    await Contact.deleteOne({
-      ownerId: myId(req),
-      contactId: req.params.userId,
-    });
-
-    try {
-      await refreshPrivacy(myId(req));
-      io.emit("user:profile-updated", { userId: String(myId(req)) });
-    } catch (e) {
-      console.error("[contact] refreshPrivacy error:", e?.message || e);
-    }
-
-    return new ApiResponse(StatusCodes.OK, null, "Contact removed.").send(res);
-  }),
-
-  getContacts: asyncHandler(async (req, res) => {
-    const rows = await Contact.find({ ownerId: myId(req) })
-      .populate(
-        "contactId",
-        "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility",
-      )
-      .sort({ createdAt: -1 })
-      .lean();
-
-    const populatedUsers = rows
-      .filter((r) => r.contactId)
-      .map((r) => r.contactId);
-    const safeUsers = await filterUsersForViewer(populatedUsers, myId(req));
-    const safeMap = new Map(safeUsers.map((u) => [String(u._id || u.id), u]));
+    const { nickname } = req.body || {};
+    const data = await contactService.addContact(myId(req), userId, nickname);
 
     return new ApiResponse(
-      StatusCodes.OK,
-      {
-        contacts: rows
-          .filter((r) => r.contactId)
-          .map((r) => {
-            const safe = safeMap.get(String(r.contactId._id || r.contactId.id));
-            return {
-              ...(safe || r.contactId),
-              nickname: r.nickname,
-            };
-          }),
-      },
-      "Contacts fetched successfully.",
+      StatusCodes.CREATED,
+      data,
+      CONTACT_SUCCESS_MESSAGES.CONTACT_ADDED,
     ).send(res);
   }),
 
-  getChatList: asyncHandler(async (req, res) => {
-    const me = toObjectId(myId(req));
-    const contacts = await Contact.find({ ownerId: me })
-      .select("contactId")
-      .lean();
-    const ids = contacts.map((c) => c.contactId);
-
-    const last = await Message.aggregate([
-      {
-        $match: {
-          deletedFor: { $ne: me },
-          $or: [
-            { senderId: me, receiverId: { $in: ids } },
-            { receiverId: me, senderId: { $in: ids } },
-          ],
-        },
-      },
-      { $sort: { createdAt: -1 } },
-      {
-        $group: {
-          _id: {
-            $cond: [{ $eq: ["$senderId", me] }, "$receiverId", "$senderId"],
-          },
-          lastMessage: { $first: "$$ROOT" },
-          unread: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$receiverId", me] },
-                    { $ne: ["$status", "seen"] },
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
-        },
-      },
-    ]);
-    const byUser = new Map(last.map((l) => [String(l._id), l]));
-
-    const users = await User.find({ _id: { $in: ids } })
-      .select(
-        "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility",
-      )
-      .lean();
-
-    const safeUsers = await filterUsersForViewer(users, me);
-    const safeUserMap = new Map(
-      safeUsers.map((u) => [String(u._id || u.id), u]),
-    );
-
-    const chats = users
-      .map((u) => {
-        const uid = String(u._id);
-        const l = byUser.get(uid);
-        const safe = safeUserMap.get(uid) || u;
-        return {
-          user: safe,
-          lastMessage: l?.lastMessage || null,
-          unread: l?.unread || 0,
-        };
-      })
-      .sort(
-        (a, b) =>
-          new Date(b.lastMessage?.createdAt || 0) -
-          new Date(a.lastMessage?.createdAt || 0),
-      );
+  removeContact: asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    const data = await contactService.removeContact(myId(req), userId);
 
     return new ApiResponse(
       StatusCodes.OK,
-      { chats, totalContacts: ids.length },
-      "Chat list fetched successfully.",
+      data,
+      CONTACT_SUCCESS_MESSAGES.CONTACT_REMOVED,
+    ).send(res);
+  }),
+
+  updateContactNickname: asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    const { nickname } = req.body || {};
+    const data = await contactService.updateContactNickname(
+      myId(req),
+      userId,
+      nickname,
+    );
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      data,
+      CONTACT_SUCCESS_MESSAGES.NICKNAME_UPDATED,
+    ).send(res);
+  }),
+
+  getMutualContacts: asyncHandler(async (req, res) => {
+    const { otherUserId } = req.params;
+    const mutualContacts = await contactService.getMutualContacts(
+      myId(req),
+      otherUserId,
+    );
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      { mutualContacts },
+      CONTACT_SUCCESS_MESSAGES.MUTUAL_FETCHED,
+    ).send(res);
+  }),
+
+  getContactCount: asyncHandler(async (req, res) => {
+    const data = await contactService.getContactCount(myId(req));
+
+    return new ApiResponse(
+      StatusCodes.OK,
+      data,
+      CONTACT_SUCCESS_MESSAGES.COUNT_FETCHED,
+    ).send(res);
+  }),
+
+  bulkAddContacts: asyncHandler(async (req, res) => {
+    const { contactIds } = req.body || {};
+    const result = await contactService.bulkAddContacts(myId(req), contactIds);
+
+    return new ApiResponse(
+      StatusCodes.CREATED,
+      result,
+      CONTACT_SUCCESS_MESSAGES.BULK_PROCESSED,
     ).send(res);
   }),
 };

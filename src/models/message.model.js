@@ -106,8 +106,13 @@ const MessageSchema = mongoose.Schema(
 
 MessageSchema.index(
   { senderId: 1, clientId: 1 },
-  { unique: true, sparse: true },
+  {
+    unique: true,
+    partialFilterExpression: { clientId: { $type: "string" } },
+  },
 );
+
+MessageSchema.index({ expiresAt: 1, isDeleted: 1 });
 
 MessageSchema.index({ receiverId: 1, senderId: 1, status: 1, isDeleted: 1 });
 MessageSchema.index({ receiverId: 1, status: 1 });
@@ -116,4 +121,5 @@ MessageSchema.index({ senderId: 1, createdAt: -1 });
 MessageSchema.index({ receiverId: 1, createdAt: -1 });
 
 const Message = mongoose.model("Message", MessageSchema);
+
 export default Message;

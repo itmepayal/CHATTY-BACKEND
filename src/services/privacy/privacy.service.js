@@ -3,8 +3,9 @@ import User from "../../models/users.model.js";
 import Contact from "../../models/contact.model.js";
 import ApiError from "../../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { toObjectId } from "../../utils/message-helpers.js";
-import { isUserOnline, getPrivacy } from "../../lib/socket.js";
+import { isUserOnline, getPrivacy } from "../../lib/socket-state.js";
+
+const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
 const SENSITIVE_KEYS = [
   "password",
@@ -166,7 +167,7 @@ export const canViewOnlineStatus = async (viewerId, targetUserId) => {
   const onlineVis =
     target.showOnlineStatus === false
       ? "nobody"
-      : target.onlineStatusVisibility ?? "everyone";
+      : (target.onlineStatusVisibility ?? "everyone");
 
   if (onlineVis === "nobody") return false;
 
@@ -453,7 +454,7 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
   const onlineVis =
     target.showOnlineStatus === false
       ? "nobody"
-      : target.onlineStatusVisibility ?? "everyone";
+      : (target.onlineStatusVisibility ?? "everyone");
   const showOnline = canViewSync(
     onlineVis,
     targetUserId,
@@ -529,7 +530,7 @@ export const sanitizeUserForViewer = async (user, viewerId) => {
   const onlineVis =
     obj.showOnlineStatus === false
       ? "nobody"
-      : obj.onlineStatusVisibility ?? "everyone";
+      : (obj.onlineStatusVisibility ?? "everyone");
   const onlineOk = canViewSync(onlineVis, ownerId, vId, inTargetContacts);
 
   if (!photoOk) {
@@ -558,9 +559,6 @@ export const sanitizeUserForViewer = async (user, viewerId) => {
 
 export const filterUserForViewer = sanitizeUserForViewer;
 
-/**
- * Sanitizes an array of user objects for viewer using batch-prefetched relations (no N+1).
- */
 export const sanitizeUsersForViewer = async (users, viewerId) => {
   if (!Array.isArray(users) || !users.length) return [];
   const vId = String(viewerId);
@@ -580,7 +578,6 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
     });
   }
 
-  // Batch prefetch relations (no N+1 queries)
   const [meDoc, blockers, contactsWhoSavedViewer] = await Promise.all([
     User.findById(vId).select("blockedUsers").lean(),
     User.find({ _id: { $in: targetIds }, blockedUsers: vId })
@@ -645,7 +642,7 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
     const onlineVis =
       obj.showOnlineStatus === false
         ? "nobody"
-        : obj.onlineStatusVisibility ?? "everyone";
+        : (obj.onlineStatusVisibility ?? "everyone");
     const onlineOk = canViewSync(onlineVis, ownerId, vId, inTargetContacts);
 
     if (!photoOk) {
@@ -675,10 +672,6 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
 
 export const filterUsersForViewer = sanitizeUsersForViewer;
 
-/**
- * Builds a privacy-aware push notification payload, stripping sender details
- * or avatars if recipient's privacy / blocking restrictions disallow it.
- */
 export const buildPrivacyAwareNotification = async ({
   recipientId,
   sender,
@@ -690,7 +683,7 @@ export const buildPrivacyAwareNotification = async ({
 
   const blocked = await isBlockedEitherWay(rId, sId);
   if (blocked) {
-    return null; // Suppress notification entirely if blocked
+    return null;
   }
 
   const showAvatar = await canViewProfilePhoto(rId, sId);
@@ -727,4 +720,3 @@ export const buildPrivacyAwareNotification = async ({
     },
   };
 };
-

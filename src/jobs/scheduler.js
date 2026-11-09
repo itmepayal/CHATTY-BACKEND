@@ -4,9 +4,40 @@ import { assertCanMessage } from "../utils/chat-guard.js";
 import { attachLinkPreview } from "../utils/link-preview.js";
 import { SCHEDULER_TICK_MS } from "../constants/constants.js";
 
+const STRANDED_TIMEOUT_MS = 5 * 60 * 1000;
+
+export const recoverStrandedJobs = async () => {
+  try {
+    const threshold = new Date(Date.now() - STRANDED_TIMEOUT_MS);
+    const result = await ScheduledMessage.updateMany(
+      {
+        status: "processing",
+        updatedAt: { $lte: threshold },
+      },
+      {
+        $set: { status: "pending" },
+      },
+    );
+    if (result.modifiedCount > 0) {
+      console.log(
+        `[scheduler] Recovered ${result.modifiedCount} stranded scheduled message(s) back to pending.`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      "[scheduler] Failed to recover stranded jobs:",
+      err?.message || err,
+    );
+  }
+};
+
 export const startScheduler = () => {
+  recoverStrandedJobs();
+
   setInterval(async () => {
     try {
+      await recoverStrandedJobs();
+
       const due = await ScheduledMessage.find({
         status: "pending",
         scheduledFor: { $lte: new Date() },

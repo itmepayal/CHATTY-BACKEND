@@ -3,15 +3,15 @@ import ApiError from "../utils/api-error.js";
 import User from "../models/users.model.js";
 import GroupKey from "../models/group-key.model.js";
 import Group from "../models/group.model.js";
-import { io } from "../lib/socket.js";
-import { assertAdmin } from "../utils/group-guard.js";
+import { GROUP_SOCKET_EVENTS } from "../constants/group-events.constants.js";
+import { GROUP_ERROR_MESSAGES } from "../constants/group.constants.js";
+import { canSetGroupKeys } from "../policies/group.policy.js";
+import { broadcastGroupKeysUpdated } from "../events/group.events.js";
 import {
   getLatestKeyVersion,
   storeGroupKeys,
   sid,
   loadGroup,
-  presentGroup,
-  emitToMembers,
   emitGroupToMembers,
 } from "./group.service.js";
 
@@ -106,31 +106,65 @@ export const getPendingKeyMembersPayload = async (group) => {
 };
 
 export const applyGroupKeys = async ({ group, member, entries, me }) => {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Keys array cannot be empty.");
+  }
+
+  for (const e of entries) {
+    const v = Number(e.version);
+    if (!Number.isInteger(v) || Number.isNaN(v) || v < 1) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        GROUP_ERROR_MESSAGES.INVALID_KEY_VERSION,
+      );
+    }
+  }
+
   const memberIds = new Set(group.members.map((m) => sid(m.userId)));
-  if (entries.some((e) => !memberIds.has(e.userId))) {
+  if (entries.some((e) => !memberIds.has(String(e.userId)))) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      "Keys can only be created for group members.",
+      GROUP_ERROR_MESSAGES.KEYS_ONLY_FOR_MEMBERS,
     );
   }
 
   const latest = await getLatestKeyVersion(group._id);
-  const maxIncoming = Math.max(...entries.map((e) => e.version));
+  const maxIncoming = Math.max(...entries.map((e) => Number(e.version)));
   const isNewVersion = maxIncoming > latest;
 
-  if (isNewVersion) {
-    assertAdmin(member);
+  const hasCurrentKey =
+    latest > 0
+      ? await GroupKey.exists({
+          groupId: group._id,
+          userId: me,
+          version: latest,
+        })
+      : true;
 
+  canSetGroupKeys({
+    group,
+    actorId: me,
+    member,
+    isNewVersion,
+    hasCurrentKey: Boolean(hasCurrentKey),
+  });
+
+  if (isNewVersion) {
     if (maxIncoming !== latest + 1) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid key version.");
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        GROUP_ERROR_MESSAGES.KEY_VERSION_MUST_BE_SEQUENTIAL,
+      );
     }
     const covered = new Set(
-      entries.filter((e) => e.version === maxIncoming).map((e) => e.userId),
+      entries
+        .filter((e) => Number(e.version) === maxIncoming)
+        .map((e) => String(e.userId)),
     );
     if ([...memberIds].some((id) => !covered.has(id))) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
-        "A new key version must include every member.",
+        GROUP_ERROR_MESSAGES.KEY_VERSION_INCLUDE_ALL,
       );
     }
 
@@ -146,7 +180,7 @@ export const applyGroupKeys = async ({ group, member, entries, me }) => {
     if (!claimed) {
       throw new ApiError(
         StatusCodes.CONFLICT,
-        "Key was rotated by someone else. Fetch the new key.",
+        GROUP_ERROR_MESSAGES.KEY_ROTATION_CONFLICT,
       );
     }
   }
@@ -169,17 +203,15 @@ export const applyGroupKeys = async ({ group, member, entries, me }) => {
   }
 
   const latestVersion = Math.max(latest, maxIncoming);
-  const affected = [...new Set(entries.map((e) => e.userId))];
-  affected.forEach((uid) =>
-    io.to(uid).emit("group:keysUpdated", {
-      groupId: String(group._id),
-      latestVersion,
-    }),
-  );
+  const affected = [...new Set(entries.map((e) => String(e.userId)))];
+  broadcastGroupKeysUpdated(affected, {
+    groupId: String(group._id),
+    latestVersion,
+  });
 
   if (isNewVersion) {
     const full = await loadGroup(group._id);
-    await emitGroupToMembers(full, "group:updated");
+    await emitGroupToMembers(full, GROUP_SOCKET_EVENTS.GROUP_UPDATED);
   }
 
   return { latestVersion, stored: entries.length, isNewVersion, latest };

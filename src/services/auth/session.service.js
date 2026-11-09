@@ -1,15 +1,15 @@
-import Session from "../models/session.model.js";
-import User from "../models/users.model.js";
-import { parseDevice, getIp, sanitizeIp } from "../utils/device-info.js";
-import { sendLoginAlertEmail } from "../utils/email-service.js";
-import ApiError from "../utils/api-error.js";
+import Session from "../../models/session.model.js";
+import User from "../../models/users.model.js";
+import { parseDevice, getIp, sanitizeIp } from "../../utils/device-info.js";
+import { sendLoginAlertEmail } from "../../utils/email-service.js";
+import ApiError from "../../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
 import {
   io,
   disconnectUserSession,
   disconnectOtherUserSessions,
-} from "../lib/socket.js";
-import { formatDistanceToNow } from "../utils/time-utils.js";
+} from "../../lib/socket.js";
+import { formatDistanceToNow } from "../../utils/time-utils.js";
 
 export const createLoginSession = async (req, user) => {
   const deviceInfo = parseDevice(req.headers["user-agent"]);
@@ -109,8 +109,6 @@ export const revokeOtherUserSessions = async ({ userId, currentSessionId }) => {
   const { modifiedCount } = await Session.updateMany(filter, {
     $set: { revoked: true },
   });
-
-  await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } });
 
   emitSessionEvent(userId, "session:revoke-others", {
     keepSessionId: currentSessionId || null,

@@ -2,13 +2,16 @@ import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
 import GroupMessage from "../models/group-message.model.js";
-
 import LocationShare from "../models/location-share.model.js";
 import {
   LIVE_DURATIONS_MIN,
   MIN_LOCATION_UPDATE_INTERVAL_MS,
-} from "../constants/constants.js";
+  GROUP_ERROR_MESSAGES,
+} from "../constants/group.constants.js";
+import { GROUP_SOCKET_EVENTS } from "../constants/group-events.constants.js";
 import { validCoords, readLocation } from "../utils/validators.js";
+import { getBlockedByMe, getBlockersOf } from "../utils/group-guard.js";
+import { canManageShare } from "../policies/group.policy.js";
 import {
   lastUpdateAt,
   endShare,
@@ -19,7 +22,16 @@ import {
   findGroupMessageDuplicate,
 } from "./group.service.js";
 
-export const startCurrentShare = async ({ group, me, body, file: _file }) => {
+const formatDuplicateShare = async (dup, mode) => {
+  const message = formatGroupMessage(dup);
+  if (mode === "live" && dup.location?.shareId) {
+    const share = await LocationShare.findById(dup.location.shareId);
+    return { message, share };
+  }
+  return message;
+};
+
+export const startGroupShareService = async ({ group, me, body }) => {
   const { mode } = body;
   const { lat, lng, accuracy, heading, speed } = readLocation(body);
   const durationMin =
@@ -37,7 +49,10 @@ export const startCurrentShare = async ({ group, me, body, file: _file }) => {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share mode.");
   }
   if (!validCoords(lat, lng)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid location.");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      GROUP_ERROR_MESSAGES.INVALID_LOCATION,
+    );
   }
   if (mode === "live" && !LIVE_DURATIONS_MIN.includes(durationMin)) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid duration.");
@@ -48,7 +63,10 @@ export const startCurrentShare = async ({ group, me, body, file: _file }) => {
 
   if (clientId) {
     const dup = await findDuplicate();
-    if (dup) return { duplicate: true, dup, mode };
+    if (dup) {
+      const data = await formatDuplicateShare(dup, mode);
+      return { isDuplicate: true, mode, data };
+    }
   }
 
   if (mode === "current") {
@@ -64,13 +82,16 @@ export const startCurrentShare = async ({ group, me, body, file: _file }) => {
     } catch (error) {
       if (error?.code === 11000 && clientId) {
         const dup = await findDuplicate();
-        if (dup) return { duplicate: true, dup, mode };
+        if (dup) {
+          const data = await formatDuplicateShare(dup, mode);
+          return { isDuplicate: true, mode, data };
+        }
       }
       throw error;
     }
 
     const payload = await broadcastGroupMessage(group, message, me);
-    return { mode: "current", payload };
+    return { isDuplicate: false, mode: "current", data: payload };
   }
 
   await stopUserShares(group, me);
@@ -111,10 +132,12 @@ export const startCurrentShare = async ({ group, me, body, file: _file }) => {
     });
   } catch (error) {
     await LocationShare.deleteOne({ _id: share._id });
-
     if (error?.code === 11000 && clientId) {
       const dup = await findDuplicate();
-      if (dup) return { duplicate: true, dup, mode };
+      if (dup) {
+        const data = await formatDuplicateShare(dup, mode);
+        return { isDuplicate: true, mode, data };
+      }
     }
     throw error;
   }
@@ -124,7 +147,7 @@ export const startCurrentShare = async ({ group, me, body, file: _file }) => {
 
   const payload = await broadcastGroupMessage(group, message, me);
 
-  await emitToViewers(group, me, "group:location:update", {
+  await emitToViewers(group, me, GROUP_SOCKET_EVENTS.GROUP_LOCATION_UPDATE, {
     groupId: String(group._id),
     shareId: String(share._id),
     sharerId: String(me),
@@ -136,18 +159,27 @@ export const startCurrentShare = async ({ group, me, body, file: _file }) => {
     updatedAt: now,
   });
 
-  return { mode: "live", payload, share };
+  return {
+    isDuplicate: false,
+    mode: "live",
+    data: { message: payload, share },
+  };
 };
 
-export const updateShare = async ({ group, me, shareId, body }) => {
+export const updateGroupShareService = async ({ group, me, shareId, body }) => {
   if (!mongoose.Types.ObjectId.isValid(shareId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share ID.");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      GROUP_ERROR_MESSAGES.INVALID_SHARE_ID,
+    );
   }
 
   const { lat, lng, accuracy, heading, speed } = readLocation(body);
-
   if (!validCoords(lat, lng)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid location.");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      GROUP_ERROR_MESSAGES.INVALID_LOCATION,
+    );
   }
 
   const key = String(shareId);
@@ -160,42 +192,44 @@ export const updateShare = async ({ group, me, shareId, body }) => {
 
   const now = new Date();
 
-  const share = await LocationShare.findOneAndUpdate(
-    {
-      _id: shareId,
-      groupId: group._id,
-      sharerId: me,
-      status: "active",
-      expiresAt: { $gt: now },
-    },
-    {
-      $set: {
-        lastLocation: { lat, lng, accuracy, heading, speed, updatedAt: now },
-      },
-    },
-    { new: true },
-  );
-
-  if (!share) {
-    lastUpdateAt.delete(key);
-
-    const stale = await LocationShare.findOne({
-      _id: shareId,
-      groupId: group._id,
-      sharerId: me,
-      status: "active",
-      expiresAt: { $lte: now },
-    });
-    if (stale) {
-      await endShare(group, stale, "expired");
-      throw new ApiError(StatusCodes.GONE, "Live share has expired.");
-    }
-    throw new ApiError(StatusCodes.NOT_FOUND, "Live share not found.");
+  const existingShare = await LocationShare.findById(shareId);
+  if (!existingShare || String(existingShare.groupId) !== String(group._id)) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      GROUP_ERROR_MESSAGES.LIVE_SHARE_NOT_FOUND,
+    );
   }
+
+  canManageShare({
+    share: existingShare,
+    group,
+    actorId: me,
+    member: null,
+    action: "update",
+  });
+
+  if (existingShare.status !== "active" || existingShare.expiresAt <= now) {
+    lastUpdateAt.delete(key);
+    await endShare(group, existingShare, "expired");
+    throw new ApiError(
+      StatusCodes.GONE,
+      GROUP_ERROR_MESSAGES.LIVE_SHARE_EXPIRED,
+    );
+  }
+
+  existingShare.lastLocation = {
+    lat,
+    lng,
+    accuracy,
+    heading,
+    speed,
+    updatedAt: now,
+  };
+  await existingShare.save();
 
   const locationPayload = {
     groupId: String(group._id),
-    shareId: String(share._id),
+    shareId: String(existingShare._id),
     sharerId: String(me),
     lat,
     lng,
@@ -205,38 +239,50 @@ export const updateShare = async ({ group, me, shareId, body }) => {
     updatedAt: now,
   };
 
-  await emitToViewers(group, me, "group:location:update", locationPayload);
+  await emitToViewers(
+    group,
+    me,
+    GROUP_SOCKET_EVENTS.GROUP_LOCATION_UPDATE,
+    locationPayload,
+  );
 
   return { skipped: false, locationPayload };
 };
 
-export const stopShare = async ({ group, me, shareId }) => {
+export const stopGroupShareService = async ({ group, member, me, shareId }) => {
   if (!mongoose.Types.ObjectId.isValid(shareId)) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share ID.");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      GROUP_ERROR_MESSAGES.INVALID_SHARE_ID,
+    );
   }
 
-  const share = await LocationShare.findOne({
-    _id: shareId,
-    groupId: group._id,
-    sharerId: me,
-    status: "active",
+  const share = await LocationShare.findById(shareId);
+  if (!share || String(share.groupId) !== String(group._id)) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      GROUP_ERROR_MESSAGES.LIVE_SHARE_NOT_FOUND,
+    );
+  }
+
+  canManageShare({
+    share,
+    group,
+    actorId: me,
+    member,
+    action: "stop",
   });
-  if (!share) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Live share not found.");
-  }
 
-  await endShare(group, share, "stopped");
+  if (share.status === "active") {
+    await endShare(group, share, "stopped");
+  }
 
   return { shareId: share._id };
 };
 
-export const getActiveSharesFor = async ({
-  group,
-  me,
-  blocked,
-  getBlockersOf,
-}) => {
+export const getActiveGroupSharesService = async ({ group, me }) => {
   const now = new Date();
+  const blocked = await getBlockedByMe(me);
 
   const stale = await LocationShare.find({
     groupId: group._id,
@@ -271,4 +317,8 @@ export const getActiveSharesFor = async ({
   return { mine, inGroup };
 };
 
+export const startCurrentShare = startGroupShareService;
+export const updateShare = updateGroupShareService;
+export const stopShare = stopGroupShareService;
+export const getActiveSharesFor = getActiveGroupSharesService;
 export { formatGroupMessage };

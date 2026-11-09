@@ -1,90 +1,100 @@
+import fs from "fs/promises";
+import { StatusCodes } from "http-status-codes";
+import ApiError from "../utils/api-error.js";
 import Group from "../models/group.model.js";
 import GroupMessage from "../models/group-message.model.js";
 import GroupKey from "../models/group-key.model.js";
-import User from "../models/users.model.js";
-import Contact from "../models/contact.model.js";
-import { canViewSync, canViewProfilePhoto } from "./privacy-visibility.service.js";
 import GroupArchive, {
   getArchivedGroupSet,
 } from "../models/group-archive.model.js";
 import LocationShare from "../models/location-share.model.js";
+import Contact from "../models/contact.model.js";
+import User from "../models/users.model.js";
 import { deleteFileToCloudinary } from "../config/cloudinary.config.js";
-import { io, groupRoom } from "../lib/socket.js";
-import { getBlockedByMe, getBlockersOf } from "../utils/group-guard.js";
-import { StatusCodes } from "http-status-codes";
-import ApiError from "../utils/api-error.js";
+import { GROUP_SOCKET_EVENTS } from "../constants/group-events.constants.js";
 import {
-  parseBool,
-  assertValidCipher,
+  MAX_GROUP_TEXT,
   MAX_CIPHERTEXT_LENGTH,
-} from "../utils/e2ee.js";
-import { MAX_GROUP_TEXT } from "../constants/constants.js";
+  GROUP_ERROR_MESSAGES,
+} from "../constants/group.constants.js";
+import { parseBool, assertValidCipher } from "../utils/e2ee.js";
+import {
+  canViewSync,
+  canViewProfilePhoto,
+} from "./privacy-visibility.service.js";
+import { getBlockedByMe, getBlockersOf } from "../utils/group-guard.js";
+import { uploadImage } from "./group-media.service.js";
+import {
+  joinGroupRoom,
+  leaveGroupRoom,
+  emitToGroupMembers,
+  broadcastGroupDeleted,
+  broadcastGroupArchiveChanged,
+  broadcastGroupKeyRotationRequired,
+  broadcastGroupKeysNeeded,
+  emitGroupConversationUpdate,
+} from "../events/group.events.js";
+
+export const safeUnlink = async (filePath) => {
+  if (!filePath) return;
+  try {
+    await fs.unlink(filePath);
+  } catch (_err) {}
+};
 
 export const sid = (x) => String(x?._id ?? x);
 
 export const getLatestKeyVersion = async (groupId) => {
-  const k = await GroupKey.findOne({ groupId })
+  const latest = await GroupKey.findOne({ groupId })
     .sort({ version: -1 })
     .select("version")
     .lean();
-  return k?.version || 0;
+  return latest?.version || 0;
 };
 
 export const getLatestVersions = async (groupIds) => {
-  if (!groupIds.length) return new Map();
   const rows = await GroupKey.aggregate([
     { $match: { groupId: { $in: groupIds } } },
-    { $group: { _id: "$groupId", version: { $max: "$version" } } },
+    { $group: { _id: "$groupId", maxVersion: { $max: "$version" } } },
   ]);
-  return new Map(rows.map((r) => [String(r._id), r.version]));
+  return new Map(rows.map((r) => [String(r._id), r.maxVersion]));
 };
 
 export const storeGroupKeys = async (groupId, entries, wrappedBy) => {
-  if (!entries.length) return;
-  await GroupKey.bulkWrite(
-    entries.map((e) => ({
-      updateOne: {
-        filter: { groupId, userId: e.userId, version: e.version },
-        update: {
-          $setOnInsert: {
-            groupId,
-            userId: e.userId,
-            version: e.version,
-            wrappedKey: e.wrappedKey,
-            iv: e.iv,
-            wrappedBy,
-          },
-        },
-        upsert: true,
-      },
-    })),
-    { ordered: false },
-  );
+  const docs = entries.map((e) => ({
+    groupId,
+    userId: e.userId,
+    version: e.version,
+    wrappedKey: e.wrappedKey,
+    iv: e.iv,
+    wrappedBy,
+  }));
+  await GroupKey.insertMany(docs, { ordered: false });
 };
 
 export const requestKeyRotation = async (group, reason) => {
   if (!(await getLatestKeyVersion(group._id))) return;
-  group.members
+  const adminIds = group.members
     .filter((m) => m.role === "admin")
-    .forEach((m) =>
-      io.to(sid(m.userId)).emit("group:keyRotationRequired", {
-        groupId: String(group._id),
-        reason,
-      }),
-    );
+    .map((m) => sid(m.userId));
+  adminIds.forEach((uid) => {
+    emitToGroupMembers(group, GROUP_SOCKET_EVENTS.GROUP_KEY_ROTATION_REQUIRED, {
+      groupId: String(group._id),
+      reason,
+    });
+  });
 };
 
 export const notifyKeysNeeded = async (group, newIds) => {
   if (!(await getLatestKeyVersion(group._id))) return;
   const skip = new Set(newIds.map(String));
-  group.members
+  const targetIds = group.members
     .filter((m) => !skip.has(sid(m.userId)))
-    .forEach((m) =>
-      io.to(sid(m.userId)).emit("group:keysNeeded", {
-        groupId: String(group._id),
-        userIds: newIds.map(String),
-      }),
-    );
+    .map((m) => sid(m.userId));
+  broadcastGroupKeysNeeded(targetIds, {
+    groupId: String(group._id),
+    userIds: newIds.map(String),
+  });
 };
 
 export const loadGroup = (id) =>
@@ -239,19 +249,9 @@ export const formatGroupMessage = (msg) => {
   };
 };
 
-export const joinRoom = (userId, groupId) =>
-  io.in(String(userId)).socketsJoin(groupRoom(groupId));
-
-export const leaveRoom = (userId, groupId) =>
-  io.in(String(userId)).socketsLeave(groupRoom(groupId));
-
-export const emitToMembers = (group, event, payload, exceptIds = []) => {
-  const skip = new Set(exceptIds.map(String));
-  for (const m of group.members) {
-    const uid = sid(m.userId);
-    if (!skip.has(uid)) io.to(uid).emit(event, payload);
-  }
-};
+export const joinRoom = joinGroupRoom;
+export const leaveRoom = leaveGroupRoom;
+export const emitToMembers = emitToGroupMembers;
 
 export const emitGroupToMembers = async (
   group,
@@ -260,16 +260,12 @@ export const emitGroupToMembers = async (
   extra = {},
 ) => {
   const skip = new Set(exceptIds.map(String));
-  const memberIds = group.members
-    .map((m) => sid(m.userId))
-    .filter(Boolean);
-
+  const memberIds = group.members.map((m) => sid(m.userId)).filter(Boolean);
   const recipientIds = memberIds.filter((id) => !skip.has(id));
   if (!recipientIds.length) return;
 
   const keyVersion = await getLatestKeyVersion(group._id);
 
-  // Batch query blockers and contacts among all group members in one round-trip
   const [memberUsers, contacts] = await Promise.all([
     User.find({ _id: { $in: memberIds } })
       .select("_id blockedUsers")
@@ -290,7 +286,6 @@ export const emitGroupToMembers = async (
     );
   }
 
-  // Map: contactId -> Set of ownerIds who saved contactId
   const savedByMap = new Map();
   for (const c of contacts) {
     const cid = String(c.contactId);
@@ -301,10 +296,9 @@ export const emitGroupToMembers = async (
 
   for (const uid of recipientIds) {
     const targetSavedViewerSet = savedByMap.get(uid) || new Set();
-
-    // Blocked if viewer blocked other OR other blocked viewer
     const blockedSet = new Set();
     const myBlocked = blockedByMap.get(uid) || new Set();
+
     for (const otherId of memberIds) {
       if (otherId === uid) continue;
       if (
@@ -323,7 +317,9 @@ export const emitGroupToMembers = async (
       blockedSet,
     );
 
-    io.to(uid).emit(event, personalized);
+    emitToGroupMembers(group, event, personalized, [
+      ...memberIds.filter((id) => id !== uid),
+    ]);
   }
 };
 
@@ -334,9 +330,15 @@ export const emitToViewers = async (group, sharerId, event, payload) => {
     getBlockedByMe(sharerId),
   ]);
   const blockedSet = new Set([...blockedBySharer].map(String));
-  memberIds
-    .filter((id) => !blockers.has(id) && !blockedSet.has(id))
-    .forEach((id) => io.to(id).emit(event, payload));
+  const allowed = memberIds.filter(
+    (id) => !blockers.has(id) && !blockedSet.has(id),
+  );
+  emitToGroupMembers(
+    group,
+    event,
+    payload,
+    memberIds.filter((id) => !allowed.includes(id)),
+  );
 };
 
 export const getUnread = (groupId, userId, joinedAt, blockedIds) =>
@@ -379,7 +381,7 @@ export const emitMemberConversation = async (groupId, member) => {
     }
   }
 
-  io.to(uid).emit("group:conversationUpdated", {
+  emitGroupConversationUpdate(uid, {
     groupId: String(groupId),
     unreadCount,
     lastMessage: formattedLast,
@@ -432,7 +434,7 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
     if (!isSelf) {
       if (vis === "everyone") canSeePhoto = true;
       else if (vis === "contacts") canSeePhoto = contactsWhoSavedSender.has(id);
-      else canSeePhoto = false; // nobody
+      else canSeePhoto = false;
     }
 
     const memberPayload = canSeePhoto
@@ -444,13 +446,20 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
             : null,
         };
 
-    io.to(id).emit("group:newMessage", memberPayload);
+    emitToGroupMembers(
+      group,
+      GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE,
+      memberPayload,
+      [...memberIds.filter((mId) => mId !== id)],
+    );
   }
 
   emitGroupConversation(group);
 
   return basePayload;
 };
+
+export const lastUpdateAt = new Map();
 
 export const endShare = async (group, share, status = "stopped") => {
   const result = await LocationShare.updateOne(
@@ -467,7 +476,7 @@ export const endShare = async (group, share, status = "stopped") => {
     );
   }
 
-  emitToMembers(group, "group:location:ended", {
+  emitToGroupMembers(group, GROUP_SOCKET_EVENTS.GROUP_LOCATION_ENDED, {
     groupId: String(group._id),
     shareId: String(share._id),
   });
@@ -485,17 +494,35 @@ export const stopUserShares = async (group, userId) => {
   }
 };
 
-export const lastUpdateAt = new Map();
-
-export const deleteMedia = (m) => [
-  m.image?.public_id && deleteFileToCloudinary(m.image.public_id, "image"),
-  m.file?.public_id &&
-    deleteFileToCloudinary(m.file.public_id, m.file.resourceType || "raw"),
-  m.audio?.public_id &&
-    deleteFileToCloudinary(m.audio.public_id, m.audio.resourceType || "video"),
-  m.video?.public_id &&
-    deleteFileToCloudinary(m.video.public_id, m.video.resourceType || "video"),
-];
+export const deleteMedia = (m) => {
+  if (!m) return [];
+  const tasks = [];
+  if (m.image?.public_id) {
+    tasks.push(deleteFileToCloudinary(m.image.public_id, "image"));
+  }
+  if (m.file?.public_id) {
+    tasks.push(
+      deleteFileToCloudinary(m.file.public_id, m.file.resourceType || "raw"),
+    );
+  }
+  if (m.audio?.public_id) {
+    tasks.push(
+      deleteFileToCloudinary(
+        m.audio.public_id,
+        m.audio.resourceType || "video",
+      ),
+    );
+  }
+  if (m.video?.public_id) {
+    tasks.push(
+      deleteFileToCloudinary(
+        m.video.public_id,
+        m.video.resourceType || "video",
+      ),
+    );
+  }
+  return tasks;
+};
 
 export const findGroupMessageDuplicate = (groupId, senderId, clientId) =>
   GroupMessage.findOne({ groupId, senderId, clientId }).populate(
@@ -516,15 +543,127 @@ export const destroyGroup = async (group) => {
     .select("image file audio video")
     .lean();
 
-  await Promise.allSettled([
-    ...media.flatMap(deleteMedia),
-    group.avatar?.public_id && deleteFileToCloudinary(group.avatar.public_id),
-  ]);
   await GroupMessage.deleteMany({ groupId: group._id });
   await GroupArchive.deleteMany({ groupId: group._id });
   await LocationShare.deleteMany({ groupId: group._id });
   await GroupKey.deleteMany({ groupId: group._id });
   await Group.deleteOne({ _id: group._id });
+
+  await Promise.allSettled([
+    ...media.flatMap(deleteMedia),
+    ...(group.avatar?.public_id
+      ? [deleteFileToCloudinary(group.avatar.public_id, "image")]
+      : []),
+  ]);
+
+  broadcastGroupDeleted(group, { groupId: String(group._id) });
+};
+
+export const deleteGroupService = async (group, me) => {
+  if (sid(group.owner) !== String(me)) {
+    throw new ApiError(StatusCodes.FORBIDDEN, GROUP_ERROR_MESSAGES.OWNER_ONLY);
+  }
+  await destroyGroup(group);
+  return { groupId: String(group._id) };
+};
+
+export const getGroupDetails = async (groupId, me) => {
+  const group = await loadGroup(groupId);
+  if (!group) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      GROUP_ERROR_MESSAGES.GROUP_NOT_FOUND,
+    );
+  }
+  const isMember = group.members.some((m) => sid(m.userId) === String(me));
+  if (!isMember) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      GROUP_ERROR_MESSAGES.NOT_A_MEMBER,
+    );
+  }
+  const archived = !!(await GroupArchive.exists({
+    ownerId: me,
+    groupId: group._id,
+  }));
+  return presentGroup(group, { archived }, me);
+};
+
+export const updateGroupService = async ({ group, me, name, file }) => {
+  let changed = false;
+  let oldPublicId = null;
+  let newAvatar = null;
+
+  if (name !== undefined) {
+    const trimmed = typeof name === "string" ? name.trim() : "";
+    if (trimmed && trimmed !== group.name) {
+      group.name = trimmed;
+      changed = true;
+    }
+  }
+
+  try {
+    if (file?.path) {
+      oldPublicId = group.avatar?.public_id;
+      newAvatar = await uploadImage(file);
+      group.avatar = newAvatar;
+      changed = true;
+    }
+
+    if (!changed) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        GROUP_ERROR_MESSAGES.NO_CHANGES_TO_UPDATE,
+      );
+    }
+
+    await group.save();
+
+    if (oldPublicId) {
+      await deleteFileToCloudinary(oldPublicId, "image").catch(() => {});
+    }
+
+    const full = await loadGroup(group._id);
+    await emitGroupToMembers(full, GROUP_SOCKET_EVENTS.GROUP_UPDATED);
+    return presentGroup(full, {}, me);
+  } catch (error) {
+    if (newAvatar?.public_id) {
+      await deleteFileToCloudinary(newAvatar.public_id, "image").catch(
+        () => {},
+      );
+    }
+    throw error;
+  } finally {
+    if (file?.path) {
+      await safeUnlink(file.path);
+    }
+  }
+};
+
+export const archiveGroupService = async (group, me) => {
+  try {
+    await GroupArchive.updateOne(
+      { ownerId: me, groupId: group._id },
+      { $setOnInsert: { ownerId: me, groupId: group._id } },
+      { upsert: true },
+    );
+  } catch (error) {
+    if (error?.code !== 11000) {
+      throw error;
+    }
+  }
+  broadcastGroupArchiveChanged(me, {
+    groupId: String(group._id),
+    archived: true,
+  });
+};
+
+export const unarchiveGroupService = async (group, me) => {
+  await GroupArchive.deleteOne({ ownerId: me, groupId: group._id });
+  broadcastGroupArchiveChanged(me, {
+    groupId: String(group._id),
+    archived: false,
+  });
 };
 
 export const getMyGroupsList = async (me) => {
@@ -538,8 +677,6 @@ export const getMyGroupsList = async (me) => {
   ]);
 
   const versions = await getLatestVersions(groups.map((g) => g._id));
-
-  // Batch lookup contacts who saved 'me' and blockers among group members
   const allMemberIds = [
     ...new Set(
       groups.flatMap((g) =>
@@ -548,31 +685,27 @@ export const getMyGroupsList = async (me) => {
     ),
   ];
 
-  const [savedContacts, blockers, meDoc] = await Promise.all([
+  const [savedContacts, allBlockers] = await Promise.all([
     Contact.find({ ownerId: { $in: allMemberIds }, contactId: me })
       .select("ownerId")
       .lean(),
     User.find({ _id: { $in: allMemberIds }, blockedUsers: me })
       .select("_id")
       .lean(),
-    User.findById(me).select("blockedUsers").lean(),
   ]);
 
   const targetSavedViewerSet = new Set(
     savedContacts.map((c) => String(c.ownerId)),
   );
-  const blockedSet = new Set([
-    ...blockers.map((b) => String(b._id)),
-    ...(meDoc?.blockedUsers || []).map(String),
-  ]);
+  const blockedMeSet = new Set(allBlockers.map((b) => String(b._id)));
+  const myBlockedSet = new Set(blocked.map(String));
+  const fullBlockedSet = new Set([...blockedMeSet, ...myBlockedSet]);
 
-  const result = await Promise.all(
+  return Promise.all(
     groups.map(async (g) => {
-      const mine = g.members.find((m) => sid(m.userId) === String(me));
-      const [unreadCount, last] = await Promise.all([
-        getUnread(g._id, me, mine.joinedAt, blocked),
-        getLast(g._id, mine.joinedAt, blocked),
-      ]);
+      const v = versions.get(String(g._id)) || 0;
+      const unreadCount = await getUnread(g._id, me, new Date(0), blocked);
+      const last = await getLast(g._id, new Date(0), blocked);
 
       let formattedLast = null;
       if (last) {
@@ -580,16 +713,7 @@ export const getMyGroupsList = async (me) => {
         if (formattedLast?.sender && last.senderId) {
           const sId = sid(last.senderId);
           if (sId !== String(me)) {
-            const isBlocked = blockedSet.has(sId);
-            const inContacts = targetSavedViewerSet.has(sId);
-            const canView =
-              !isBlocked &&
-              canViewSync(
-                last.senderId.profilePhotoVisibility ?? "everyone",
-                sId,
-                me,
-                inContacts,
-              );
+            const canView = await canViewProfilePhoto(me, sId);
             if (!canView) {
               formattedLast.sender.avatar = "";
             }
@@ -597,129 +721,33 @@ export const getMyGroupsList = async (me) => {
         }
       }
 
-      const keyVersion = versions.get(String(g._id)) || 0;
       return formatGroup(
         g,
         {
           unreadCount,
           lastMessage: formattedLast,
-          lastMessageAt: last?.createdAt || g.lastMessageAt || g.createdAt,
-          archived: archivedSet.has(String(g._id)),
-          e2ee: keyVersion > 0,
-          keyVersion,
+          lastMessageAt: last?.createdAt ?? g.lastMessageAt ?? g.createdAt,
+          archived: archivedSet.has(g._id.toString()),
+          e2ee: v > 0,
+          keyVersion: v,
         },
         me,
         targetSavedViewerSet,
-        blockedSet,
+        fullBlockedSet,
       );
     }),
   );
-
-  result.sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
-
-  return result;
-};
-
-export const getGroupMessagesList = async (group, member, me, query) => {
-  const blocked = await getBlockedByMe(me);
-
-  const limit = Math.min(Number(query.limit) || 100, 200);
-  const createdAt = { $gte: member.joinedAt };
-  if (query.before) {
-    const d = new Date(query.before);
-    if (!Number.isNaN(d.getTime())) createdAt.$lt = d;
-  }
-
-  const msgs = await GroupMessage.find({
-    groupId: group._id,
-    createdAt,
-    senderId: { $nin: blocked },
-  })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .populate("senderId", "fullName avatar profilePhotoVisibility");
-
-  const senderIds = [
-    ...new Set(
-      msgs.map((m) => m.senderId?._id || m.senderId).filter(Boolean),
-    ),
-  ];
-
-  const contactsWhoSavedMe = await Contact.find({
-    ownerId: { $in: senderIds },
-    contactId: me,
-  })
-    .select("ownerId")
-    .lean();
-  const targetSavedMeSet = new Set(
-    contactsWhoSavedMe.map((c) => String(c.ownerId)),
-  );
-
-  return msgs.reverse().map((m) => {
-    const formatted = formatGroupMessage(m);
-    const sender = m.senderId;
-    if (sender) {
-      const sId = sid(sender);
-      const isSelf = sId === String(me);
-      if (!isSelf) {
-        const vis = sender.profilePhotoVisibility ?? "everyone";
-        const canSeePhoto = canViewSync(vis, sId, me, targetSavedMeSet);
-        if (!canSeePhoto && formatted.sender) {
-          formatted.sender.avatar = "";
-        }
-      }
-    }
-    return formatted;
-  });
-};
-
-export const markGroupMessagesSeen = async (
-  group,
-  member,
-  me,
-  privacyReadReceipts,
-) => {
-  const blocked = await getBlockedByMe(me);
-
-  const unread = await GroupMessage.find({
-    groupId: group._id,
-    createdAt: { $gte: member.joinedAt },
-    senderId: { $nin: [...blocked, me] },
-    readBy: { $ne: me },
-    silentReadBy: { $ne: me },
-  }).select("_id");
-
-  const ids = unread.map((m) => m._id);
-
-  if (ids.length) {
-    if (privacyReadReceipts) {
-      await GroupMessage.updateMany(
-        { _id: { $in: ids } },
-        { $addToSet: { readBy: me } },
-      );
-      io.to(groupRoom(group._id)).emit("group:messagesSeen", {
-        groupId: String(group._id),
-        seenBy: String(me),
-        messageIds: ids,
-      });
-    } else {
-      await GroupMessage.updateMany(
-        { _id: { $in: ids } },
-        { $addToSet: { silentReadBy: me } },
-      );
-    }
-  }
-
-  await emitMemberConversation(group._id, member);
-
-  return { count: ids.length };
 };
 
 export const validateGroupMessageInput = async (group, me, body, file) => {
-  const text = body.text?.trim();
+  const wantsE2EE = parseBool(body.encrypted ?? body.e2ee);
+  const text = wantsE2EE
+    ? typeof body.text === "string"
+      ? body.text
+      : ""
+    : body.text?.trim();
   const isVoice = body.isVoice === "true" || body.isVoice === true;
   const isVideo = body.isVideo === "true" || body.isVideo === true;
-  const wantsE2EE = parseBool(body.encrypted ?? body.e2ee);
 
   if (!text && !file) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");

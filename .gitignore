@@ -30,10 +30,9 @@ coverage/
 .parcel-cache/
 .cache/
 
-# Temporary files
-tmp/
-temp/
-*.tmp
+# Uploads
+public/upload/*
+!public/upload/.gitkeep
 
 # OS files
 .DS_Store

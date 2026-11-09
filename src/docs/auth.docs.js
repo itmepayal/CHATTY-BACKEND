@@ -102,6 +102,41 @@
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  *
+ * /auth/refresh:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Refresh access token and rotate refresh token
+ *     description: Accepts refresh token from cookie, request body, or X-Refresh-Token header. Rotates both tokens.
+ *     security: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               refreshToken: { type: string }
+ *     responses:
+ *       200:
+ *         description: Token refreshed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         token:
+ *                           type: object
+ *                           properties:
+ *                             accessToken: { type: string }
+ *                             refreshToken: { type: string }
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *
  * /auth/logout:
  *   post:
  *     tags: [Auth]
@@ -146,7 +181,7 @@
  *   patch:
  *     tags: [Auth]
  *     summary: Change password
- *     description: Limited to 5 requests per 15 minutes per IP. New password must be 6-15 characters.
+ *     description: Limited to 5 requests per 15 minutes per IP. New password must be 6-128 characters.
  *     requestBody:
  *       required: true
  *       content:
@@ -156,7 +191,7 @@
  *             required: [currentPassword, newPassword, confirmPassword]
  *             properties:
  *               currentPassword: { type: string }
- *               newPassword: { type: string, minLength: 6, maxLength: 15 }
+ *               newPassword: { type: string, minLength: 6, maxLength: 128 }
  *               confirmPassword: { type: string }
  *     responses:
  *       200:
@@ -221,7 +256,7 @@
  *             type: object
  *             required: [password, confirmPassword]
  *             properties:
- *               password: { type: string, minLength: 6, maxLength: 15 }
+ *               password: { type: string, minLength: 6, maxLength: 128 }
  *               confirmPassword: { type: string }
  *     responses:
  *       200:

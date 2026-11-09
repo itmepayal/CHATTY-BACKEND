@@ -1,6 +1,10 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "./api-error.js";
-import { AI_MAX_TEXT_LENGTH, AI_TONES } from "../constants/constants.js";
+import {
+  ALLOWED_TONES,
+  AI_LIMITS,
+  AI_ERROR_MESSAGES,
+} from "../constants/ai.constants.js";
 
 export const sanitizeText = (value) =>
   typeof value === "string" ? value.trim() : "";
@@ -9,13 +13,16 @@ export const validateText = (text) => {
   const trimmed = sanitizeText(text);
 
   if (!trimmed) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Text is required.");
-  }
-
-  if (trimmed.length > AI_MAX_TEXT_LENGTH) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      `Text must be at most ${AI_MAX_TEXT_LENGTH} characters.`,
+      AI_ERROR_MESSAGES.TEXT_REQUIRED,
+    );
+  }
+
+  if (trimmed.length > AI_LIMITS.MAX_TEXT_LENGTH) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      AI_ERROR_MESSAGES.TEXT_TOO_LONG,
     );
   }
 
@@ -23,12 +30,16 @@ export const validateText = (text) => {
 };
 
 export const validateTone = (tone) => {
-  if (!AI_TONES.includes(tone)) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      `Tone must be one of: ${AI_TONES.join(", ")}.`,
-    );
+  if (typeof tone !== "string") {
+    throw new ApiError(StatusCodes.BAD_REQUEST, AI_ERROR_MESSAGES.INVALID_TONE);
   }
+
+  const cleanTone = tone.trim().toLowerCase();
+  if (!ALLOWED_TONES.includes(cleanTone)) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, AI_ERROR_MESSAGES.INVALID_TONE);
+  }
+
+  return cleanTone;
 };
 
 export const validateGeneratedText = (value, label) => {

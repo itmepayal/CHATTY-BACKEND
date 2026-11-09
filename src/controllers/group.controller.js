@@ -1,47 +1,25 @@
-import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
-import ApiError from "../utils/api-error.js";
 import ApiResponse from "../utils/api-response.js";
-import GroupMessage from "../models/group-message.model.js";
-import GroupArchive from "../models/group-archive.model.js";
-import LocationShare from "../models/location-share.model.js";
-import { deleteFileToCloudinary } from "../config/cloudinary.config.js";
-import { io, groupRoom, getPrivacy } from "../lib/socket.js";
+import { getPrivacy } from "../lib/socket-state.js";
+import { parseKeyEntries } from "../utils/e2ee.js";
+import { getGroupAndMember, assertAdmin } from "../utils/group-guard.js";
+import { GROUP_SUCCESS_MESSAGES } from "../constants/group.constants.js";
 import {
-  getGroupAndMember,
-  assertAdmin,
-  getBlockedByMe,
-  getBlockersOf,
-} from "../utils/group-guard.js";
-import { parseKeyEntries, parseBool, assertValidCipher } from "../utils/e2ee.js";
-import { toNum, readClientId, parseIds } from "../utils/validators.js";
-import {
-  sid,
-  loadGroup,
-  presentGroup,
-  emitToMembers,
-  emitGroupToMembers,
-  broadcastGroupMessage,
-  emitGroupConversation,
-  deleteMedia,
-  destroyGroup,
   getMyGroupsList,
-  getGroupMessagesList,
-  markGroupMessagesSeen,
-  validateGroupMessageInput,
-  findGroupMessageDuplicate,
+  getGroupDetails,
+  updateGroupService,
+  deleteGroupService,
+  archiveGroupService,
+  unarchiveGroupService,
 } from "../services/group.service.js";
 import {
-  uploadImage,
-  uploadAttachment,
-} from "../services/group-media.service.js";
-import {
-  validateInitialKeyEntries,
-  getMyKeysPayload,
-  getPendingKeyMembersPayload,
-  applyGroupKeys,
-} from "../services/group-key.service.js";
+  getGroupMessagesList,
+  sendGroupMessageService,
+  editGroupMessageService,
+  deleteGroupMessageService,
+  markGroupSeenService,
+} from "../services/group-message.service.js";
 import {
   createGroupWithMembers,
   addMembersToGroup,
@@ -50,113 +28,53 @@ import {
   leaveGroupFlow,
 } from "../services/group-member.service.js";
 import {
-  startCurrentShare,
-  updateShare,
-  stopShare,
-  getActiveSharesFor,
-  formatGroupMessage,
-} from "../services/group-share.service.js";
-import { validName } from "../utils/group-validators.js";
+  getMyKeysPayload,
+  getPendingKeyMembersPayload,
+  applyGroupKeys,
+} from "../services/group-key.service.js";
 import {
-  MAX_GROUP_MEMBERS,
-  EDIT_WINDOW_MS,
-  MAX_TEXT_LENGTH,
-  MAX_CIPHERTEXT_LENGTH,
-} from "../constants/constants.js";
+  startGroupShareService,
+  updateGroupShareService,
+  stopGroupShareService,
+  getActiveGroupSharesService,
+} from "../services/group-share.service.js";
 
 const groupController = {
   createGroup: asyncHandler(async (req, res) => {
     const me = req.user._id;
-    const name = req.body.name?.trim();
-    validName(name);
-
-    const memberIds = parseIds(req.body.memberIds).filter(
-      (id) => id !== String(me),
-    );
-    if (!memberIds.length) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Add at least one member.");
-    }
-    if (memberIds.length + 1 > MAX_GROUP_MEMBERS) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        `A group can have at most ${MAX_GROUP_MEMBERS} members.`,
-      );
-    }
-
-    const wantsE2EE = parseBool(req.body.e2ee);
-    let keyEntries = [];
-    if (wantsE2EE) {
-      keyEntries = parseKeyEntries(req.body.keys, 1);
-      validateInitialKeyEntries({ keyEntries, me, memberIds });
-    }
-
-    const avatar = req.file?.path ? await uploadImage(req.file) : undefined;
-
     const payload = await createGroupWithMembers({
       me,
-      name,
-      memberIds,
-      avatar,
-      wantsE2EE,
-      keyEntries,
+      name: req.body.name,
+      rawMemberIds: req.body.memberIds,
+      file: req.file,
+      e2ee: req.body.e2ee,
+      keys: req.body.keys,
     });
-
-    return new ApiResponse(StatusCodes.CREATED, payload, "Group created.").send(
-      res,
-    );
+    return new ApiResponse(
+      StatusCodes.CREATED,
+      payload,
+      GROUP_SUCCESS_MESSAGES.GROUP_CREATED,
+    ).send(res);
   }),
 
   getMyGroups: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const result = await getMyGroupsList(me);
-    return new ApiResponse(StatusCodes.OK, result, "Groups fetched.").send(res);
+    return new ApiResponse(
+      StatusCodes.OK,
+      result,
+      GROUP_SUCCESS_MESSAGES.GROUPS_FETCHED,
+    ).send(res);
   }),
 
   getGroup: asyncHandler(async (req, res) => {
     const me = req.user._id;
-    await getGroupAndMember(req.params.id, me);
-    const group = await loadGroup(req.params.id);
-    const archived = !!(await GroupArchive.exists({
-      ownerId: me,
-      groupId: group._id,
-    }));
+    const payload = await getGroupDetails(req.params.id, me);
     return new ApiResponse(
       StatusCodes.OK,
-      await presentGroup(group, { archived }, me),
-      "Group fetched.",
+      payload,
+      GROUP_SUCCESS_MESSAGES.GROUP_FETCHED,
     ).send(res);
-  }),
-
-  archiveGroup: asyncHandler(async (req, res) => {
-    const me = req.user._id;
-    const { group } = await getGroupAndMember(req.params.id, me);
-
-    await GroupArchive.updateOne(
-      { ownerId: me, groupId: group._id },
-      { $setOnInsert: { ownerId: me, groupId: group._id } },
-      { upsert: true },
-    );
-
-    const payload = { groupId: String(group._id), archived: true };
-    io.to(String(me)).emit("group:archiveChanged", payload);
-
-    return new ApiResponse(StatusCodes.OK, payload, "Group archived.").send(
-      res,
-    );
-  }),
-
-  unarchiveGroup: asyncHandler(async (req, res) => {
-    const me = req.user._id;
-    const { group } = await getGroupAndMember(req.params.id, me);
-
-    await GroupArchive.deleteOne({ ownerId: me, groupId: group._id });
-
-    const payload = { groupId: String(group._id), archived: false };
-    io.to(String(me)).emit("group:archiveChanged", payload);
-
-    return new ApiResponse(StatusCodes.OK, payload, "Group unarchived.").send(
-      res,
-    );
   }),
 
   updateGroup: asyncHandler(async (req, res) => {
@@ -164,36 +82,29 @@ const groupController = {
     const { group, member } = await getGroupAndMember(req.params.id, me);
     assertAdmin(member);
 
-    let changed = false;
-    let oldPublicId;
+    const payload = await updateGroupService({
+      group,
+      me,
+      name: req.body.name,
+      file: req.file,
+    });
 
-    if (req.body.name !== undefined) {
-      const name = String(req.body.name).trim();
-      validName(name);
-      if (name !== group.name) {
-        group.name = name;
-        changed = true;
-      }
-    }
+    return new ApiResponse(
+      StatusCodes.OK,
+      payload,
+      GROUP_SUCCESS_MESSAGES.GROUP_UPDATED,
+    ).send(res);
+  }),
 
-    if (req.file?.path) {
-      oldPublicId = group.avatar?.public_id;
-      group.avatar = await uploadImage(req.file);
-      changed = true;
-    }
-
-    if (!changed) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "No changes to update.");
-    }
-
-    await group.save();
-    if (oldPublicId) await deleteFileToCloudinary(oldPublicId).catch(() => {});
-
-    const full = await loadGroup(group._id);
-    await emitGroupToMembers(full, "group:updated");
-    const payload = await presentGroup(full, {}, me);
-
-    return new ApiResponse(StatusCodes.OK, payload, "Group updated.").send(res);
+  deleteGroup: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+    const payload = await deleteGroupService(group, me);
+    return new ApiResponse(
+      StatusCodes.OK,
+      payload,
+      GROUP_SUCCESS_MESSAGES.GROUP_DELETED,
+    ).send(res);
   }),
 
   addMembers: asyncHandler(async (req, res) => {
@@ -207,370 +118,209 @@ const groupController = {
       rawMemberIds: req.body.memberIds,
     });
 
-    return new ApiResponse(StatusCodes.OK, payload, "Members added.").send(res);
+    return new ApiResponse(
+      StatusCodes.OK,
+      payload,
+      GROUP_SUCCESS_MESSAGES.MEMBERS_ADDED,
+    ).send(res);
   }),
 
   removeMember: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const targetId = req.params.userId;
-    const { group, member } = await getGroupAndMember(req.params.id, me);
-    assertAdmin(member);
+    const { group } = await getGroupAndMember(req.params.id, me);
 
     const payload = await removeMemberFromGroup({ group, me, targetId });
-
-    return new ApiResponse(StatusCodes.OK, payload, "Member removed.").send(
-      res,
-    );
+    return new ApiResponse(
+      StatusCodes.OK,
+      payload,
+      GROUP_SUCCESS_MESSAGES.MEMBER_REMOVED,
+    ).send(res);
   }),
 
   changeRole: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const targetId = req.params.userId;
-    const { role } = req.body;
-    const { group, member } = await getGroupAndMember(req.params.id, me);
-    assertAdmin(member);
+    const { group } = await getGroupAndMember(req.params.id, me);
 
-    const payload = await changeMemberRole({ group, me, targetId, role });
+    const payload = await changeMemberRole({
+      group,
+      me,
+      targetId,
+      role: req.body.role,
+    });
 
-    return new ApiResponse(StatusCodes.OK, payload, "Role updated.").send(res);
+    return new ApiResponse(
+      StatusCodes.OK,
+      payload,
+      GROUP_SUCCESS_MESSAGES.ROLE_CHANGED,
+    ).send(res);
   }),
 
   leaveGroup: asyncHandler(async (req, res) => {
-    const me = String(req.user._id);
-    const { group } = await getGroupAndMember(req.params.id, me);
-
-    const { destroyed } = await leaveGroupFlow({ group, me });
-
-    if (destroyed) {
-      return new ApiResponse(
-        StatusCodes.OK,
-        null,
-        "You left. The group was deleted.",
-      ).send(res);
-    }
-
-    return new ApiResponse(StatusCodes.OK, null, "You left the group.").send(
-      res,
-    );
-  }),
-
-  deleteGroup: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
+    const { destroyed } = await leaveGroupFlow({ group, me });
 
-    if (sid(group.owner) !== String(me)) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "Only the group owner can delete the group.",
-      );
-    }
+    const message = destroyed
+      ? GROUP_SUCCESS_MESSAGES.LEFT_AND_DELETED
+      : GROUP_SUCCESS_MESSAGES.LEFT_GROUP;
 
-    const payload = { groupId: String(group._id) };
-    emitToMembers(group, "group:deleted", payload);
-    io.in(groupRoom(group._id)).socketsLeave(groupRoom(group._id));
+    return new ApiResponse(StatusCodes.OK, null, message).send(res);
+  }),
 
-    await destroyGroup(group);
+  archiveGroup: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+    await archiveGroupService(group, me);
+    return new ApiResponse(
+      StatusCodes.OK,
+      { groupId: String(group._id), archived: true },
+      GROUP_SUCCESS_MESSAGES.ARCHIVED,
+    ).send(res);
+  }),
 
-    return new ApiResponse(StatusCodes.OK, payload, "Group deleted.").send(res);
+  unarchiveGroup: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { group } = await getGroupAndMember(req.params.id, me);
+    await unarchiveGroupService(group, me);
+    return new ApiResponse(
+      StatusCodes.OK,
+      { groupId: String(group._id), archived: false },
+      GROUP_SUCCESS_MESSAGES.UNARCHIVED,
+    ).send(res);
   }),
 
   getMyGroupKeys: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
-
     const data = await getMyKeysPayload(group, me);
-
-    return new ApiResponse(StatusCodes.OK, data, "Group keys fetched.").send(
-      res,
-    );
+    return new ApiResponse(
+      StatusCodes.OK,
+      data,
+      GROUP_SUCCESS_MESSAGES.KEYS_FETCHED,
+    ).send(res);
   }),
 
   getPendingKeyMembers: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
-
     const result = await getPendingKeyMembersPayload(group);
 
-    if (result.notEncrypted) {
-      return new ApiResponse(
-        StatusCodes.OK,
-        { latestVersion: result.latestVersion, pending: result.pending },
-        "Group is not encrypted.",
-      ).send(res);
-    }
+    const message = result.notEncrypted
+      ? GROUP_SUCCESS_MESSAGES.GROUP_NOT_ENCRYPTED
+      : GROUP_SUCCESS_MESSAGES.PENDING_KEY_MEMBERS;
 
     return new ApiResponse(
       StatusCodes.OK,
       { latestVersion: result.latestVersion, pending: result.pending },
-      "Pending key members fetched.",
+      message,
     ).send(res);
   }),
 
   setGroupKeys: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group, member } = await getGroupAndMember(req.params.id, me);
-
-    const entries = parseKeyEntries(req.body.keys, toNum(req.body.version));
-
-    const { latestVersion, stored, isNewVersion, latest } =
-      await applyGroupKeys({
-        group,
-        member,
-        entries,
-        me,
-      });
-
+    const entries = parseKeyEntries(req.body.keys, req.body.version);
+    const payload = await applyGroupKeys({ group, member, entries, me });
     return new ApiResponse(
       StatusCodes.OK,
-      { latestVersion, stored },
-      isNewVersion && latest === 0
-        ? "Encryption enabled for this group."
-        : "Group keys saved.",
+      payload,
+      GROUP_SUCCESS_MESSAGES.KEYS_UPDATED,
     ).send(res);
   }),
 
   getGroupMessages: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group, member } = await getGroupAndMember(req.params.id, me);
-
-    const msgs = await getGroupMessagesList(group, member, me, req.query);
-
+    const msgs = await getGroupMessagesList({
+      group,
+      member,
+      me,
+      query: req.query,
+    });
     return new ApiResponse(
       StatusCodes.OK,
       msgs,
-      "Group messages fetched.",
+      GROUP_SUCCESS_MESSAGES.MESSAGES_FETCHED,
     ).send(res);
   }),
 
   sendGroupMessage: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
-
-    const { text, cipher, isVoice, isVideo } = await validateGroupMessageInput(
+    const result = await sendGroupMessageService({
       group,
       me,
-      req.body,
-      req.file,
-    );
+      body: req.body,
+      file: req.file,
+    });
 
-    const clientId = readClientId(req.body);
+    const statusCode = result.isDuplicate
+      ? StatusCodes.OK
+      : StatusCodes.CREATED;
+    const message = result.isDuplicate
+      ? GROUP_SUCCESS_MESSAGES.MESSAGE_ALREADY_SENT
+      : GROUP_SUCCESS_MESSAGES.MESSAGE_SENT;
 
-    if (clientId) {
-      const dup = await findGroupMessageDuplicate(group._id, me, clientId);
-      if (dup) {
-        return new ApiResponse(
-          StatusCodes.OK,
-          formatGroupMessage(dup),
-          "Message already sent.",
-        ).send(res);
-      }
-    }
-
-    const attachment = req.file?.path
-      ? await uploadAttachment(req.file, {
-          isVoice,
-          isVideo,
-          duration: req.body.duration,
-        })
-      : {};
-
-    let message;
-    try {
-      message = await GroupMessage.create({
-        groupId: group._id,
-        senderId: me,
-        text,
-        ...attachment,
-        ...cipher,
-        clientId,
-        readBy: [me],
-      });
-    } catch (error) {
-      await Promise.allSettled(deleteMedia(attachment));
-
-      if (error?.code === 11000 && clientId) {
-        const dup = await findGroupMessageDuplicate(group._id, me, clientId);
-        if (dup) {
-          return new ApiResponse(
-            StatusCodes.OK,
-            formatGroupMessage(dup),
-            "Message already sent.",
-          ).send(res);
-        }
-      }
-      throw error;
-    }
-
-    const payload = await broadcastGroupMessage(group, message, me);
-
-    return new ApiResponse(StatusCodes.CREATED, payload, "Message sent.").send(
-      res,
-    );
-  }),
-
-  deleteGroupMessage: asyncHandler(async (req, res) => {
-    const me = req.user._id;
-    const { id: groupId, messageId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(messageId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid message ID.");
-    }
-
-    const { group, member } = await getGroupAndMember(groupId, me);
-
-    const message = await GroupMessage.findById(messageId);
-    if (!message) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
-    }
-
-    if (String(message.groupId) !== String(group._id)) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Message does not belong to this group.",
-      );
-    }
-
-    const isSender = String(message.senderId) === String(me);
-    const isAdminOrOwner =
-      member.role === "admin" || String(group.owner) === String(me);
-
-    if (!isSender && !isAdminOrOwner) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You do not have permission to delete this message.",
-      );
-    }
-
-    await Promise.allSettled(deleteMedia(message));
-
-    await GroupMessage.deleteOne({ _id: messageId });
-
-    const payload = {
-      groupId: String(group._id),
-      messageId: String(messageId),
-    };
-
-    io.to(groupRoom(group._id)).emit("group:messageDeleted", payload);
-    emitToMembers(group, "group:messageDeleted", payload);
-
-    await emitGroupConversation(group);
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      payload,
-      "Group message deleted successfully.",
-    ).send(res);
+    return new ApiResponse(statusCode, result.payload, message).send(res);
   }),
 
   editGroupMessage: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { id: groupId, messageId } = req.params;
-    const text = req.body.text?.trim();
-    const wantsE2EE = parseBool(req.body.encrypted ?? req.body.e2ee);
-    const iv = req.body.iv;
-
-    if (!mongoose.Types.ObjectId.isValid(messageId)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid message ID.");
-    }
-
     const { group } = await getGroupAndMember(groupId, me);
 
-    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
-    if (!text || text.length > maxLen) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        wantsE2EE
-          ? "Encrypted payload is invalid or too large."
-          : `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
-      );
-    }
+    const result = await editGroupMessageService({
+      group,
+      me,
+      messageId,
+      body: req.body,
+    });
 
-    const message = await GroupMessage.findById(messageId);
-    if (!message) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
-    }
+    return new ApiResponse(
+      StatusCodes.OK,
+      result.payload,
+      GROUP_SUCCESS_MESSAGES.MESSAGE_EDITED,
+    ).send(res);
+  }),
 
-    if (String(message.groupId) !== String(group._id)) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Message does not belong to this group.",
-      );
-    }
+  deleteGroupMessage: asyncHandler(async (req, res) => {
+    const me = req.user._id;
+    const { id: groupId, messageId } = req.params;
+    const { group, member } = await getGroupAndMember(groupId, me);
 
-    if (String(message.senderId) !== String(me)) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "Only the sender can edit this message.",
-      );
-    }
-
-    if (
-      message.image?.url ||
-      message.file?.url ||
-      message.audio?.url ||
-      message.video?.url ||
-      message.location?.lat
-    ) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Only text messages can be edited.",
-      );
-    }
-
-    if (Date.now() - message.createdAt.getTime() > EDIT_WINDOW_MS) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Edit time is over.");
-    }
-
-    if (Boolean(message.e2ee) !== wantsE2EE) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Encryption mode of a message can't be changed.",
-      );
-    }
-
-    if (wantsE2EE) assertValidCipher(text, iv);
-
-    if (!wantsE2EE && message.text === text) {
-      const formatted = formatGroupMessage(message);
-      return new ApiResponse(StatusCodes.OK, formatted, "No changes.").send(res);
-    }
-
-    message.text = text;
-    if (wantsE2EE) message.iv = iv;
-    message.isEdited = true;
-    message.editedAt = new Date();
-    await message.save();
-
-    await message.populate("senderId", "fullName avatar profilePhotoVisibility");
-    const payload = formatGroupMessage(message);
-
-    io.to(groupRoom(group._id)).emit("group:messageEdited", payload);
-    emitToMembers(group, "group:messageEdited", payload);
-    await emitGroupConversation(group);
+    const payload = await deleteGroupMessageService({
+      group,
+      member,
+      me,
+      messageId,
+    });
 
     return new ApiResponse(
       StatusCodes.OK,
       payload,
-      "Group message edited successfully.",
+      GROUP_SUCCESS_MESSAGES.MESSAGE_DELETED,
     ).send(res);
   }),
 
   markGroupSeen: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group, member } = await getGroupAndMember(req.params.id, me);
-    const { readReceipts } = getPrivacy(me);
+    const privacy = getPrivacy(String(me)) || {};
+    const readReceipts = privacy.readReceipts !== false;
 
-    const { count } = await markGroupMessagesSeen(
+    const result = await markGroupSeenService({
       group,
       member,
       me,
       readReceipts,
-    );
+    });
 
     return new ApiResponse(
       StatusCodes.OK,
-      { count },
-      "Messages marked as seen.",
+      { count: result.count },
+      GROUP_SUCCESS_MESSAGES.MESSAGES_SEEN,
     ).send(res);
   }),
 
@@ -578,48 +328,26 @@ const groupController = {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
 
-    const respondDuplicate = async (dup, mode) => {
-      const message = formatGroupMessage(dup);
-      if (mode === "live" && dup.location?.shareId) {
-        const share = await LocationShare.findById(dup.location.shareId);
-        return new ApiResponse(
-          StatusCodes.OK,
-          { message, share },
-          "Live location already started.",
-        ).send(res);
-      }
-      return new ApiResponse(
-        StatusCodes.OK,
-        message,
-        "Location already sent.",
-      ).send(res);
-    };
-
-    const result = await startCurrentShare({
+    const result = await startGroupShareService({
       group,
       me,
       body: req.body,
-      file: req.file,
     });
 
-    if (result.duplicate) {
-      return respondDuplicate(result.dup, result.mode);
+    const statusCode = result.isDuplicate
+      ? StatusCodes.OK
+      : StatusCodes.CREATED;
+    let message = GROUP_SUCCESS_MESSAGES.LOCATION_SENT;
+    if (result.isDuplicate) {
+      message =
+        result.mode === "live"
+          ? GROUP_SUCCESS_MESSAGES.LIVE_LOCATION_ALREADY_STARTED
+          : GROUP_SUCCESS_MESSAGES.LOCATION_ALREADY_SENT;
+    } else if (result.mode === "live") {
+      message = GROUP_SUCCESS_MESSAGES.LIVE_LOCATION_STARTED;
     }
 
-    if (result.mode === "current") {
-      return new ApiResponse(
-        StatusCodes.CREATED,
-        result.payload,
-        "Location sent.",
-      ).send(res);
-    }
-
-    // live
-    return new ApiResponse(
-      StatusCodes.CREATED,
-      { message: result.payload, share: result.share },
-      "Live location started.",
-    ).send(res);
+    return new ApiResponse(statusCode, result.data, message).send(res);
   }),
 
   updateGroupShare: asyncHandler(async (req, res) => {
@@ -627,53 +355,60 @@ const groupController = {
     const { shareId } = req.params;
     const { group } = await getGroupAndMember(req.params.id, me);
 
-    const result = await updateShare({ group, me, shareId, body: req.body });
+    const result = await updateGroupShareService({
+      group,
+      me,
+      shareId,
+      body: req.body,
+    });
 
     if (result.skipped) {
       return new ApiResponse(
         StatusCodes.OK,
         { shareId: result.shareId, skipped: true },
-        "Update skipped (too frequent).",
+        GROUP_SUCCESS_MESSAGES.LOCATION_UPDATE_SKIPPED,
       ).send(res);
     }
 
     return new ApiResponse(
       StatusCodes.OK,
       result.locationPayload,
-      "Location updated.",
+      GROUP_SUCCESS_MESSAGES.LOCATION_UPDATED,
     ).send(res);
   }),
 
   stopGroupShare: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { shareId } = req.params;
-    const { group } = await getGroupAndMember(req.params.id, me);
+    const { group, member } = await getGroupAndMember(req.params.id, me);
 
-    const { shareId: resultShareId } = await stopShare({ group, me, shareId });
+    const result = await stopGroupShareService({
+      group,
+      member,
+      me,
+      shareId,
+    });
 
     return new ApiResponse(
       StatusCodes.OK,
-      { shareId: resultShareId },
-      "Live location stopped.",
+      { shareId: result.shareId },
+      GROUP_SUCCESS_MESSAGES.LIVE_LOCATION_STOPPED,
     ).send(res);
   }),
 
   getActiveGroupShares: asyncHandler(async (req, res) => {
     const me = req.user._id;
     const { group } = await getGroupAndMember(req.params.id, me);
-    const blocked = await getBlockedByMe(me);
 
-    const { mine, inGroup } = await getActiveSharesFor({
+    const result = await getActiveGroupSharesService({
       group,
       me,
-      blocked,
-      getBlockersOf,
     });
 
     return new ApiResponse(
       StatusCodes.OK,
-      { mine, inGroup },
-      "Active location shares.",
+      { mine: result.mine, inGroup: result.inGroup },
+      GROUP_SUCCESS_MESSAGES.ACTIVE_SHARES_FETCHED,
     ).send(res);
   }),
 };

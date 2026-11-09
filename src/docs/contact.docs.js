@@ -88,21 +88,110 @@
  *                           type: array
  *                           items:
  *                             $ref: '#/components/schemas/SearchedUser'
- *             example:
- *               statusCode: 200
- *               success: true
- *               message: Users fetched successfully.
- *               data:
- *                 users:
- *                   - _id: 665f1c2e9b1e8a0012a4b123
- *                     fullName: Jane Doe
- *                     username: jane_doe
- *                     avatar:
- *                       url: https://res.cloudinary.com/.../avatar.jpg
- *                       public_id: chat/avatars/abc123
- *                     isContact: false
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *
+ * /contacts/count:
+ *   get:
+ *     tags: [Contacts]
+ *     operationId: getContactCount
+ *     summary: Get total count of contacts
+ *     description: Returns the total count of contacts saved by the authenticated user.
+ *     responses:
+ *       200:
+ *         description: Contact count retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         totalContacts: { type: integer, example: 42 }
+ *                         count: { type: integer, example: 42 }
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *
+ * /contacts/mutual/{otherUserId}:
+ *   get:
+ *     tags: [Contacts]
+ *     operationId: getMutualContacts
+ *     summary: Get mutual contacts with another user
+ *     description: Returns the list of users who are saved as contacts by both the authenticated user and the other specified user.
+ *     parameters:
+ *       - in: path
+ *         name: otherUserId
+ *         required: true
+ *         schema: { type: string }
+ *         description: User ID of the other user
+ *     responses:
+ *       200:
+ *         description: Mutual contacts retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         mutualContacts:
+ *                           type: array
+ *                           items:
+ *                             $ref: '#/components/schemas/ContactUser'
+ *       400:
+ *         $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *
+ * /contacts/bulk:
+ *   post:
+ *     tags: [Contacts]
+ *     operationId: bulkAddContacts
+ *     summary: Bulk add contacts
+ *     description: Adds multiple users to contacts in a single batch operation (up to 100 users).
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [contactIds]
+ *             properties:
+ *               contactIds:
+ *                 type: array
+ *                 items: { type: string }
+ *                 maxItems: 100
+ *                 example: ["665f1c2e9b1e8a0012a4b123", "665f1c2e9b1e8a0012a4b456"]
+ *     responses:
+ *       201:
+ *         description: Bulk contacts processed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         addedCount: { type: integer, example: 2 }
+ *                         skippedCount: { type: integer, example: 0 }
+ *                         totalProcessed: { type: integer, example: 2 }
+ *       400:
+ *         $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  *
  * /contacts:
  *   get:
@@ -110,6 +199,22 @@
  *     operationId: getContacts
  *     summary: Get all contacts
  *     description: Returns the authenticated user's contact list, sorted by most recently added. Each contact includes their basic profile info and optional nickname.
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema: { type: integer, minimum: 1, default: 1 }
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+ *         description: Number of items per page
+ *       - in: query
+ *         name: search
+ *         required: false
+ *         schema: { type: string }
+ *         description: Filter contacts by nickname, name, or username
  *     responses:
  *       200:
  *         description: Contacts fetched successfully
@@ -164,6 +269,35 @@
  *         $ref: '#/components/responses/Unauthorized'
  *
  * /contacts/{userId}:
+ *   get:
+ *     tags: [Contacts]
+ *     operationId: getContactById
+ *     summary: Get a single contact by user ID
+ *     description: Fetches a single contact relationship for the authenticated user, returning profile info and nickname.
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema: { type: string }
+ *         description: MongoDB ObjectId of the contact
+ *     responses:
+ *       200:
+ *         description: Contact fetched successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/ContactUser'
+ *       400:
+ *         $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  *   post:
  *     tags: [Contacts]
  *     operationId: addContact
@@ -208,6 +342,49 @@
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *   patch:
+ *     tags: [Contacts]
+ *     operationId: updateContactNickname
+ *     summary: Update contact nickname
+ *     description: Sets or updates the custom nickname for an existing contact.
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema: { type: string }
+ *         description: MongoDB ObjectId of the contact
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               nickname:
+ *                 type: string
+ *                 maxLength: 50
+ *                 example: Janey
+ *     responses:
+ *       200:
+ *         description: Contact nickname updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ApiResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         contactId: { type: string }
+ *                         nickname: { type: string, nullable: true }
+ *       400:
+ *         $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  *       404:

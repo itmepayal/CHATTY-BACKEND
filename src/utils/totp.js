@@ -95,6 +95,13 @@ export function verifyChallengeToken(token) {
   return decoded;
 }
 
+export function hashRecoveryCode(rawCode) {
+  const normalized = String(rawCode || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  return crypto.createHash("sha256").update(normalized).digest("hex");
+}
+
 export async function generateRecoveryCodes() {
   const codes = [];
   const hashes = [];
@@ -106,7 +113,7 @@ export async function generateRecoveryCodes() {
       .toUpperCase()
       .match(/.{1,5}/g)
       .join("-");
-    const hash = await bcrypt.hash(raw, BCRYPT_ROUNDS_RECOVERY);
+    const hash = hashRecoveryCode(raw);
     codes.push(raw);
     hashes.push(hash);
   }
@@ -115,9 +122,45 @@ export async function generateRecoveryCodes() {
 }
 
 export async function consumeRecoveryCode(rawCode, hashList) {
-  const normalized = rawCode.toUpperCase().replace(/\s+/g, "");
-  for (let i = 0; i < hashList.length; i++) {
-    if (await bcrypt.compare(normalized, hashList[i])) return i;
+  if (!rawCode || !Array.isArray(hashList) || hashList.length === 0) {
+    return -1;
   }
+
+  const normalized = String(rawCode)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+  if (!normalized) return -1;
+
+  const shaHash = hashRecoveryCode(normalized);
+
+  for (let i = 0; i < hashList.length; i++) {
+    const stored = hashList[i];
+    if (typeof stored !== "string") continue;
+
+    // Check if stored hash is SHA-256 (64 hex characters)
+    if (stored.length === 64 && /^[0-9a-f]{64}$/i.test(stored)) {
+      if (
+        crypto.timingSafeEqual(
+          Buffer.from(shaHash, "utf8"),
+          Buffer.from(stored.toLowerCase(), "utf8"),
+        )
+      ) {
+        return i;
+      }
+    } else if (stored.startsWith("$2")) {
+      // Backward compatibility for existing bcrypt hashes
+      const rawFormatted = String(rawCode).toUpperCase().replace(/\s+/g, "");
+      const withHyphens = normalized.match(/.{1,5}/g)?.join("-") || normalized;
+      if (
+        (await bcrypt.compare(rawFormatted, stored)) ||
+        (await bcrypt.compare(normalized, stored)) ||
+        (await bcrypt.compare(withHyphens, stored))
+      ) {
+        return i;
+      }
+    }
+  }
+
   return -1;
 }
