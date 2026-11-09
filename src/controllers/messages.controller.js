@@ -10,6 +10,7 @@ import * as locationService from "../services/messaging/message-location.service
 import * as queryService from "../services/messaging/message-query.service.js";
 import * as lifecycleService from "../services/messaging/message-lifecycle.service.js";
 import * as forwardService from "../services/messaging/message-forward.service.js";
+import * as deliveryService from "../services/messaging/message-delivery.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -474,62 +475,11 @@ const messageController = {
   }),
 
   markMessagesSeen: asyncHandler(async (req, res) => {
-    const { id: otherUserId } = req.params;
-    const userId = req.user._id;
-
-    assertValidId(otherUserId, "user ID");
-
-    const blocked = await isBlockedEitherWay(userId, otherUserId);
-    const canReceipt =
-      !blocked &&
-      getPrivacy(userId).readReceipts !== false &&
-      getPrivacy(otherUserId).readReceipts !== false;
-
-    const unseen = await Message.find({
-      senderId: otherUserId,
-      receiverId: userId,
-      status: { $ne: "seen" },
-      receiverReadAt: null,
-      isDeleted: { $ne: true },
-    }).select("_id");
-
-    const ids = unseen.map((m) => m._id);
-
-    if (ids.length) {
-      const now = new Date();
-
-      if (canReceipt) {
-        await Message.updateMany({ _id: { $in: ids } }, [
-          {
-            $set: {
-              status: "seen",
-              seenAt: now,
-              receiverReadAt: now,
-              deliveredAt: { $ifNull: ["$deliveredAt", now] },
-            },
-          },
-        ]);
-
-        io.to(otherUserId.toString()).emit("messagesSeen", {
-          messageIds: ids,
-          seenBy: userId,
-          seenAt: now,
-        });
-      } else {
-        await Message.updateMany(
-          { _id: { $in: ids } },
-          { $set: { receiverReadAt: now } },
-        );
-      }
-    }
-
-    await emitConversationUpdate(userId, otherUserId);
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      { count: ids.length },
-      "Messages marked as seen.",
-    ).send(res);
+    const { count, message } = await deliveryService.markMessagesSeen(
+      req.user._id,
+      req.params.id,
+    );
+    return new ApiResponse(StatusCodes.OK, { count }, message).send(res);
   }),
 
   reactMessage: asyncHandler(async (req, res) => {
