@@ -11,6 +11,7 @@ import * as queryService from "../services/messaging/message-query.service.js";
 import * as lifecycleService from "../services/messaging/message-lifecycle.service.js";
 import * as forwardService from "../services/messaging/message-forward.service.js";
 import * as deliveryService from "../services/messaging/message-delivery.service.js";
+import * as sendService from "../services/messaging/message-send.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -261,149 +262,13 @@ const messageController = {
   }),
 
   sendMessage: asyncHandler(async (req, res) => {
-    const {
-      text,
-      clientId,
-      isVoice,
-      isVideo,
-      duration,
-      iv,
-      replyTo: replyToId,
-    } = req.body;
-    const { id: receiverId } = req.params;
-    const senderId = req.user._id;
-
-    assertValidId(receiverId, "receiver ID");
-
-    if (receiverId.toString() === senderId.toString()) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "You cannot send a message to yourself.",
-      );
-    }
-
-    const trimmedText = text?.trim();
-
-    if (!trimmedText && !req.file) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
-    }
-
-    const isEncryptedReq = parseBool(req.body.encrypted ?? req.body.e2ee);
-
-    if (isEncryptedReq && req.file) {
-      if (req.file.path) fs.unlink(req.file.path, () => {});
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "End-to-end encrypted media is not supported. Please send media in standard mode or send text only.",
-      );
-    }
-
-    const wantsE2EE = isEncryptedReq && Boolean(trimmedText);
-    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
-
-    if (trimmedText && trimmedText.length > maxLen) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        wantsE2EE
-          ? "Message is too long."
-          : `Message is too long (max ${MAX_TEXT_LENGTH} characters).`,
-      );
-    }
-    if (wantsE2EE) {
-      assertValidCipher(trimmedText, iv);
-    }
-
-    if (clientId) {
-      const existing = await Message.findOne({ senderId, clientId });
-      if (existing) {
-        return new ApiResponse(
-          StatusCodes.OK,
-          formatMessage(existing),
-          "Message already sent.",
-        ).send(res);
-      }
-    }
-
-    await assertCanMessage(senderId, receiverId);
-    if (wantsE2EE) await assertE2EEReady(senderId, receiverId);
-    await assertNotSpamming(
-      senderId,
-      receiverId,
-      wantsE2EE ? undefined : trimmedText,
+    const { status, payload, message } = await sendService.sendMessage(
+      req.user._id,
+      req.params.id,
+      req.body,
+      req.file,
     );
-
-    let replyTo;
-    if (replyToId) {
-      assertValidId(replyToId, "reply ID");
-      const original = await Message.findById(replyToId).select(
-        "senderId receiverId isDeleted",
-      );
-      if (
-        !original ||
-        original.isDeleted ||
-        !isBetween(original, senderId, receiverId)
-      ) {
-        throw new ApiError(
-          StatusCodes.BAD_REQUEST,
-          "Cannot reply to this message.",
-        );
-      }
-      replyTo = original._id;
-    }
-
-    const attachment = await processAttachment(req.file, {
-      isVoice: parseBool(isVoice),
-      isVideo: parseBool(isVideo),
-      duration,
-    });
-    const {
-      image: uploadedImage,
-      file: uploadedFile,
-      audio: uploadedAudio,
-      video: uploadedVideo,
-    } = attachment;
-
-    let result;
-    try {
-      result = await deliverMessage({
-        senderId,
-        receiverId,
-        data: {
-          text: trimmedText,
-          clientId: clientId || undefined,
-          image: uploadedImage || undefined,
-          file: uploadedFile || undefined,
-          audio: uploadedAudio || undefined,
-          video: uploadedVideo || undefined,
-          replyTo,
-          ...(wantsE2EE ? { e2ee: true, iv } : {}),
-        },
-      });
-    } catch (error) {
-      await deleteAttachmentMedia(attachment);
-
-      if (error?.code === 11000 && clientId) {
-        const existing = await Message.findOne({ senderId, clientId });
-        if (existing) {
-          return new ApiResponse(
-            StatusCodes.OK,
-            formatMessage(existing),
-            "Message already sent.",
-          ).send(res);
-        }
-      }
-      throw error;
-    }
-
-    const { message, payload } = result;
-
-    if (!wantsE2EE) attachLinkPreview(message);
-
-    return new ApiResponse(
-      StatusCodes.CREATED,
-      payload,
-      "Message sent successfully.",
-    ).send(res);
+    return new ApiResponse(status, payload, message).send(res);
   }),
 
   forwardMessage: asyncHandler(async (req, res) => {
