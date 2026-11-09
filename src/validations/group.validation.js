@@ -196,7 +196,7 @@ export const validateChangeRoleBody = (req, _res, next) => {
  * Validates query pagination parameters for group messages.
  */
 export const validatePaginationQuery = (req, _res, next) => {
-  const { limit } = req.query;
+  const { limit, before, after } = req.query;
   if (limit !== undefined) {
     const l = Number(limit);
     if (!Number.isInteger(l) || l < 1) {
@@ -205,6 +205,18 @@ export const validatePaginationQuery = (req, _res, next) => {
         GROUP_ERROR_MESSAGES.INVALID_PAGINATION,
       );
     }
+  }
+  if (before !== undefined && Number.isNaN(new Date(before).getTime())) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      GROUP_ERROR_MESSAGES.INVALID_PAGINATION,
+    );
+  }
+  if (after !== undefined && Number.isNaN(new Date(after).getTime())) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      GROUP_ERROR_MESSAGES.INVALID_PAGINATION,
+    );
   }
   next();
 };

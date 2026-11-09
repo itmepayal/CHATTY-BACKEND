@@ -1,19 +1,14 @@
 import fs from "fs/promises";
-import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
 import GroupMessage from "../models/group-message.model.js";
-import LocationShare from "../models/location-share.model.js";
 import Contact from "../models/contact.model.js";
 import { readClientId } from "../utils/validators.js";
 import { parseBool, assertValidCipher } from "../utils/e2ee.js";
 import { canViewSync } from "./privacy-visibility.service.js";
 import { getBlockedByMe } from "../utils/group-guard.js";
 import { uploadAttachment } from "./group-media.service.js";
-import {
-  canDeleteMessage,
-  canEditMessage,
-} from "../policies/group.policy.js";
+import { canDeleteMessage, canEditMessage } from "../policies/group.policy.js";
 import {
   broadcastGroupMessageEdited,
   broadcastGroupMessageDeleted,
@@ -21,8 +16,6 @@ import {
 } from "../events/group.events.js";
 import {
   EDIT_WINDOW_MS,
-  MAX_CIPHERTEXT_LENGTH,
-  MAX_GROUP_TEXT,
   GROUP_ERROR_MESSAGES,
 } from "../constants/group.constants.js";
 import { GROUP_SOCKET_EVENTS } from "../constants/group-events.constants.js";
@@ -38,25 +31,13 @@ import {
   endShare,
 } from "./group.service.js";
 
-/**
- * Safely unlinks a temporary file without throwing.
- * @param {string} filePath
- */
 export const safeUnlink = async (filePath) => {
   if (!filePath) return;
   try {
     await fs.unlink(filePath);
-  } catch (_err) {
-    // Ignore ENOENT / storage cleanup errors
-  }
+  } catch (_err) {}
 };
 
-/**
- * Determines whether a group message contains text only.
- * Checks lat != null to avoid treating lat: 0 as false.
- * @param {Object} message
- * @returns {boolean}
- */
 export const isTextOnlyMessage = (message) => {
   if (!message) return false;
   return !(
@@ -70,15 +51,6 @@ export const isTextOnlyMessage = (message) => {
   );
 };
 
-/**
- * Fetches group messages with cursor pagination and privacy filtering.
- * @param {Object} params
- * @param {Object} params.group
- * @param {Object} params.member
- * @param {string|Object} params.me
- * @param {Object} params.query
- * @returns {Promise<Object[]>}
- */
 export const getGroupMessagesList = async ({ group, member, me, query }) => {
   const blocked = await getBlockedByMe(me);
   const limit = Math.min(Number(query.limit) || 100, 200);
@@ -87,6 +59,13 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
   if (query.before) {
     const d = new Date(query.before);
     if (!Number.isNaN(d.getTime())) createdAt.$lt = d;
+  }
+  if (query.after) {
+    const d = new Date(query.after);
+    if (!Number.isNaN(d.getTime())) {
+      const minDate = d > member.joinedAt ? d : member.joinedAt;
+      createdAt.$gt = minDate;
+    }
   }
 
   const msgs = await GroupMessage.find({
@@ -130,15 +109,6 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
   });
 };
 
-/**
- * Sends a group message, preventing duplicate upload on duplicate clientId.
- * @param {Object} params
- * @param {Object} params.group
- * @param {string|Object} params.me
- * @param {Object} params.body
- * @param {Object} [params.file]
- * @returns {Promise<Object>}
- */
 export const sendGroupMessageService = async ({ group, me, body, file }) => {
   const { text, cipher, isVoice, isVideo } = await validateGroupMessageInput(
     group,
@@ -196,15 +166,6 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
   }
 };
 
-/**
- * Edits a group message atomically using findOneAndUpdate to prevent race conditions.
- * @param {Object} params
- * @param {Object} params.group
- * @param {string|Object} params.me
- * @param {string} params.messageId
- * @param {Object} params.body
- * @returns {Promise<Object>}
- */
 export const editGroupMessageService = async ({
   group,
   me,
@@ -222,7 +183,6 @@ export const editGroupMessageService = async ({
     );
   }
 
-  // Never trim ciphertext; trim only plain text
   const text = wantsE2EE ? rawText : rawText.trim();
   if (!text) {
     throw new ApiError(
@@ -237,7 +197,6 @@ export const editGroupMessageService = async ({
 
   const cutoff = new Date(Date.now() - EDIT_WINDOW_MS);
 
-  // Atomic update query
   const updatedMessage = await GroupMessage.findOneAndUpdate(
     {
       _id: messageId,
@@ -264,7 +223,6 @@ export const editGroupMessageService = async ({
   ).populate("senderId", "fullName avatar profilePhotoVisibility");
 
   if (!updatedMessage) {
-    // Diagnostic query to return the exact descriptive error
     const msg = await GroupMessage.findOne({
       _id: messageId,
       groupId: group._id,
@@ -294,10 +252,7 @@ export const editGroupMessageService = async ({
         GROUP_ERROR_MESSAGES.CANNOT_CHANGE_ENCRYPTION,
       );
     }
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "Message could not be edited.",
-    );
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Message could not be edited.");
   }
 
   const payload = formatGroupMessage(updatedMessage);
@@ -307,16 +262,6 @@ export const editGroupMessageService = async ({
   return { payload };
 };
 
-/**
- * Deletes a group message: validates ownership/admin rights, deactivates active live shares,
- * deletes the database record FIRST, then cleans up Cloudinary media.
- * @param {Object} params
- * @param {Object} params.group
- * @param {Object} params.member
- * @param {string|Object} params.me
- * @param {string} params.messageId
- * @returns {Promise<Object>}
- */
 export const deleteGroupMessageService = async ({
   group,
   member,
@@ -333,7 +278,6 @@ export const deleteGroupMessageService = async ({
 
   canDeleteMessage({ group, member, message, actorId: me });
 
-  // Deactivate active LocationShare if deleted message was a live location
   if (message.location?.shareId) {
     await endShare(
       group,
@@ -342,10 +286,8 @@ export const deleteGroupMessageService = async ({
     );
   }
 
-  // DB delete first
   await GroupMessage.deleteOne({ _id: messageId });
 
-  // Clean Cloudinary media after DB deletion succeeds
   await Promise.allSettled(deleteMedia(message));
 
   const payload = {
@@ -359,15 +301,6 @@ export const deleteGroupMessageService = async ({
   return payload;
 };
 
-/**
- * Marks group messages as seen with fallback privacy lookup.
- * @param {Object} params
- * @param {Object} params.group
- * @param {Object} params.member
- * @param {string|Object} params.me
- * @param {boolean} params.readReceipts
- * @returns {Promise<{ count: number }>}
- */
 export const markGroupSeenService = async ({
   group,
   member,

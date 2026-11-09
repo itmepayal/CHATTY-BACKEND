@@ -104,5 +104,5 @@ export const GROUP_ERROR_MESSAGES = Object.freeze({
   INVALID_ROLE: "Role must be 'admin' or 'member'.",
   EMPTY_MESSAGE: "Message must have text, an attachment or a location.",
   INVALID_NAME: `Group name must be between ${GROUP_NAME_MIN} and ${GROUP_NAME_MAX} characters.`,
-  INVALID_PAGINATION: "Limit must be a positive integer.",
+  INVALID_PAGINATION: "Invalid pagination parameters.",
 });

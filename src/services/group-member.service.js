@@ -263,7 +263,8 @@ export const leaveGroupFlow = async ({ group, me }) => {
     byJoin[0].role = "admin";
   }
   if (sid(group.owner) === meId) {
-    group.owner = byJoin.find((m) => m.role === "admin").userId;
+    const nextAdmin = byJoin.find((m) => m.role === "admin");
+    group.owner = nextAdmin.userId?._id || nextAdmin.userId;
   }
   if (await getLatestKeyVersion(group._id)) group.keyRotationPending = true;
   await group.save();
