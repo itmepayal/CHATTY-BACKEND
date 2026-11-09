@@ -18,6 +18,7 @@ router.get("/", contactController.getContacts);
 // Parameterized member routes
 router.get("/:userId", contactController.getContactById);
 router.post("/:userId", contactController.addContact);
+router.patch("/:userId", contactController.updateContactNickname);
 router.patch("/:userId/nickname", contactController.updateContactNickname);
 router.put("/:userId", contactController.updateContactNickname);
 router.delete("/:userId", contactController.removeContact);

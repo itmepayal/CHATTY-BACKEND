@@ -39,10 +39,15 @@ export const addContact = async (ownerId, contactId, nickname) => {
 
   const cleanNickname = sanitizeNickname(nickname);
 
+  const updateOp =
+    cleanNickname !== undefined
+      ? { $set: { nickname: cleanNickname } }
+      : { $setOnInsert: { nickname: undefined } };
+
   try {
     await Contact.updateOne(
       { ownerId: toObjectId(ownerId), contactId: toObjectId(contactId) },
-      { $setOnInsert: { nickname: cleanNickname } },
+      updateOp,
       { upsert: true },
     );
   } catch (err) {
@@ -79,23 +84,25 @@ export const removeContact = async (ownerId, contactId) => {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
   }
 
-  await Contact.deleteOne({
+  const result = await Contact.deleteOne({
     ownerId: toObjectId(ownerId),
     contactId: toObjectId(contactId),
   });
 
-  try {
-    await Promise.all([
-      refreshPrivacy(ownerId),
-      refreshPrivacy(contactId),
-    ]);
-  } catch (e) {
-    console.error("[contact.service] refreshPrivacy error:", e?.message || e);
-  }
+  if (result.deletedCount > 0) {
+    try {
+      await Promise.all([
+        refreshPrivacy(ownerId),
+        refreshPrivacy(contactId),
+      ]);
+    } catch (e) {
+      console.error("[contact.service] refreshPrivacy error:", e?.message || e);
+    }
 
-  io.to(String(ownerId)).emit("contact:removed", {
-    contactId: String(contactId),
-  });
+    io.to(String(ownerId)).emit("contact:removed", {
+      contactId: String(contactId),
+    });
+  }
 
   return {
     contactId: String(contactId),
@@ -149,6 +156,8 @@ export const getContacts = async (
     };
   });
 
+  let total;
+
   if (search && typeof search === "string" && search.trim().length > 0) {
     const term = search.trim().toLowerCase();
     contacts = contacts.filter(
@@ -157,12 +166,15 @@ export const getContacts = async (
         (c.fullName && c.fullName.toLowerCase().includes(term)) ||
         (c.username && c.username.toLowerCase().includes(term)),
     );
+    total = contacts.length;
     if (isPaginated) {
       contacts = contacts.slice(skip, skip + limitNum);
     }
+  } else if (isPaginated) {
+    total = await Contact.countDocuments(filter);
+  } else {
+    total = contacts.length;
   }
-
-  const total = await Contact.countDocuments(filter);
 
   return {
     contacts,
@@ -213,9 +225,13 @@ export const updateContactNickname = async (ownerId, contactId, nickname) => {
 
   const cleanNickname = sanitizeNickname(nickname);
 
+  const updateOp = cleanNickname
+    ? { $set: { nickname: cleanNickname } }
+    : { $unset: { nickname: 1 } };
+
   const updated = await Contact.findOneAndUpdate(
     { ownerId: toObjectId(ownerId), contactId: toObjectId(contactId) },
-    { $set: { nickname: cleanNickname } },
+    updateOp,
     { new: true },
   ).lean();
 
@@ -223,14 +239,16 @@ export const updateContactNickname = async (ownerId, contactId, nickname) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Contact not found.");
   }
 
+  const finalNickname = updated.nickname || null;
+
   io.to(String(ownerId)).emit("contact:updated", {
     contactId: String(contactId),
-    nickname: cleanNickname,
+    nickname: finalNickname,
   });
 
   return {
     contactId: String(contactId),
-    nickname: cleanNickname,
+    nickname: finalNickname,
   };
 };
 
@@ -239,7 +257,11 @@ export const updateContactNickname = async (ownerId, contactId, nickname) => {
  * Returns true if ownerId has saved contactId in their contacts.
  */
 export const isContact = async (ownerId, contactId) => {
-  if (!ownerId || !contactId || String(ownerId) === String(contactId)) {
+  if (
+    !isValidObjectId(ownerId) ||
+    !isValidObjectId(contactId) ||
+    String(ownerId) === String(contactId)
+  ) {
     return false;
   }
   return Boolean(
@@ -255,7 +277,11 @@ export const isContact = async (ownerId, contactId) => {
  * Returns true if both users have saved each other as contacts.
  */
 export const isMutualContact = async (userA, userB) => {
-  if (!userA || !userB || String(userA) === String(userB)) {
+  if (
+    !isValidObjectId(userA) ||
+    !isValidObjectId(userB) ||
+    String(userA) === String(userB)
+  ) {
     return false;
   }
   const count = await Contact.countDocuments({
@@ -277,6 +303,13 @@ export const getMutualContacts = async (userId, otherUserId) => {
   }
   if (String(userId) === String(otherUserId)) {
     return [];
+  }
+
+  const otherUser = await User.findById(otherUserId)
+    .select("_id status")
+    .lean();
+  if (!otherUser || otherUser.status === "suspended") {
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
   }
 
   const [contactsA, contactsB] = await Promise.all([
@@ -434,10 +467,18 @@ export const bulkAddContacts = async (ownerId, contactIds) => {
   const addedCount = result.upsertedCount || 0;
 
   try {
-    await refreshPrivacy(ownerId);
+    await Promise.all([
+      refreshPrivacy(ownerId),
+      ...existingUserIds.map((cId) => refreshPrivacy(cId).catch(() => {})),
+    ]);
   } catch (e) {
     console.error("[contact.service] refreshPrivacy error:", e?.message || e);
   }
+
+  io.to(String(ownerId)).emit("contacts:bulk-added", {
+    contactIds: existingUserIds,
+    addedCount,
+  });
 
   return {
     addedCount,
@@ -502,7 +543,7 @@ export const searchUsers = async (currentUserId, rawQuery) => {
 
   const resultUsers = safeUsers.map((u) => ({
     ...u,
-    isContact: set.has(String(u._id)),
+    isContact: set.has(String(u._id || u.id)),
   }));
 
   return { users: resultUsers, message: "Users fetched successfully." };
@@ -523,9 +564,14 @@ export const getChatList = async (currentUserId) => {
     {
       $match: {
         deletedFor: { $ne: me },
-        $or: [
-          { senderId: me, receiverId: { $in: ids } },
-          { receiverId: me, senderId: { $in: ids } },
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+        $and: [
+          {
+            $or: [
+              { senderId: me, receiverId: { $in: ids } },
+              { receiverId: me, senderId: { $in: ids } },
+            ],
+          },
         ],
       },
     },

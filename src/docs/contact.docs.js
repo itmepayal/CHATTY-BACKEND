@@ -148,6 +148,8 @@
  *         $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  *
  * /contacts/bulk:
  *   post:
@@ -188,6 +190,8 @@
  *         $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  *
  * /contacts:
  *   get:

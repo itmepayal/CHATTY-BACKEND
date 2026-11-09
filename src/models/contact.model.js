@@ -6,7 +6,6 @@ const ContactSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: [true, "Owner ID is required."],
-      index: true,
     },
     contactId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -51,15 +50,35 @@ ContactSchema.pre("save", function (next) {
   next();
 });
 
+ContactSchema.pre(["updateOne", "findOneAndUpdate"], function (next) {
+  const update = this.getUpdate() || {};
+  const filter = this.getFilter() || {};
+  const ownerId = update.ownerId || filter.ownerId;
+  const contactId = update.contactId || filter.contactId;
+  if (ownerId && contactId && ownerId.toString() === contactId.toString()) {
+    return next(new Error("A user cannot add themselves as a contact."));
+  }
+  next();
+});
+
+const isValidId = (id) =>
+  id &&
+  mongoose.Types.ObjectId.isValid(id) &&
+  String(new mongoose.Types.ObjectId(id)) === String(id);
+
 export const isContact = async (ownerId, contactId) => {
-  if (!ownerId || !contactId || ownerId.toString() === contactId.toString()) {
+  if (
+    !isValidId(ownerId) ||
+    !isValidId(contactId) ||
+    ownerId.toString() === contactId.toString()
+  ) {
     return false;
   }
   return Boolean(await Contact.exists({ ownerId, contactId }));
 };
 
 export const isMutualContact = async (a, b) => {
-  if (!a || !b || a.toString() === b.toString()) {
+  if (!isValidId(a) || !isValidId(b) || a.toString() === b.toString()) {
     return false;
   }
   const count = await Contact.countDocuments({
