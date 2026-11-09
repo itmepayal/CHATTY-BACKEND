@@ -1,26 +1,20 @@
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import {
+  createRateLimiter,
+  defaultIpKeyGenerator,
+  defaultUserKeyGenerator,
+} from "./rate-limit.factory.js";
+import { RATE_LIMIT_CONFIG } from "../../constants/rate-limit.constants.js";
 
-export const LIMIT_MESSAGE = {
-  success: false,
-  message: "Too many AI requests. Please wait a minute.",
-};
-
-export const publicChatLimiter = rateLimit({
-  windowMs: 60_000,
-  limit: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: LIMIT_MESSAGE,
+export const publicChatLimiter = createRateLimiter({
+  windowMs: RATE_LIMIT_CONFIG.AI_CHAT.windowMs,
+  max: RATE_LIMIT_CONFIG.AI_CHAT.max,
+  message: RATE_LIMIT_CONFIG.AI_CHAT.message,
+  keyGenerator: defaultIpKeyGenerator,
 });
 
-export const toolsLimiter = rateLimit({
-  windowMs: 60_000,
-  limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    const userId = req.user?._id ?? req.user?.id;
-    return userId ? String(userId) : ipKeyGenerator(req.ip);
-  },
-  message: LIMIT_MESSAGE,
+export const toolsLimiter = createRateLimiter({
+  windowMs: RATE_LIMIT_CONFIG.AI_TOOLS.windowMs,
+  max: RATE_LIMIT_CONFIG.AI_TOOLS.max,
+  message: RATE_LIMIT_CONFIG.AI_TOOLS.message,
+  keyGenerator: defaultUserKeyGenerator,
 });

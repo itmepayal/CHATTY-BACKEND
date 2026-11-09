@@ -1,5 +1,6 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import mongoose from "mongoose";
+import fs from "fs";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
 import User from "../models/users.model.js";
@@ -23,7 +24,10 @@ import {
   processAttachment,
 } from "../services/message.service.js";
 import { attachLinkPreview } from "../utils/link-preview.js";
-import { wipeMessage, deleteAttachmentMedia } from "../utils/message-cleanup.js";
+import {
+  wipeMessage,
+  deleteAttachmentMedia,
+} from "../utils/message-cleanup.js";
 import {
   toObjectId,
   formatMessage,
@@ -56,6 +60,7 @@ import {
   LIVE_DURATIONS_MIN,
 } from "../constants/constants.js";
 import { canViewSync } from "../services/privacy-visibility.service.js";
+import { isBlockedEitherWay } from "../services/privacy/privacy.service.js";
 import Contact from "../models/contact.model.js";
 
 const messageController = {
@@ -302,8 +307,18 @@ const messageController = {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
     }
 
-    const wantsE2EE =
-      parseBool(req.body.encrypted ?? req.body.e2ee) && Boolean(trimmedText);
+    const isEncryptedReq = parseBool(req.body.encrypted ?? req.body.e2ee);
+
+    // E2EE Media Guard: Media attachments are not client-side encrypted yet.
+    if (isEncryptedReq && req.file) {
+      if (req.file.path) fs.unlink(req.file.path, () => {});
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "End-to-end encrypted media is not supported. Please send media in standard mode or send text only.",
+      );
+    }
+
+    const wantsE2EE = isEncryptedReq && Boolean(trimmedText);
     const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
 
     if (trimmedText && trimmedText.length > maxLen) {
@@ -609,6 +624,8 @@ const messageController = {
     if (!message.isPinned) {
       const count = await Message.countDocuments({
         isPinned: true,
+        isDeleted: { $ne: true },
+        deletedFor: { $ne: userId },
         $or: [
           { senderId: userId, receiverId: otherId },
           { senderId: otherId, receiverId: userId },
@@ -812,7 +829,9 @@ const messageController = {
 
     assertValidId(otherUserId, "user ID");
 
+    const blocked = await isBlockedEitherWay(userId, otherUserId);
     const canReceipt =
+      !blocked &&
       getPrivacy(userId).readReceipts !== false &&
       getPrivacy(otherUserId).readReceipts !== false;
 
@@ -1025,6 +1044,12 @@ const messageController = {
         "Please choose a valid reason.",
       );
     }
+    if (details && String(details).trim().length > 500) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Details cannot exceed 500 characters.",
+      );
+    }
 
     const reported = await User.exists({ _id: reportedUserId });
     if (!reported) {
@@ -1059,7 +1084,7 @@ const messageController = {
       reportedUserId,
       messageId: messageId || undefined,
       reason,
-      details: details?.toString().trim().slice(0, 500) || undefined,
+      details: details ? String(details).trim() : undefined,
     });
 
     return new ApiResponse(
@@ -1213,6 +1238,7 @@ const messageController = {
       receiverId,
       status: "active",
     });
+    const oldShareIds = previous.map((p) => p._id);
     for (const old of previous) {
       old.status = "stopped";
       old.endedAt = new Date();
@@ -1220,6 +1246,12 @@ const messageController = {
       emitToPair(old.sharerId, old.receiverId, "location:ended", {
         shareId: String(old._id),
       });
+    }
+    if (oldShareIds.length) {
+      await Message.updateMany(
+        { "location.shareId": { $in: oldShareIds } },
+        { "location.isLive": false },
+      );
     }
 
     const now = new Date();
@@ -1286,6 +1318,11 @@ const messageController = {
     share.status = "stopped";
     share.endedAt = new Date();
     await share.save();
+
+    await Message.updateOne(
+      { "location.shareId": share._id },
+      { "location.isLive": false },
+    );
 
     emitToPair(share.sharerId, share.receiverId, "location:ended", {
       shareId: String(share._id),

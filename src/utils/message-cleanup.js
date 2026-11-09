@@ -34,6 +34,7 @@ export const wipeMessage = async (message) => {
   message.audio = undefined;
   message.video = undefined;
   message.linkPreview = undefined;
+  message.location = undefined;
   message.reactions = [];
   message.isPinned = false;
   message.pinnedBy = undefined;

@@ -73,6 +73,7 @@ const aiController = {
       temperature: 0.5,
       maxOutputTokens: 1500,
     });
+
     const reply = validateGeneratedText(output, "chatbot reply");
 
     return new ApiResponse(

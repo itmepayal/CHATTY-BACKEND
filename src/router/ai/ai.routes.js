@@ -4,7 +4,7 @@ import authMiddleware from "../../middlewares/authMidleware.middleware.js";
 import {
   publicChatLimiter,
   toolsLimiter,
-} from "../../middlewares/rateLimit/ai-rate-limit.middleware.js";
+} from "../../middlewares/rateLimit/index.js";
 
 const router = Router();
 

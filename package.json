@@ -37,6 +37,8 @@
     "ua-parser-js": "^2.0.10"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "socket.io-client": "^4.8.4",
+    "supertest": "^7.3.2"
   }
 }

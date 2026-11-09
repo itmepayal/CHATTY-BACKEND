@@ -8,10 +8,10 @@ const hasBlocked = (user, otherId) =>
 export const assertCanMessage = async (senderId, receiverId) => {
   const [sender, receiver] = await Promise.all([
     User.findById(senderId).select("blockedUsers"),
-    User.findById(receiverId).select("blockedUsers"),
+    User.findById(receiverId).select("blockedUsers status"),
   ]);
 
-  if (!receiver) {
+  if (!receiver || receiver.status === "suspended") {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
   }
 

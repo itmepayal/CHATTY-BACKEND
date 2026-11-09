@@ -1,32 +1,32 @@
 import mongoose from "mongoose";
-import ApiError from "../utils/api-error.js";
+import ApiError from "../../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import User from "../models/users.model.js";
-import Session from "../models/session.model.js";
-import Message from "../models/message.model.js";
-import Group from "../models/group.model.js";
-import GroupMessage from "../models/group-message.model.js";
-import Contact from "../models/contact.model.js";
-import LocationShare from "../models/location-share.model.js";
-import GroupKey from "../models/group-key.model.js";
-import ScheduledMessage from "../models/scheduled-message.model.js";
-import Call from "../models/call.model.js";
-import ChatArchive from "../models/chat-archive.model.js";
-import GroupArchive from "../models/group-archive.model.js";
-import { deleteFileToCloudinary } from "../config/cloudinary.config.js";
+import User from "../../models/users.model.js";
+import Session from "../../models/session.model.js";
+import Message from "../../models/message.model.js";
+import Group from "../../models/group.model.js";
+import GroupMessage from "../../models/group-message.model.js";
+import Contact from "../../models/contact.model.js";
+import LocationShare from "../../models/location-share.model.js";
+import GroupKey from "../../models/group-key.model.js";
+import ScheduledMessage from "../../models/scheduled-message.model.js";
+import Call from "../../models/call.model.js";
+import ChatArchive from "../../models/chat-archive.model.js";
+import GroupArchive from "../../models/group-archive.model.js";
+import { deleteFileToCloudinary } from "../../config/cloudinary.config.js";
 import {
   io,
   privacyByUser,
   broadcastOnline,
   disconnectUser,
-} from "../lib/socket.js";
-import { verifyTotpToken, consumeRecoveryCode } from "../utils/totp.js";
+} from "../../lib/socket.js";
+import { verifyTotpToken, consumeRecoveryCode } from "../../utils/totp.js";
 import {
   checkRateLimit,
   recordFail,
   clearFail,
-} from "../utils/two-factor-rate-limit.js";
-import { CONFIRM_WORD } from "../constants/constants.js";
+} from "../../utils/two-factor-rate-limit.js";
+import { CONFIRM_WORD } from "../../constants/auth.constants.js";
 
 const getResourceType = (attachment, fallback = "image") =>
   attachment?.resourceType || fallback;
@@ -357,7 +357,9 @@ export const deleteUserAccount = async ({
         $or: [
           { sharerId: userId },
           { receiverId: userId },
-          ...(deletedGroupIds.length ? [{ groupId: { $in: deletedGroupIds } }] : []),
+          ...(deletedGroupIds.length
+            ? [{ groupId: { $in: deletedGroupIds } }]
+            : []),
         ],
       },
       sessionOpt,
@@ -367,7 +369,9 @@ export const deleteUserAccount = async ({
       {
         $or: [
           { userId },
-          ...(deletedGroupIds.length ? [{ groupId: { $in: deletedGroupIds } }] : []),
+          ...(deletedGroupIds.length
+            ? [{ groupId: { $in: deletedGroupIds } }]
+            : []),
         ],
       },
       sessionOpt,
@@ -389,7 +393,9 @@ export const deleteUserAccount = async ({
       {
         $or: [
           { ownerId: userId },
-          ...(deletedGroupIds.length ? [{ groupId: { $in: deletedGroupIds } }] : []),
+          ...(deletedGroupIds.length
+            ? [{ groupId: { $in: deletedGroupIds } }]
+            : []),
         ],
       },
       sessionOpt,
@@ -438,3 +444,5 @@ export const deleteUserAccount = async ({
   disconnectUser(userId);
   broadcastOnline();
 };
+
+export const deleteAccount = deleteUserAccount;

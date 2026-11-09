@@ -1,4 +1,5 @@
 import LocationShare from "../models/location-share.model.js";
+import Message from "../models/message.model.js";
 import GroupMessage from "../models/group-message.model.js";
 import { groupRoom } from "../lib/socket.js";
 import {
@@ -135,6 +136,11 @@ export const startLocationExpirySweeper = (
       await LocationShare.updateMany(
         { _id: { $in: ids }, status: "active" },
         { status: "expired", endedAt: now },
+      );
+
+      await Message.updateMany(
+        { "location.shareId": { $in: ids } },
+        { "location.isLive": false },
       );
 
       await GroupMessage.updateMany(

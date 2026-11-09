@@ -8,37 +8,39 @@ import accountController from "../../controllers/account.controller.js";
 import {
   strictLimiter,
   twoFaLimiter,
-} from "../../middlewares/rateLimit/auth-rate-limit.middleware.js";
+  loginRateLimiter,
+  registerRateLimiter,
+  refreshRateLimiter,
+} from "../../middlewares/rateLimit/index.js";
 
 const router = express.Router();
 
-router.route("/login").post(authController.loginUser);
+router.route("/login").post(loginRateLimiter, authController.loginUser);
 router
   .route("/register")
-  .post(upload.single("avatar"), authController.registerUser);
-
-router.route("/logout").post(authMiddleware, authController.logoutUser);
+  .post(
+    registerRateLimiter,
+    upload.single("avatar"),
+    authController.registerUser,
+  );
+router.route("/refresh").post(refreshRateLimiter, authController.refreshToken);
+router.route("/logout").post(authController.logoutUser);
 router.route("/check").get(authMiddleware, authController.checkAuth);
-
 router
   .route("/change-password")
   .patch(authMiddleware, strictLimiter, authController.changePassword);
-
 router
   .route("/forgot-password")
   .post(strictLimiter, authController.forgotPassword);
 router
   .route("/reset-password/:token")
   .post(strictLimiter, authController.resetPassword);
-
 router
   .route("/open-app/reset-password/:token")
   .get(authController.openAppResetPassword);
-
 router
   .route("/security/login-alerts")
   .patch(authMiddleware, authController.updateLoginAlerts);
-
 router.route("/sessions").get(authMiddleware, sessionController.listSessions);
 router
   .route("/sessions/revoke-others")
@@ -46,7 +48,6 @@ router
 router
   .route("/sessions/:sessionId")
   .delete(authMiddleware, sessionController.revokeSession);
-
 router.route("/2fa/setup").post(authMiddleware, twoFactorController.setup2FA);
 router
   .route("/2fa/enable")
@@ -64,7 +65,6 @@ router
     twoFaLimiter,
     twoFactorController.regenerateRecoveryCodes,
   );
-
 router
   .route("/account")
   .delete(authMiddleware, strictLimiter, accountController.deleteAccount);

@@ -7,7 +7,7 @@ import upload, {
 import {
   sendMessageLimiter,
   settingsLimiter,
-} from "../../middlewares/rateLimit.middleware.js";
+} from "../../middlewares/rateLimit/index.js";
 
 const router = Router();
 

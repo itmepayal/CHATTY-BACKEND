@@ -7,6 +7,17 @@ import { startScheduler } from "./jobs/scheduler.js";
 import { startDisappearingSweeper } from "./jobs/disappearing.js";
 import { startLocationExpiryJob } from "./jobs/location.js";
 
+process.on("unhandledRejection", (reason) => {
+  console.error("[Process] Unhandled Promise Rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[Process] Uncaught Exception:", error);
+  if (!server.listening) {
+    process.exit(1);
+  }
+});
+
 const startServer = async () => {
   try {
     await connectDB(mongoUri, mongoDbName);

@@ -16,6 +16,9 @@ import {
   SOCKET_THROTTLE_MS,
 } from "../constants/constants.js";
 import { registerCallHandlers } from "./callSignaling.js";
+import { safeHandler } from "../utils/socket-safe.js";
+import { socketLimiter } from "../utils/socket-rate-limit.js";
+import { SOCKET_RATE_LIMITS } from "../constants/rate-limit.constants.js";
 import {
   registerGroupCallHandlers,
   isUserInGroupCall,
@@ -212,10 +215,15 @@ io.use(async (socket, next) => {
         console.log("[socket] rejected: session revoked or expired");
         return next(new Error("Unauthorized: Session revoked"));
       }
+
+      if (String(session.userId) !== String(decoded.id)) {
+        console.log("[socket] rejected: session owner mismatch");
+        return next(new Error("Unauthorized: Invalid session"));
+      }
     }
 
     const user = await User.findById(decoded.id)
-      .select("fullName tokenVersion")
+      .select("fullName tokenVersion status")
       .lean();
 
     if (!user) {
@@ -223,8 +231,17 @@ io.use(async (socket, next) => {
       return next(new Error("Unauthorized: User not found"));
     }
 
+    if (user.status === "suspended") {
+      console.log("[socket] rejected: user account suspended");
+      return next(new Error("Forbidden: Account suspended"));
+    }
+
+    if (decoded.tokenVersion === undefined) {
+      console.log("[socket] rejected: missing token version");
+      return next(new Error("Unauthorized: Invalid token"));
+    }
+
     if (
-      decoded.tokenVersion !== undefined &&
       user.tokenVersion !== undefined &&
       decoded.tokenVersion < user.tokenVersion
     ) {
@@ -542,195 +559,232 @@ io.on("connection", (socket) => {
   const lastEmit = { typing: 0, groupTyping: 0 };
   const THROTTLE_MS = SOCKET_THROTTLE_MS;
 
-  socket.on("chat:open", (otherUserId) => {
-    socket.data.activeChatId = isObjectId(otherUserId) ? otherUserId : null;
-  });
+  socket.on(
+    "chat:open",
+    safeHandler("chat:open", (otherUserId) => {
+      socket.data.activeChatId = isObjectId(otherUserId) ? otherUserId : null;
+    }),
+  );
 
-  socket.on("chat:close", () => {
-    socket.data.activeChatId = null;
-  });
+  socket.on(
+    "chat:close",
+    safeHandler("chat:close", () => {
+      socket.data.activeChatId = null;
+    }),
+  );
 
-  socket.on("privacy:update", async () => {
-    await refreshPrivacy(userId);
-  });
+  socket.on(
+    "privacy:update",
+    safeHandler("privacy:update", async () => {
+      if (
+        !socketLimiter.consume(
+          userId,
+          "privacy:update",
+          SOCKET_RATE_LIMITS.PRIVACY_UPDATE,
+        )
+      ) {
+        return;
+      }
+      await refreshPrivacy(userId);
+    }),
+  );
 
-  socket.on("typing", async (payload) => {
-    const to = payload?.to;
+  socket.on(
+    "typing",
+    safeHandler("typing", async (payload) => {
+      const to = payload?.to;
 
-    if (!isObjectId(to) || to === userId) return;
+      if (!isObjectId(to) || to === userId) return;
 
-    const isTyping = Boolean(payload.isTyping);
+      if (!socketLimiter.consume(userId, "typing", SOCKET_RATE_LIMITS.TYPING)) {
+        return;
+      }
 
-    if (isTyping) {
-      const now = Date.now();
+      const isTyping = Boolean(payload.isTyping);
 
-      if (now - lastEmit.typing < THROTTLE_MS) return;
-      lastEmit.typing = now;
+      if (isTyping) {
+        const now = Date.now();
 
-      if (!getPrivacy(userId).typingIndicator) return;
+        if (now - lastEmit.typing < THROTTLE_MS) return;
+        lastEmit.typing = now;
 
-      if (await isBlockedEitherWay(userId, to)) return;
+        if (!getPrivacy(userId).typingIndicator) return;
 
-      socket.data.typingTo.add(to);
-    } else {
-      socket.data.typingTo.delete(to);
-    }
+        if (await isBlockedEitherWay(userId, to)) return;
 
-    io.to(to).emit("typing", { from: userId, isTyping });
-  });
+        socket.data.typingTo.add(to);
+      } else {
+        socket.data.typingTo.delete(to);
+      }
 
-  socket.on("group:typing", async (payload) => {
-    const groupId = payload?.groupId;
+      io.to(to).emit("typing", { from: userId, isTyping });
+    }),
+  );
 
-    if (!isObjectId(groupId)) return;
+  socket.on(
+    "group:typing",
+    safeHandler("group:typing", async (payload) => {
+      const groupId = payload?.groupId;
 
-    const room = groupRoom(groupId);
+      if (!isObjectId(groupId)) return;
 
-    if (!socket.rooms.has(room)) return;
+      const room = groupRoom(groupId);
 
-    const isTyping = Boolean(payload.isTyping);
+      if (!socket.rooms.has(room)) return;
 
-    if (isTyping) {
-      const now = Date.now();
+      const isTyping = Boolean(payload.isTyping);
 
-      if (now - lastEmit.groupTyping < THROTTLE_MS) return;
-      lastEmit.groupTyping = now;
+      if (isTyping) {
+        const now = Date.now();
 
-      if (!getPrivacy(userId).typingIndicator) return;
+        if (now - lastEmit.groupTyping < THROTTLE_MS) return;
+        lastEmit.groupTyping = now;
 
-      socket.data.typingGroups.add(groupId);
-    } else {
-      socket.data.typingGroups.delete(groupId);
-    }
+        if (!getPrivacy(userId).typingIndicator) return;
 
-    try {
-      const group = await Group.findById(groupId)
-        .select("members.userId")
-        .lean();
-      if (!group) return;
+        socket.data.typingGroups.add(groupId);
+      } else {
+        socket.data.typingGroups.delete(groupId);
+      }
 
-      const memberIds = group.members
-        .map((m) => String(m.userId))
-        .filter((id) => id !== userId);
+      try {
+        const group = await Group.findById(groupId)
+          .select("members.userId")
+          .lean();
+        if (!group) return;
 
-      if (!memberIds.length) return;
+        const memberIds = group.members
+          .map((m) => String(m.userId))
+          .filter((id) => id !== userId);
 
-      const [blockers, meDoc] = await Promise.all([
-        User.find({ _id: { $in: memberIds }, blockedUsers: userId })
-          .select("_id")
-          .lean(),
-        User.findById(userId).select("blockedUsers").lean(),
-      ]);
+        if (!memberIds.length) return;
 
-      const blockerSet = new Set(blockers.map((b) => String(b._id)));
-      const myBlockedSet = new Set((meDoc?.blockedUsers || []).map(String));
+        const [blockers, meDoc] = await Promise.all([
+          User.find({ _id: { $in: memberIds }, blockedUsers: userId })
+            .select("_id")
+            .lean(),
+          User.findById(userId).select("blockedUsers").lean(),
+        ]);
 
-      const typingPayload = {
-        groupId,
-        userId,
-        fullName: socket.data.fullName,
-        isTyping,
-      };
+        const blockerSet = new Set(blockers.map((b) => String(b._id)));
+        const myBlockedSet = new Set((meDoc?.blockedUsers || []).map(String));
 
-      for (const mId of memberIds) {
-        if (!blockerSet.has(mId) && !myBlockedSet.has(mId)) {
-          io.to(mId).emit("group:typing", typingPayload);
+        const typingPayload = {
+          groupId,
+          userId,
+          fullName: socket.data.fullName,
+          isTyping,
+        };
+
+        for (const mId of memberIds) {
+          if (!blockerSet.has(mId) && !myBlockedSet.has(mId)) {
+            io.to(mId).emit("group:typing", typingPayload);
+          }
+        }
+      } catch (e) {
+        console.error("[socket] group:typing failed:", e?.message || e);
+      }
+    }),
+  );
+
+  socket.on(
+    "disconnect",
+    safeHandler("disconnect", async () => {
+      socket.data.typingTo?.forEach((to) =>
+        io.to(to).emit("typing", {
+          from: userId,
+          isTyping: false,
+        }),
+      );
+
+      if (socket.data.typingGroups?.size) {
+        const groupIds = Array.from(socket.data.typingGroups);
+        for (const groupId of groupIds) {
+          try {
+            const group = await Group.findById(groupId)
+              .select("members.userId")
+              .lean();
+            if (!group) continue;
+
+            const memberIds = group.members
+              .map((m) => String(m.userId))
+              .filter((id) => id !== userId);
+
+            if (!memberIds.length) continue;
+
+            const [blockers, meDoc] = await Promise.all([
+              User.find({ _id: { $in: memberIds }, blockedUsers: userId })
+                .select("_id")
+                .lean(),
+              User.findById(userId).select("blockedUsers").lean(),
+            ]);
+
+            const blockerSet = new Set(blockers.map((b) => String(b._id)));
+            const myBlockedSet = new Set(
+              (meDoc?.blockedUsers || []).map(String),
+            );
+
+            const typingPayload = {
+              groupId,
+              userId,
+              fullName: socket.data.fullName,
+              isTyping: false,
+            };
+
+            for (const mId of memberIds) {
+              if (!blockerSet.has(mId) && !myBlockedSet.has(mId)) {
+                io.to(mId).emit("group:typing", typingPayload);
+              }
+            }
+          } catch {}
         }
       }
-    } catch (e) {
-      console.error("[socket] group:typing failed:", e?.message || e);
-    }
-  });
 
-  socket.on("disconnect", async () => {
-    socket.data.typingTo?.forEach((to) =>
-      io.to(to).emit("typing", {
-        from: userId,
-        isTyping: false,
-      }),
-    );
+      const set = onlineUsers.get(userId);
 
-    if (socket.data.typingGroups?.size) {
-      const groupIds = Array.from(socket.data.typingGroups);
-      for (const groupId of groupIds) {
-        try {
-          const group = await Group.findById(groupId)
-            .select("members.userId")
-            .lean();
-          if (!group) continue;
+      if (set) {
+        set.delete(socket.id);
 
-          const memberIds = group.members
-            .map((m) => String(m.userId))
-            .filter((id) => id !== userId);
+        if (set.size === 0) {
+          onlineUsers.delete(userId);
+          privacyByUser.delete(userId);
 
-          if (!memberIds.length) continue;
-
-          const [blockers, meDoc] = await Promise.all([
-            User.find({ _id: { $in: memberIds }, blockedUsers: userId })
-              .select("_id")
-              .lean(),
-            User.findById(userId).select("blockedUsers").lean(),
-          ]);
-
-          const blockerSet = new Set(blockers.map((b) => String(b._id)));
-          const myBlockedSet = new Set((meDoc?.blockedUsers || []).map(String));
-
-          const typingPayload = {
-            groupId,
-            userId,
-            fullName: socket.data.fullName,
-            isTyping: false,
-          };
-
-          for (const mId of memberIds) {
-            if (!blockerSet.has(mId) && !myBlockedSet.has(mId)) {
-              io.to(mId).emit("group:typing", typingPayload);
-            }
-          }
-        } catch {}
+          const lastSeen = new Date();
+          User.findByIdAndUpdate(userId, {
+            lastSeen,
+          }).catch(() => {});
+          await notifyUserPresenceChange(userId, false, lastSeen);
+        }
       }
-    }
-
-    const set = onlineUsers.get(userId);
-
-    if (set) {
-      set.delete(socket.id);
-
-      if (set.size === 0) {
-        onlineUsers.delete(userId);
-        privacyByUser.delete(userId);
-
-        const lastSeen = new Date();
-        User.findByIdAndUpdate(userId, {
-          lastSeen,
-        }).catch(() => {});
-        await notifyUserPresenceChange(userId, false, lastSeen);
-      }
-    }
-  });
+    }),
+  );
 
   (async () => {
-    await loadPrivacy(userId);
-
     try {
-      const groups = await Group.find({
-        "members.userId": userId,
-      })
-        .select("_id")
-        .lean();
+      await loadPrivacy(userId);
 
-      groups.forEach((g) => socket.join(groupRoom(g._id)));
-    } catch (e) {
-      console.error("join group rooms failed:", e?.message || e);
+      try {
+        const groups = await Group.find({
+          "members.userId": userId,
+        })
+          .select("_id")
+          .lean();
+
+        groups.forEach((g) => socket.join(groupRoom(g._id)));
+      } catch (e) {
+        console.error("join group rooms failed:", e?.message || e);
+      }
+
+      if (!socket.connected) return;
+
+      if (isFirstConnection) {
+        await notifyUserPresenceChange(userId, true);
+      }
+      await sendAuthorizedOnlineList(userId);
+      markPendingAsDelivered(userId);
+    } catch (err) {
+      console.error("[socket] Connection setup error:", err?.message || err);
     }
-
-    if (!socket.connected) return;
-
-    if (isFirstConnection) {
-      await notifyUserPresenceChange(userId, true);
-    }
-    await sendAuthorizedOnlineList(userId);
-    markPendingAsDelivered(userId);
   })();
 });
 

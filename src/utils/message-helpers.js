@@ -163,9 +163,14 @@ const getLastMessage = async (ownerId, otherId) => {
   const other = toObjectId(otherId);
 
   const msg = await Message.findOne({
-    $or: [
-      { senderId: owner, receiverId: other },
-      { senderId: other, receiverId: owner },
+    $and: [
+      {
+        $or: [
+          { senderId: owner, receiverId: other },
+          { senderId: other, receiverId: owner },
+        ],
+      },
+      notExpired(),
     ],
     deletedFor: { $ne: owner },
   }).sort({ createdAt: -1 });

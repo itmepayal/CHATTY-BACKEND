@@ -37,45 +37,38 @@ export const cloudinaryName = process.env.CLOUDINARY_NAME;
 export const cloudinaryApiKey = process.env.CLOUDINARY_API_KEY;
 export const cloudinaryApiSecret = process.env.CLOUDINARY_API_SECRET;
 
-export const accessToken = process.env.ACCESS_TOKEN_SECRET;
-export const accessTokenExpiresIn = process.env.ACCESS_TOKEN_EXPIRES_IN;
-
-export const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET;
-export const refreshTokenScret = refreshTokenSecret;
-export const refreshTokenExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN;
-
-export const salt = 15;
-const isProd = process.env.NODE_ENV === "production";
-
-export const options = {
-  httpOnly: true,
-  secure: isProd,
-  sameSite: isProd ? "none" : "lax",
-  maxAge: 24 * 60 * 60 * 1000,
-};
+export {
+  accessToken,
+  accessTokenExpiresIn,
+  refreshTokenSecret,
+  refreshTokenScret,
+  refreshTokenExpiresIn,
+  salt,
+  options,
+  accessCookieOptions,
+  cookieOptions,
+  refreshCookieOptions,
+  PASSWORD_SALT_ROUNDS,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN,
+  PASSWORD_MAX,
+  RESET_TOKEN_BYTES,
+  RESET_TOKEN_TTL_MS,
+  CHALLENGE_TTL,
+  RECOVERY_CODE_COUNT,
+  RECOVERY_CODE_BYTES,
+  BCRYPT_ROUNDS_RECOVERY,
+  EMAIL_REGEX,
+  ACCOUNT_STATUS,
+  AUTH_MESSAGES,
+} from "./auth.constants.js";
 
 export const geminiApiKey = process.env.GEMINI_API_KEY;
 
 export const swaggerEnabled = process.env.SWAGGER_ENABLED === "true";
 export const swaggerServerUrl =
   process.env.SWAGGER_SERVER_URL || `http://localhost:${port}/api/v1`;
-
-export const PASSWORD_SALT_ROUNDS = 15;
-
-export const PASSWORD_MIN_LENGTH = 6;
-export const PASSWORD_MAX_LENGTH = 15;
-
-export const RESET_TOKEN_BYTES = 32;
-export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
-
-export const TWO_FA_RATE_WINDOW_MS = 15 * 60 * 1000;
-export const TWO_FA_MAX_ATTEMPTS = 10;
-
-export const CHALLENGE_TTL = "5m";
-
-export const RECOVERY_CODE_COUNT = 8;
-export const RECOVERY_CODE_BYTES = 5;
-export const BCRYPT_ROUNDS_RECOVERY = 10;
 
 export const BLOCK_CACHE_TTL_MS = 10_000;
 
@@ -255,14 +248,6 @@ export const SOCKET_EVENTS = Object.freeze({
 });
 
 export const SOCKET_THROTTLE_MS = 400;
-
-export const RATE_LIMITS = Object.freeze({
-  SEND_MESSAGE: { windowMs: 10_000, max: 15 },
-  REACT: { windowMs: 10_000, max: 30 },
-  FORWARD: { windowMs: 60_000, max: 10 },
-  REPORT: { windowMs: 60 * 60_000, max: 10 },
-  SETTINGS: { windowMs: 60_000, max: 20 },
-});
 
 export const USER_PROFILE = Object.freeze({
   FULL_NAME_MIN: 2,

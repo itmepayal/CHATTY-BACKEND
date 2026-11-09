@@ -52,4 +52,43 @@ export const enforceTypeSizeLimit = (req, res, next) => {
   next();
 };
 
+export const cleanupMulterFiles = (req) => {
+  const filesToDelete = [];
+  if (req?.file?.path) filesToDelete.push(req.file.path);
+  if (Array.isArray(req?.files)) {
+    req.files.forEach((f) => f?.path && filesToDelete.push(f.path));
+  } else if (req?.files && typeof req.files === "object") {
+    Object.values(req.files)
+      .flat()
+      .forEach((f) => f?.path && filesToDelete.push(f.path));
+  }
+
+  for (const filePath of filesToDelete) {
+    fs.unlink(filePath, (err) => {
+      if (err && err.code !== "ENOENT") {
+        console.error("Failed to delete temp multer file:", err);
+      }
+    });
+  }
+};
+
+export const autoCleanupMulterOnFailure = (req, res, next) => {
+  res.on("finish", () => {
+    if (res.statusCode >= 400) {
+      cleanupMulterFiles(req);
+    }
+  });
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      cleanupMulterFiles(req);
+    }
+  });
+  next();
+};
+
+export const handleMulterError = (err, req, res, next) => {
+  cleanupMulterFiles(req);
+  next(err);
+};
+
 export default upload;

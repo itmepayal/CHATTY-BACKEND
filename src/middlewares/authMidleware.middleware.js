@@ -3,7 +3,7 @@ import User from "../models/users.model.js";
 import Session from "../models/session.model.js";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { accessToken } from "../constants/constants.js";
+import { accessToken, AUTH_MESSAGES } from "../constants/auth.constants.js";
 
 const authMiddleware = async (req, res, next) => {
   try {
@@ -12,7 +12,7 @@ const authMiddleware = async (req, res, next) => {
       req.header("Authorization")?.replace("Bearer ", "");
 
     if (!token) {
-      throw new ApiError(StatusCodes.UNAUTHORIZED, "Authentication required");
+      throw new ApiError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.AUTH_REQUIRED);
     }
 
     let decoded;
@@ -20,7 +20,10 @@ const authMiddleware = async (req, res, next) => {
       decoded = jwt.verify(token, accessToken);
     } catch (error) {
       if (error instanceof jwt.JsonWebTokenError) {
-        throw new ApiError(StatusCodes.UNAUTHORIZED, "Invalid token");
+        throw new ApiError(
+          StatusCodes.UNAUTHORIZED,
+          AUTH_MESSAGES.INVALID_TOKEN,
+        );
       }
       throw error;
     }
@@ -33,9 +36,24 @@ const authMiddleware = async (req, res, next) => {
       if (!session || session.revoked || session.expiresAt < new Date()) {
         throw new ApiError(
           StatusCodes.UNAUTHORIZED,
-          "Session has been revoked. Please sign in again.",
+          AUTH_MESSAGES.SESSION_REVOKED,
         );
       }
+
+      if (String(session.userId) !== String(decoded.id)) {
+        throw new ApiError(
+          StatusCodes.UNAUTHORIZED,
+          AUTH_MESSAGES.INVALID_SESSION,
+        );
+      }
+
+      Session.updateOne(
+        {
+          _id: decoded.sessionId,
+          lastActivity: { $lt: new Date(Date.now() - 5 * 60 * 1000) },
+        },
+        { $set: { lastActivity: new Date() } },
+      ).catch(() => {});
     }
 
     const user = await User.findById(decoded.id)
@@ -43,17 +61,33 @@ const authMiddleware = async (req, res, next) => {
       .lean();
 
     if (!user) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
+      throw new ApiError(
+        StatusCodes.UNAUTHORIZED,
+        AUTH_MESSAGES.USER_NOT_FOUND,
+      );
+    }
+
+    if (user.status === "suspended") {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        AUTH_MESSAGES.ACCOUNT_SUSPENDED,
+      );
+    }
+
+    if (decoded.tokenVersion === undefined) {
+      throw new ApiError(
+        StatusCodes.UNAUTHORIZED,
+        AUTH_MESSAGES.INVALID_TOKEN_FORMAT,
+      );
     }
 
     if (
-      decoded.tokenVersion !== undefined &&
       user.tokenVersion !== undefined &&
       decoded.tokenVersion < user.tokenVersion
     ) {
       throw new ApiError(
         StatusCodes.UNAUTHORIZED,
-        "Session invalidated. Please sign in again.",
+        AUTH_MESSAGES.SESSION_INVALIDATED,
       );
     }
 

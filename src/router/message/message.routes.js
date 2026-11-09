@@ -5,6 +5,8 @@ import authMiddleware from "../../middlewares/authMidleware.middleware.js";
 
 import upload, {
   enforceTypeSizeLimit,
+  autoCleanupMulterOnFailure,
+  handleMulterError,
 } from "../../middlewares/multer.middleware.js";
 
 import {
@@ -13,7 +15,7 @@ import {
   forwardLimiter,
   reportLimiter,
   settingsLimiter,
-} from "../../middlewares/rateLimit.middleware.js";
+} from "../../middlewares/rateLimit/index.js";
 
 const router = express.Router();
 
@@ -40,6 +42,7 @@ router.post(
   "/send/:id",
   sendMessageLimiter,
   upload.single("image"),
+  autoCleanupMulterOnFailure,
   enforceTypeSizeLimit,
   messageController.sendMessage,
 );
@@ -87,5 +90,7 @@ router.delete(
   "/delete-for-everyone/:messageId",
   messageController.deleteMessageForEveryone,
 );
+
+router.use(handleMulterError);
 
 export default router;

@@ -1,14 +1,17 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import ApiResponse from "../utils/api-response.js";
 import { StatusCodes } from "http-status-codes";
-import { options as cookieOptions } from "../constants/constants.js";
-import { deleteUserAccount } from "../services/account-deletion.service.js";
+import {
+  accessCookieOptions,
+  refreshCookieOptions,
+} from "../constants/auth.constants.js";
+import { deleteAccount } from "../services/auth/account.service.js";
 
 const accountController = {
   deleteAccount: asyncHandler(async (req, res) => {
     const { confirmation, password, code, useRecoveryCode } = req.body;
 
-    await deleteUserAccount({
+    await deleteAccount({
       userId: req.user._id,
       confirmation,
       password,
@@ -17,8 +20,8 @@ const accountController = {
     });
 
     res
-      .clearCookie("accessToken", cookieOptions)
-      .clearCookie("refreshToken", cookieOptions);
+      .clearCookie("accessToken", accessCookieOptions)
+      .clearCookie("refreshToken", refreshCookieOptions);
 
     return new ApiResponse(
       StatusCodes.OK,

@@ -3,7 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import {
   TWO_FA_RATE_WINDOW_MS,
   TWO_FA_MAX_ATTEMPTS,
-} from "../constants/constants.js";
+} from "../constants/rate-limit.constants.js";
 
 const failedAttempts = new Map();
 const WINDOW_MS = TWO_FA_RATE_WINDOW_MS;
@@ -40,4 +40,19 @@ export function recordFail(userId) {
 
 export function clearFail(userId) {
   failedAttempts.delete(String(userId));
+}
+
+// Periodic cleanup to prevent unbounded memory growth from abandoned attempt records
+const CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
+const sweepTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, rec] of failedAttempts.entries()) {
+    if (now > rec.resetAt) {
+      failedAttempts.delete(key);
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
+
+if (sweepTimer.unref) {
+  sweepTimer.unref();
 }

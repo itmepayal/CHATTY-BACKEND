@@ -166,6 +166,14 @@ const UserSchema = new mongoose.Schema(
       select: false,
     },
 
+    status: {
+      type: String,
+      enum: ["active", "suspended", "deactivated"],
+      default: "active",
+      alias: "accountStatus",
+      index: true,
+    },
+
     showOnlineStatus: {
       type: Boolean,
       default: true,
@@ -330,12 +338,14 @@ UserSchema.methods.generateAccessToken = function (sessionId, tokenVer) {
   );
 };
 
-UserSchema.methods.generateRefreshToken = function () {
+UserSchema.methods.generateRefreshToken = function (sessionId, tokenVer) {
   return jwt.sign(
     {
       id: this._id,
       email: this.email,
       fullName: this.fullName,
+      ...(sessionId ? { sessionId: String(sessionId) } : {}),
+      ...(tokenVer !== undefined ? { tokenVersion: tokenVer } : {}),
     },
     refreshTokenSecret,
     { expiresIn: refreshTokenExpiresIn },
@@ -350,15 +360,19 @@ UserSchema.statics.generateToken = async function (id, sessionId) {
   const user = await this.findById(id).select("+tokenVersion");
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+    throw new ApiError(StatusCodes.UNAUTHORIZED, "User not found.");
   }
 
-  const accessToken = user.generateAccessToken(
-    sessionId,
-    user.tokenVersion ?? 0,
-  );
+  if (user.status === "suspended") {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Your account has been suspended. Please contact support.",
+    );
+  }
 
-  const refreshToken = user.generateRefreshToken();
+  const tokenVer = user.tokenVersion ?? 0;
+  const accessToken = user.generateAccessToken(sessionId, tokenVer);
+  const refreshToken = user.generateRefreshToken(sessionId, tokenVer);
 
   return {
     accessToken,
