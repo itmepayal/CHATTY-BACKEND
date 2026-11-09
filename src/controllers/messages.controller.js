@@ -4,6 +4,7 @@ import fs from "fs";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
 import * as chatSettingService from "../services/messaging/chat-setting.service.js";
+import * as reportService from "../services/messaging/message-report.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -1027,72 +1028,12 @@ const messageController = {
   }),
 
   reportUser: asyncHandler(async (req, res) => {
-    const { id: reportedUserId } = req.params;
-    const reporterId = req.user._id;
-    const { reason, details, messageId } = req.body;
-
-    assertValidId(reportedUserId, "user ID");
-
-    if (reportedUserId.toString() === reporterId.toString()) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "You cannot report yourself.",
-      );
-    }
-    if (!REPORT_REASONS.includes(reason)) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Please choose a valid reason.",
-      );
-    }
-    if (details && String(details).trim().length > 500) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Details cannot exceed 500 characters.",
-      );
-    }
-
-    const reported = await User.exists({ _id: reportedUserId });
-    if (!reported) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
-    }
-
-    if (messageId) {
-      assertValidId(messageId, "message ID");
-      const m = await Message.findById(messageId).select("senderId receiverId");
-      if (!m || !isBetween(m, reporterId, reportedUserId)) {
-        throw new ApiError(
-          StatusCodes.BAD_REQUEST,
-          "Invalid message for report.",
-        );
-      }
-    }
-
-    const recent = await Report.exists({
-      reporterId,
-      reportedUserId,
-      createdAt: { $gt: new Date(Date.now() - 24 * 3600_000) },
-    });
-    if (recent) {
-      throw new ApiError(
-        StatusCodes.CONFLICT,
-        "You already reported this user in the last 24 hours.",
-      );
-    }
-
-    await Report.create({
-      reporterId,
-      reportedUserId,
-      messageId: messageId || undefined,
-      reason,
-      details: details ? String(details).trim() : undefined,
-    });
-
-    return new ApiResponse(
-      StatusCodes.CREATED,
-      null,
-      "Report submitted. Thank you.",
-    ).send(res);
+    const { message } = await reportService.reportUser(
+      req.user._id,
+      req.params.id,
+      req.body,
+    );
+    return new ApiResponse(StatusCodes.CREATED, null, message).send(res);
   }),
 
   getDisappearing: asyncHandler(async (req, res) => {
