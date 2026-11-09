@@ -6,6 +6,7 @@ import { StatusCodes } from "http-status-codes";
 import * as chatSettingService from "../services/messaging/chat-setting.service.js";
 import * as reportService from "../services/messaging/message-report.service.js";
 import * as scheduleService from "../services/messaging/message-schedule.service.js";
+import * as locationService from "../services/messaging/message-location.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -1010,182 +1011,26 @@ const messageController = {
   }),
 
   startShare: asyncHandler(async (req, res) => {
-    const senderId = req.user._id;
-    const { receiverId, mode } = req.body;
-
-    const lat = toNum(req.body.lat);
-    const lng = toNum(req.body.lng);
-    const accuracy = toNum(req.body.accuracy);
-    const durationMin = toNum(req.body.durationMin);
-
-    assertValidId(receiverId, "receiver ID");
-
-    if (receiverId.toString() === senderId.toString()) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "You cannot share location with yourself.",
-      );
-    }
-    if (mode !== "current" && mode !== "live") {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid share mode.");
-    }
-    if (!validCoords(lat, lng)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid location.");
-    }
-
-    await assertCanMessage(senderId, receiverId);
-
-    const safeAccuracy = Number.isFinite(accuracy) ? accuracy : undefined;
-
-    if (mode === "current") {
-      const { payload } = await deliverMessage({
-        senderId,
-        receiverId,
-        data: {
-          location: { lat, lng, accuracy: safeAccuracy, isLive: false },
-        },
-      });
-
-      return new ApiResponse(
-        StatusCodes.CREATED,
-        payload,
-        "Location sent.",
-      ).send(res);
-    }
-
-    if (!LIVE_DURATIONS_MIN.includes(durationMin)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid duration.");
-    }
-
-    const previous = await LocationShare.find({
-      sharerId: senderId,
-      receiverId,
-      status: "active",
-    });
-    const oldShareIds = previous.map((p) => p._id);
-    for (const old of previous) {
-      old.status = "stopped";
-      old.endedAt = new Date();
-      await old.save();
-      emitToPair(old.sharerId, old.receiverId, "location:ended", {
-        shareId: String(old._id),
-      });
-    }
-    if (oldShareIds.length) {
-      await Message.updateMany(
-        { "location.shareId": { $in: oldShareIds } },
-        { "location.isLive": false },
-      );
-    }
-
-    const now = new Date();
-    const share = await LocationShare.create({
-      sharerId: senderId,
-      receiverId,
-      expiresAt: new Date(now.getTime() + durationMin * 60_000),
-      lastLocation: { lat, lng, accuracy: safeAccuracy, updatedAt: now },
-    });
-
-    let result;
-    try {
-      result = await deliverMessage({
-        senderId,
-        receiverId,
-        data: {
-          location: {
-            lat,
-            lng,
-            accuracy: safeAccuracy,
-            isLive: true,
-            shareId: share._id,
-          },
-        },
-      });
-    } catch (error) {
-      await LocationShare.deleteOne({ _id: share._id });
-      throw error;
-    }
-
-    share.messageId = result.message._id;
-    await share.save();
-
-    emitToPair(senderId, receiverId, "location:update", {
-      shareId: String(share._id),
-      lat,
-      lng,
-      accuracy: safeAccuracy,
-      updatedAt: now,
-    });
-
-    return new ApiResponse(
-      StatusCodes.CREATED,
-      { message: result.payload, share },
-      "Live location started.",
-    ).send(res);
+    const { status, data, message } = await locationService.startShare(
+      req.user._id,
+      req.body,
+    );
+    return new ApiResponse(status, data, message).send(res);
   }),
 
   stopShare: asyncHandler(async (req, res) => {
-    const { id: shareId } = req.params;
-    const userId = req.user._id;
-
-    assertValidId(shareId, "share ID");
-
-    const share = await LocationShare.findOne({
-      _id: shareId,
-      sharerId: userId,
-      status: "active",
-    });
-    if (!share) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "Live share not found.");
-    }
-
-    share.status = "stopped";
-    share.endedAt = new Date();
-    await share.save();
-
-    await Message.updateOne(
-      { "location.shareId": share._id },
-      { "location.isLive": false },
+    const { shareId, message } = await locationService.stopShare(
+      req.user._id,
+      req.params.id,
     );
-
-    emitToPair(share.sharerId, share.receiverId, "location:ended", {
-      shareId: String(share._id),
-    });
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      { shareId: share._id },
-      "Live location stopped.",
-    ).send(res);
+    return new ApiResponse(StatusCodes.OK, { shareId }, message).send(res);
   }),
 
   getActiveShares: asyncHandler(async (req, res) => {
-    const userId = req.user._id;
-    const now = new Date();
-
-    await LocationShare.updateMany(
-      { status: "active", expiresAt: { $lte: now } },
-      { status: "expired", endedAt: now },
+    const { mine, forMe, message } = await locationService.getActiveShares(
+      req.user._id,
     );
-
-    const [mine, forMe] = await Promise.all([
-      LocationShare.find({
-        sharerId: userId,
-        status: "active",
-        expiresAt: { $gt: now },
-      }),
-      LocationShare.find({
-        receiverId: userId,
-        status: "active",
-        expiresAt: { $gt: now },
-      }),
-    ]);
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      { mine, forMe },
-      "Active location shares.",
-    ).send(res);
+    return new ApiResponse(StatusCodes.OK, { mine, forMe }, message).send(res);
   }),
 };
 
