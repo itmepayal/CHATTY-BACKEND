@@ -1,77 +1,18 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
-import mongoose from "mongoose";
-import fs from "fs";
-import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import * as chatSettingService from "../services/messaging/chat-setting.service.js";
-import * as reportService from "../services/messaging/message-report.service.js";
-import * as scheduleService from "../services/messaging/message-schedule.service.js";
-import * as locationService from "../services/messaging/message-location.service.js";
-import * as queryService from "../services/messaging/message-query.service.js";
-import * as lifecycleService from "../services/messaging/message-lifecycle.service.js";
-import * as forwardService from "../services/messaging/message-forward.service.js";
-import * as deliveryService from "../services/messaging/message-delivery.service.js";
-import * as sendService from "../services/messaging/message-send.service.js";
-import * as sidebarService from "../services/messaging/sidebar.service.js";
-import User from "../models/users.model.js";
-import Message from "../models/message.model.js";
-import ScheduledMessage from "../models/scheduled-message.model.js";
-import Report from "../models/report.model.js";
-import ChatSetting, {
-  ALLOWED_TIMERS,
-  pairKeyOf,
-  getDisappearAfter,
-} from "../models/chat-setting.model.js";
-import ChatArchive, { getArchivedSet } from "../models/chat-archive.model.js";
-import LocationShare from "../models/location-share.model.js";
 import ApiResponse from "../utils/api-response.js";
-import { io, getPrivacy } from "../lib/socket.js";
-import { assertCanMessage } from "../utils/chat-guard.js";
 import {
-  deliverMessage,
-  assertE2EEReady,
-  assertNotSpamming,
-  processAttachment,
-} from "../services/message.service.js";
-import { attachLinkPreview } from "../utils/link-preview.js";
-import {
-  wipeMessage,
-  deleteAttachmentMedia,
-} from "../utils/message-cleanup.js";
-import {
-  toObjectId,
-  formatMessage,
-  emitConversationUpdate,
-  isParticipantOf,
-  getOtherUserId,
-  isBetween,
-  REPLY_SELECT,
-  emitToPair,
-  notExpired,
-  isExpired,
-} from "../utils/message-helpers.js";
-import {
-  MAX_CIPHERTEXT_LENGTH,
-  parseBool,
-  assertValidCipher,
-} from "../utils/e2ee.js";
-import {
-  assertValidId,
-  toNum,
-  validCoords,
-  escapeRegex,
-} from "../utils/validators.js";
-import {
-  EDIT_WINDOW_MS,
-  MAX_PINS,
-  MAX_FORWARD_TARGETS,
-  MAX_TEXT_LENGTH,
-  REPORT_REASONS,
-  LIVE_DURATIONS_MIN,
-} from "../constants/constants.js";
-import { canViewSync } from "../services/privacy-visibility.service.js";
-import { isBlockedEitherWay } from "../services/privacy/privacy.service.js";
-import Contact from "../models/contact.model.js";
+  chatSettingService,
+  reportService,
+  scheduleService,
+  locationService,
+  queryService,
+  lifecycleService,
+  forwardService,
+  deliveryService,
+  sendService,
+  sidebarService,
+} from "../services/messaging/index.js";
 
 const messageController = {
   getUsersForSidebar: asyncHandler(async (req, res) => {
