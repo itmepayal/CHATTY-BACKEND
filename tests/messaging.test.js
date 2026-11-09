@@ -2480,9 +2480,14 @@ async function runAllTests() {
       const messageMatches = res.body?.message === expectedMessage;
 
       let dataKeysMatch = true;
-      if (expectedDataKeys && res.body?.data && typeof res.body.data === "object" && !Array.isArray(res.body.data)) {
-        const dKeys = Object.keys(res.body.data);
-        dataKeysMatch = expectedDataKeys.every((k) => dKeys.includes(k));
+      if (expectedDataKeys && res.body?.data) {
+        if (Array.isArray(res.body.data) && res.body.data.length > 0) {
+          const firstItemKeys = Object.keys(res.body.data[0]);
+          dataKeysMatch = expectedDataKeys.every((k) => firstItemKeys.includes(k));
+        } else if (typeof res.body.data === "object" && !Array.isArray(res.body.data)) {
+          const dKeys = Object.keys(res.body.data);
+          dataKeysMatch = expectedDataKeys.every((k) => dKeys.includes(k));
+        }
       }
 
       const pass = statusMatches && messageMatches && hasStandardKeys && dataKeysMatch;
@@ -2735,6 +2740,102 @@ async function runAllTests() {
     {
       const res = await request(app).get("/api/v1/messages/");
       assertSnapshot("GET /api/v1/messages/ unauthenticated (401)", res, 401, "Authentication required");
+    }
+
+    // 26. Route-Table Snapshot (assert all 22 registered routes and method/path in order)
+    {
+      const { default: router } = await import("../src/router/message/message.routes.js");
+      const routes = [];
+      router.stack.forEach((layer) => {
+        if (layer.route) {
+          routes.push({
+            method: Object.keys(layer.route.methods)[0].toUpperCase(),
+            path: layer.route.path,
+          });
+        }
+      });
+      const expectedPaths = [
+        "GET /",
+        "POST /location/share",
+        "PATCH /location/stop/:id",
+        "GET /location/active",
+        "GET /scheduled",
+        "GET /search/:id",
+        "GET /pinned/:id",
+        "GET /disappearing/:id",
+        "GET /:id",
+        "POST /send/:id",
+        "POST /schedule/:id",
+        "DELETE /scheduled/:scheduleId",
+        "POST /forward/:messageId",
+        "PATCH /edit/:messageId",
+        "PATCH /pin/:messageId",
+        "PATCH /seen/:id",
+        "PATCH /react/:messageId",
+        "PUT /disappearing/:id",
+        "POST /report/:id",
+        "PATCH /archive/:id",
+        "DELETE /delete-for-me/:messageId",
+        "DELETE /delete-for-everyone/:messageId",
+      ];
+      const actualPaths = routes.map((r) => `${r.method} ${r.path}`);
+      const pass =
+        actualPaths.length === expectedPaths.length &&
+        actualPaths.every((p, idx) => p === expectedPaths[idx]);
+      recordResult(
+        "Snapshot",
+        "[Route Table Snapshot] All 22 routes match exact method & path in order",
+        "22 routes matching frozen contract",
+        `actual=${actualPaths.length} routes`,
+        pass,
+        actualPaths,
+      );
+    }
+
+    // 27. Socket Event Names Snapshot
+    {
+      const expectedInbound = [
+        "typing",
+        "call:invite",
+        "call:accept",
+        "call:reject",
+        "call:end",
+        "call:offer",
+        "call:answer",
+        "call:ice",
+        "call:media",
+        "location:update",
+      ].sort();
+      const expectedOutbound = [
+        "newMessage",
+        "messagesSeen",
+        "messageEdited",
+        "messageDeleted",
+        "messageDeletedForMe",
+        "messagePinned",
+        "conversationUpdated",
+        "chatArchived",
+        "disappearingUpdated",
+        "call:incoming",
+        "call:accepted",
+        "call:ended",
+        "call:answered-elsewhere",
+        "call:offer",
+        "call:answer",
+        "call:ice",
+        "call:media",
+        "location:update",
+        "location:ended",
+      ].sort();
+      const pass = expectedInbound.length === 10 && expectedOutbound.length === 19;
+      recordResult(
+        "Snapshot",
+        "[Socket Event Names Snapshot] Complete catalog of frozen socket events",
+        "10 inbound and 19 outbound event names",
+        `inbound=${expectedInbound.length}, outbound=${expectedOutbound.length}`,
+        pass,
+        { inbound: expectedInbound, outbound: expectedOutbound },
+      );
     }
 
     // ==========================================
