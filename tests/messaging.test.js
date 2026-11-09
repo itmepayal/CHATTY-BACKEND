@@ -16,7 +16,9 @@ import LocationShare from "../src/models/location-share.model.js";
 import Call from "../src/models/call.model.js";
 import ChatSetting from "../src/models/chat-setting.model.js";
 import ChatArchive from "../src/models/chat-archive.model.js";
+import Report from "../src/models/report.model.js";
 import User from "../src/models/users.model.js";
+import { privacyByUser, loadPrivacy } from "../src/lib/socket.js";
 import { isPrivateIp, safeFetch } from "../src/utils/link-preview.js";
 import { recoverStrandedJobs } from "../src/jobs/scheduler.js";
 import { sweepDisappearingMessages } from "../src/jobs/disappearing.js";
@@ -1504,15 +1506,17 @@ async function runAllTests() {
         senderId: aliceId,
         receiverId: charlieId,
         text: "Older active message",
-        createdAt: new Date(Date.now() - 5000),
       });
       const expiredMsg = await Message.create({
         senderId: aliceId,
         receiverId: charlieId,
         text: "Expired newer message",
         expiresAt: new Date(Date.now() - 10000),
-        createdAt: new Date(Date.now() - 1000),
       });
+      await Message.collection.updateOne(
+        { _id: expiredMsg._id },
+        { $set: { createdAt: new Date(Date.now() + 1000) } },
+      );
 
       let lastMsgReceived = null;
       charlie.socket.once("conversationUpdated", (data) => {
@@ -1963,6 +1967,775 @@ async function runAllTests() {
       sweeperStage !== "COLLSCAN",
       { stage: sweeperStage },
     );
+
+    // ==========================================
+    // Category 23: Sidebar & User Discovery
+    // ==========================================
+    console.log("\n--- Testing Category 23: Sidebar & User Discovery ---");
+    await resetLimits();
+
+    // 23.1 getUsersForSidebar unread counts
+    {
+      await request(app)
+        .post(`/api/v1/messages/send/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ text: "Unread count sidebar test" });
+
+      const res = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", bob.cookies);
+      const aliceEntry = (res.body?.data || []).find((u) => u.id === aliceId);
+      const pass = res.status === 200 && aliceEntry && aliceEntry.unreadCount >= 1;
+      recordResult(
+        "Sidebar",
+        "getUsersForSidebar accurately aggregates unreadCount",
+        "unreadCount >= 1",
+        `unreadCount=${aliceEntry?.unreadCount}`,
+        pass,
+        aliceEntry,
+      );
+    }
+
+    // 23.2 getUsersForSidebar lastMessage formatting
+    {
+      const res = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", bob.cookies);
+      const aliceEntry = (res.body?.data || []).find((u) => u.id === aliceId);
+      const lm = aliceEntry?.lastMessage;
+      const pass =
+        res.status === 200 &&
+        lm &&
+        typeof lm.id === "string" &&
+        lm.senderId === aliceId &&
+        lm.receiverId === bobId &&
+        Boolean(lm.createdAt);
+      recordResult(
+        "Sidebar",
+        "getUsersForSidebar returns properly formatted lastMessage",
+        "lastMessage has id, senderId, receiverId, createdAt",
+        `id=${lm?.id}, text=${lm?.text}`,
+        pass,
+        lm,
+      );
+    }
+
+    // 23.3 getUsersForSidebar sort order
+    {
+      const res = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", bob.cookies);
+      const list = res.body?.data || [];
+      const isSorted = list.every((item, i, arr) => {
+        if (i === 0) return true;
+        const prev = arr[i - 1].lastMessageAt ? new Date(arr[i - 1].lastMessageAt).getTime() : 0;
+        const curr = item.lastMessageAt ? new Date(item.lastMessageAt).getTime() : 0;
+        return prev >= curr;
+      });
+      const pass = res.status === 200 && list.length > 0 && isSorted;
+      recordResult(
+        "Sidebar",
+        "getUsersForSidebar sorts conversations descending by lastMessageAt",
+        "Array sorted descending by lastMessageAt",
+        `isSorted=${isSorted}, count=${list.length}`,
+        pass,
+      );
+    }
+
+    // 23.4 getUsersForSidebar blocked user filtering
+    {
+      const resAlice = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", alice.cookies);
+      const davidInAlice = (resAlice.body?.data || []).find((u) => u.id === davidId);
+      const isMarkedBlocked = davidInAlice ? davidInAlice.isBlocked === true : true;
+
+      const resDavid = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", david.cookies);
+      const pass = resAlice.status === 200 && resDavid.status === 200 && isMarkedBlocked;
+      recordResult(
+        "Sidebar",
+        "getUsersForSidebar respects blocked status in response",
+        "isBlocked=true for blocked user",
+        `davidInAlice.isBlocked=${davidInAlice?.isBlocked}`,
+        pass,
+      );
+    }
+
+    // 23.5 getUsersForSidebar deletedFor filtering
+    {
+      const resMsg = await request(app)
+        .post(`/api/v1/messages/send/${charlieId}`)
+        .set("Cookie", alice.cookies)
+        .send({ text: "Self-deleted sidebar message" });
+      const delMsgId = resMsg.body?.data?.id;
+      await request(app)
+        .delete(`/api/v1/messages/delete-for-me/${delMsgId}`)
+        .set("Cookie", alice.cookies);
+
+      const resAlice = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", alice.cookies);
+      const charlieEntry = (resAlice.body?.data || []).find((u) => u.id === charlieId);
+      const pass =
+        resAlice.status === 200 &&
+        charlieEntry?.lastMessage?.text !== "Self-deleted sidebar message";
+      recordResult(
+        "Sidebar",
+        "getUsersForSidebar excludes deletedFor messages from lastMessage",
+        "lastMessage does NOT match deletedFor message",
+        `lastMsg=${charlieEntry?.lastMessage?.text}`,
+        pass,
+      );
+    }
+
+    // 23.6 getUsersForSidebar privacy masking
+    {
+      await User.updateOne(
+        { _id: bobId },
+        { $set: { profilePhotoVisibility: "nobody", aboutVisibility: "nobody" } },
+      );
+      const res = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", alice.cookies);
+      const bobEntry = (res.body?.data || []).find((u) => u.id === bobId);
+      const pass =
+        res.status === 200 &&
+        bobEntry &&
+        bobEntry.avatar === "" &&
+        bobEntry.bio === "";
+      recordResult(
+        "Sidebar",
+        "getUsersForSidebar masks avatar & bio when privacy set to nobody",
+        "avatar='' and bio=''",
+        `avatar="${bobEntry?.avatar}", bio="${bobEntry?.bio}"`,
+        pass,
+      );
+      await User.updateOne(
+        { _id: bobId },
+        { $set: { profilePhotoVisibility: "everyone", aboutVisibility: "contacts" } },
+      );
+    }
+
+    // ==========================================
+    // Category 24: Chat Preferences (Archive & Favorites)
+    // ==========================================
+    console.log("\n--- Testing Category 24: Chat Preferences ---");
+    await resetLimits();
+
+    // 24.1 Archive chat
+    {
+      const res = await request(app)
+        .patch(`/api/v1/messages/archive/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ archived: true });
+      const archiveDoc = await ChatArchive.findOne({ ownerId: aliceId, otherId: bobId });
+      const pass =
+        res.status === 200 &&
+        res.body?.message === "Chat archived." &&
+        res.body?.data?.archived === true &&
+        Boolean(archiveDoc);
+      recordResult(
+        "Preferences",
+        "setArchive archives chat and persists in ChatArchive",
+        "200 'Chat archived.' and record exists",
+        `${res.status} msg=${res.body?.message}`,
+        pass,
+      );
+    }
+
+    // 24.2 Unarchive chat
+    {
+      const res = await request(app)
+        .patch(`/api/v1/messages/archive/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ archived: false });
+      const archiveDoc = await ChatArchive.findOne({ ownerId: aliceId, otherId: bobId });
+      const pass =
+        res.status === 200 &&
+        res.body?.message === "Chat unarchived." &&
+        res.body?.data?.archived === false &&
+        !archiveDoc;
+      recordResult(
+        "Preferences",
+        "setArchive unarchives chat and deletes from ChatArchive",
+        "200 'Chat unarchived.' and record removed",
+        `${res.status} msg=${res.body?.message}`,
+        pass,
+      );
+    }
+
+    // 24.3 Add user to favorites
+    {
+      const res = await request(app)
+        .post(`/api/v1/users/${bobId}/favorite`)
+        .set("Cookie", alice.cookies);
+      const aliceDoc = await User.findById(aliceId);
+      const hasFav = (aliceDoc?.favorites || []).map(String).includes(bobId);
+      const pass =
+        res.status === 200 &&
+        res.body?.message === "Added to favorites." &&
+        hasFav;
+      recordResult(
+        "Preferences",
+        "addFavorite adds user to favorites array",
+        "200 'Added to favorites.' and userId in favorites",
+        `${res.status} hasFav=${hasFav}`,
+        pass,
+      );
+    }
+
+    // 24.4 Remove user from favorites
+    {
+      const res = await request(app)
+        .delete(`/api/v1/users/${bobId}/favorite`)
+        .set("Cookie", alice.cookies);
+      const aliceDoc = await User.findById(aliceId);
+      const hasFav = (aliceDoc?.favorites || []).map(String).includes(bobId);
+      const pass =
+        res.status === 200 &&
+        res.body?.message === "Removed from favorites." &&
+        !hasFav;
+      recordResult(
+        "Preferences",
+        "removeFavorite removes user from favorites array",
+        "200 'Removed from favorites.' and userId not in favorites",
+        `${res.status} hasFav=${hasFav}`,
+        pass,
+      );
+    }
+
+    // ==========================================
+    // Category 25: Unpin & Scheduled Retrieval
+    // ==========================================
+    console.log("\n--- Testing Category 25: Unpin & Scheduled Retrieval ---");
+    await resetLimits();
+
+    // 25.1 togglePin unpin
+    {
+      const pMsg = await Message.create({
+        senderId: aliceId,
+        receiverId: charlieId,
+        text: "Pin and unpin test message",
+      });
+      await request(app)
+        .patch(`/api/v1/messages/pin/${pMsg._id}`)
+        .set("Cookie", alice.cookies);
+      const res = await request(app)
+        .patch(`/api/v1/messages/pin/${pMsg._id}`)
+        .set("Cookie", alice.cookies);
+      const doc = await Message.findById(pMsg._id);
+      const pass =
+        res.status === 200 &&
+        res.body?.data?.isPinned === false &&
+        doc?.isPinned === false &&
+        doc?.pinnedBy === undefined;
+      recordResult(
+        "Pin",
+        "togglePin unpins an already pinned message",
+        "200 isPinned=false and DB field unpinned",
+        `${res.status} isPinned=${doc?.isPinned}`,
+        pass,
+      );
+    }
+
+    // 25.2 getScheduled retrieves all pending scheduled messages
+    {
+      const s = await ScheduledMessage.create({
+        senderId: aliceId,
+        receiverId: bobId,
+        text: "Pending scheduled retrieval test",
+        scheduledFor: new Date(Date.now() + 120_000),
+        status: "pending",
+      });
+      const res = await request(app)
+        .get("/api/v1/messages/scheduled")
+        .set("Cookie", alice.cookies);
+      const found = (res.body?.data || []).some((item) => String(item._id) === String(s._id));
+      const pass =
+        res.status === 200 &&
+        res.body?.message === "Scheduled messages." &&
+        found;
+      recordResult(
+        "Scheduled",
+        "getScheduled returns pending scheduled messages for current user",
+        "200 array containing scheduled job",
+        `${res.status} found=${found}`,
+        pass,
+      );
+    }
+
+    // 25.3 getScheduled filtered by to parameter
+    {
+      const res = await request(app)
+        .get(`/api/v1/messages/scheduled?to=${bobId}`)
+        .set("Cookie", alice.cookies);
+      const pass =
+        res.status === 200 &&
+        Array.isArray(res.body?.data) &&
+        res.body?.data.every((item) => String(item.receiverId) === bobId);
+      recordResult(
+        "Scheduled",
+        "getScheduled filters by receiverId when to param provided",
+        "200 filtered array matching receiverId",
+        `${res.status} count=${res.body?.data?.length}`,
+        pass,
+      );
+    }
+
+    // ==========================================
+    // Category 26: Location Active Shares & Seen Privacy
+    // ==========================================
+    console.log("\n--- Testing Category 26: Location Active Shares & Seen Privacy ---");
+    await resetLimits();
+
+    // 26.1 getActiveShares returns active shares for mine and forMe
+    {
+      const activeShare = await LocationShare.create({
+        sharerId: aliceId,
+        receiverId: bobId,
+        expiresAt: new Date(Date.now() + 600_000),
+        status: "active",
+        lastLocation: { lat: 30.5, lng: 70.2, updatedAt: new Date() },
+      });
+
+      const resMine = await request(app)
+        .get("/api/v1/messages/location/active")
+        .set("Cookie", alice.cookies);
+      const resForMe = await request(app)
+        .get("/api/v1/messages/location/active")
+        .set("Cookie", bob.cookies);
+
+      const hasMine = (resMine.body?.data?.mine || []).some(
+        (s) => String(s._id) === String(activeShare._id),
+      );
+      const hasForMe = (resForMe.body?.data?.forMe || []).some(
+        (s) => String(s._id) === String(activeShare._id),
+      );
+      const pass =
+        resMine.status === 200 &&
+        resForMe.status === 200 &&
+        hasMine &&
+        hasForMe;
+
+      recordResult(
+        "Location",
+        "getActiveShares returns active shares in mine and forMe lists",
+        "200 with mine and forMe matching active share",
+        `hasMine=${hasMine}, hasForMe=${hasForMe}`,
+        pass,
+      );
+
+      await LocationShare.deleteOne({ _id: activeShare._id });
+    }
+
+    // 26.2 markMessagesSeen with readReceipts disabled
+    {
+      await User.updateOne({ _id: bobId }, { $set: { readReceipts: false } });
+      privacyByUser.set(bobId, { ...privacyByUser.get(bobId), readReceipts: false });
+
+      const sentMsg = await Message.create({
+        senderId: aliceId,
+        receiverId: bobId,
+        text: "Seen with readReceipts off test",
+        status: "delivered",
+        deliveredAt: new Date(),
+      });
+
+      let seenEmittedToAlice = false;
+      const seenListener = () => {
+        seenEmittedToAlice = true;
+      };
+      alice.socket.once("messagesSeen", seenListener);
+
+      const res = await request(app)
+        .patch(`/api/v1/messages/seen/${aliceId}`)
+        .set("Cookie", bob.cookies);
+
+      await new Promise((r) => setTimeout(r, 100));
+      alice.socket.off("messagesSeen", seenListener);
+
+      const updatedDoc = await Message.findById(sentMsg._id);
+      const pass =
+        res.status === 200 &&
+        Boolean(updatedDoc.receiverReadAt) &&
+        updatedDoc.status === "delivered" &&
+        !seenEmittedToAlice;
+
+      recordResult(
+        "Delivery",
+        "markMessagesSeen with readReceipts disabled updates read timestamp but keeps status=delivered without socket emit",
+        "status='delivered', receiverReadAt set, no messagesSeen emitted",
+        `status=${updatedDoc?.status}, emitted=${seenEmittedToAlice}`,
+        pass,
+      );
+
+      await User.updateOne({ _id: bobId }, { $set: { readReceipts: true } });
+      privacyByUser.set(bobId, { ...privacyByUser.get(bobId), readReceipts: true });
+    }
+
+    // ==========================================
+    // Category 27: Typing & Presence Sockets
+    // ==========================================
+    console.log("\n--- Testing Category 27: Typing & Presence Sockets ---");
+
+    // 27.1 Typing event roundtrip
+    {
+      let receivedTyping = null;
+      bob.socket.once("typing", (data) => {
+        receivedTyping = data;
+      });
+
+      alice.socket.emit("typing", { to: bobId, isTyping: true });
+      await new Promise((r) => setTimeout(r, 100));
+
+      const pass =
+        receivedTyping &&
+        receivedTyping.from === aliceId &&
+        receivedTyping.isTyping === true;
+
+      recordResult(
+        "Typing",
+        "Typing event routed successfully from sender to receiver socket",
+        "from=aliceId, isTyping=true",
+        `received=${JSON.stringify(receivedTyping)}`,
+        pass,
+      );
+    }
+
+    // 27.2 Typing suppressed when typingIndicator disabled
+    {
+      privacyByUser.set(aliceId, {
+        ...privacyByUser.get(aliceId),
+        typingIndicator: false,
+      });
+
+      let suppressedReceived = false;
+      const listener = () => {
+        suppressedReceived = true;
+      };
+      bob.socket.once("typing", listener);
+
+      alice.socket.emit("typing", { to: bobId, isTyping: true });
+      await new Promise((r) => setTimeout(r, 100));
+      bob.socket.off("typing", listener);
+
+      const pass = !suppressedReceived;
+      recordResult(
+        "Typing",
+        "Typing event suppressed when typingIndicator is disabled in privacy",
+        "No typing event emitted",
+        `suppressedReceived=${suppressedReceived}`,
+        pass,
+      );
+
+      privacyByUser.set(aliceId, {
+        ...privacyByUser.get(aliceId),
+        typingIndicator: true,
+      });
+    }
+
+    // 27.3 Presence / Online status visibility toggle
+    {
+      await User.updateOne(
+        { _id: bobId },
+        { $set: { onlineStatusVisibility: "nobody" } },
+      );
+
+      const res = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", alice.cookies);
+      const b = (res.body?.data || []).find((u) => u.id === bobId);
+      const pass = res.status === 200 && b && b.showOnlineStatus === false;
+
+      recordResult(
+        "Presence",
+        "User with onlineStatusVisibility='nobody' has showOnlineStatus=false in sidebar",
+        "showOnlineStatus=false",
+        `showOnlineStatus=${b?.showOnlineStatus}`,
+        pass,
+      );
+
+      await User.updateOne(
+        { _id: bobId },
+        { $set: { onlineStatusVisibility: "everyone" } },
+      );
+    }
+
+    // ==========================================
+    // Category 28: Response-Shape Snapshots (All 22 REST Endpoints)
+    // ==========================================
+    console.log("\n--- Testing Category 28: Response-Shape Snapshots ---");
+    await resetLimits();
+
+    function assertSnapshot(endpointName, res, expectedStatus, expectedMessage, expectedDataKeys = null) {
+      const topKeys = Object.keys(res.body || {}).sort();
+      const hasStandardKeys =
+        res.status < 400
+          ? topKeys.join(",") === "data,message,success" && res.body?.success === true
+          : topKeys.join(",") === "message,statusCode,success" && res.body?.success === false;
+
+      const statusMatches = res.status === expectedStatus;
+      const messageMatches = res.body?.message === expectedMessage;
+
+      let dataKeysMatch = true;
+      if (expectedDataKeys && res.body?.data && typeof res.body.data === "object" && !Array.isArray(res.body.data)) {
+        const dKeys = Object.keys(res.body.data);
+        dataKeysMatch = expectedDataKeys.every((k) => dKeys.includes(k));
+      }
+
+      const pass = statusMatches && messageMatches && hasStandardKeys && dataKeysMatch;
+      recordResult(
+        "Snapshot",
+        `[REST Shape] ${endpointName}`,
+        `${expectedStatus} msg="${expectedMessage}" keys=[${topKeys.join(",")}]`,
+        `${res.status} msg="${res.body?.message}"`,
+        pass,
+        { status: res.status, bodyKeys: topKeys, message: res.body?.message },
+      );
+    }
+
+    // Shared setup for snapshots
+    let snapMsgId;
+    {
+      const res = await request(app)
+        .post(`/api/v1/messages/send/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ text: "Snapshot base message" });
+      snapMsgId = res.body?.data?.id;
+    }
+
+    // 1. GET /
+    {
+      const res = await request(app).get("/api/v1/messages/").set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/", res, 200, "Users fetched successfully.");
+    }
+
+    // 2. GET /:id
+    {
+      const res = await request(app).get(`/api/v1/messages/${bobId}`).set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/:id", res, 200, "User messages fetched successfully.");
+    }
+
+    // 3. POST /send/:id
+    {
+      await resetLimits();
+      const res = await request(app)
+        .post(`/api/v1/messages/send/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ text: "Snapshot send test" });
+      assertSnapshot("POST /api/v1/messages/send/:id", res, 201, "Message sent successfully.", ["id", "status", "text"]);
+    }
+
+    // 4. POST /forward/:messageId
+    {
+      await resetLimits();
+      const res = await request(app)
+        .post(`/api/v1/messages/forward/${snapMsgId}`)
+        .set("Cookie", alice.cookies)
+        .send({ userIds: [charlieId] });
+      assertSnapshot("POST /api/v1/messages/forward/:messageId", res, 200, "Forwarded to 1 chat(s).");
+    }
+
+    // 5. PATCH /edit/:messageId
+    {
+      await resetLimits();
+      const res = await request(app)
+        .patch(`/api/v1/messages/edit/${snapMsgId}`)
+        .set("Cookie", alice.cookies)
+        .send({ text: "Edited snapshot text" });
+      assertSnapshot("PATCH /api/v1/messages/edit/:messageId", res, 200, "Message edited.", ["messageId", "isEdited", "text"]);
+    }
+
+    // 6. PATCH /pin/:messageId
+    {
+      const mToPin = await Message.create({ senderId: aliceId, receiverId: charlieId, text: "Snapshot pin" });
+      const res = await request(app)
+        .patch(`/api/v1/messages/pin/${mToPin._id}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("PATCH /api/v1/messages/pin/:messageId", res, 200, "Pin updated.", ["isPinned", "messageId", "pinnedBy"]);
+    }
+
+    // 7. GET /pinned/:id
+    {
+      const res = await request(app)
+        .get(`/api/v1/messages/pinned/${bobId}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/pinned/:id", res, 200, "Pinned messages.");
+    }
+
+    // 8. GET /search/:id
+    {
+      const res = await request(app)
+        .get(`/api/v1/messages/search/${bobId}?q=Snapshot`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/search/:id", res, 200, "Search results.");
+    }
+
+    // 9. POST /schedule/:id
+    let snapSchedId;
+    {
+      await resetLimits();
+      const res = await request(app)
+        .post(`/api/v1/messages/schedule/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ text: "Snapshot sched", scheduledFor: new Date(Date.now() + 60_000) });
+      snapSchedId = res.body?.data?._id;
+      assertSnapshot("POST /api/v1/messages/schedule/:id", res, 201, "Message scheduled.", ["_id", "status", "text"]);
+    }
+
+    // 10. GET /scheduled
+    {
+      const res = await request(app)
+        .get("/api/v1/messages/scheduled")
+        .set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/scheduled", res, 200, "Scheduled messages.");
+    }
+
+    // 11. DELETE /scheduled/:scheduleId
+    {
+      const res = await request(app)
+        .delete(`/api/v1/messages/scheduled/${snapSchedId}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("DELETE /api/v1/messages/scheduled/:scheduleId", res, 200, "Scheduled message cancelled.", ["id"]);
+    }
+
+    // 12. PATCH /seen/:id
+    {
+      const res = await request(app)
+        .patch(`/api/v1/messages/seen/${bobId}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("PATCH /api/v1/messages/seen/:id", res, 200, "Messages marked as seen.", ["count"]);
+    }
+
+    // 13. PATCH /react/:messageId
+    {
+      await resetLimits();
+      const res = await request(app)
+        .patch(`/api/v1/messages/react/${snapMsgId}`)
+        .set("Cookie", alice.cookies)
+        .send({ emoji: "🎉" });
+      assertSnapshot("PATCH /api/v1/messages/react/:messageId", res, 200, "Reaction updated successfully.", ["messageId", "reactions"]);
+    }
+
+    // 14. DELETE /delete-for-me/:messageId
+    let snapDelMeId;
+    {
+      const m = await Message.create({ senderId: aliceId, receiverId: bobId, text: "Del me snap" });
+      snapDelMeId = m._id;
+      const res = await request(app)
+        .delete(`/api/v1/messages/delete-for-me/${snapDelMeId}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("DELETE /api/v1/messages/delete-for-me/:messageId", res, 200, "Message deleted for you.", ["messageId"]);
+    }
+
+    // 15. DELETE /delete-for-everyone/:messageId
+    let snapDelEveryId;
+    {
+      const m = await Message.create({ senderId: aliceId, receiverId: bobId, text: "Del every snap" });
+      snapDelEveryId = m._id;
+      const res = await request(app)
+        .delete(`/api/v1/messages/delete-for-everyone/${snapDelEveryId}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("DELETE /api/v1/messages/delete-for-everyone/:messageId", res, 200, "Message deleted for everyone.", ["messageId"]);
+    }
+
+    // 16. POST /report/:id
+    {
+      await resetLimits();
+      const res = await request(app)
+        .post(`/api/v1/messages/report/${charlieId}`)
+        .set("Cookie", alice.cookies)
+        .send({ reason: "spam", details: "Snapshot report test" });
+      assertSnapshot("POST /api/v1/messages/report/:id", res, 201, "Report submitted. Thank you.");
+    }
+
+    // 17. GET /disappearing/:id
+    {
+      const res = await request(app)
+        .get(`/api/v1/messages/disappearing/${bobId}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/disappearing/:id", res, 200, "Disappearing setting.", ["seconds"]);
+    }
+
+    // 18. PUT /disappearing/:id
+    {
+      await resetLimits();
+      const res = await request(app)
+        .put(`/api/v1/messages/disappearing/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ seconds: 0 });
+      assertSnapshot("PUT /api/v1/messages/disappearing/:id", res, 200, "Disappearing messages turned off.", ["seconds"]);
+    }
+
+    // 19. PATCH /archive/:id
+    {
+      await resetLimits();
+      const res = await request(app)
+        .patch(`/api/v1/messages/archive/${bobId}`)
+        .set("Cookie", alice.cookies)
+        .send({ archived: true });
+      assertSnapshot("PATCH /api/v1/messages/archive/:id", res, 200, "Chat archived.", ["archived", "userId"]);
+    }
+
+    // 20. POST /location/share
+    {
+      await resetLimits();
+      const res = await request(app)
+        .post("/api/v1/messages/location/share")
+        .set("Cookie", alice.cookies)
+        .send({ receiverId: bobId, lat: 15.0, lng: 75.0, mode: "current" });
+      assertSnapshot("POST /api/v1/messages/location/share", res, 201, "Location sent.");
+    }
+
+    // 21. PATCH /location/stop/:id
+    {
+      await resetLimits();
+      const share = await LocationShare.create({
+        sharerId: aliceId,
+        receiverId: bobId,
+        expiresAt: new Date(Date.now() + 600_000),
+        status: "active",
+      });
+      const res = await request(app)
+        .patch(`/api/v1/messages/location/stop/${share._id}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot("PATCH /api/v1/messages/location/stop/:id", res, 200, "Live location stopped.", ["shareId"]);
+    }
+
+    // 22. GET /location/active
+    {
+      const res = await request(app)
+        .get("/api/v1/messages/location/active")
+        .set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/location/active", res, 200, "Active location shares.", ["forMe", "mine"]);
+    }
+
+    // Main Error Path Snapshots
+    // 23. Invalid ID format (400)
+    {
+      const res = await request(app)
+        .get("/api/v1/messages/invalid-object-id")
+        .set("Cookie", alice.cookies);
+      assertSnapshot("GET /api/v1/messages/:id with invalid ID (400)", res, 400, "Invalid User ID.");
+    }
+
+    // 24. Nonexistent user (404)
+    {
+      const nonExistentId = new mongoose.Types.ObjectId().toString();
+      const res = await request(app)
+        .post(`/api/v1/messages/send/${nonExistentId}`)
+        .set("Cookie", alice.cookies)
+        .send({ text: "Hello" });
+      assertSnapshot("POST /api/v1/messages/send/:id with nonexistent user (404)", res, 404, "User not found.");
+    }
+
+    // 25. Unauthenticated request (401)
+    {
+      const res = await request(app).get("/api/v1/messages/");
+      assertSnapshot("GET /api/v1/messages/ unauthenticated (401)", res, 401, "Authentication required");
+    }
 
     // ==========================================
     // Category 22: Process Stability
