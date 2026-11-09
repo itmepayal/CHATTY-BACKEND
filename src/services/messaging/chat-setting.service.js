@@ -11,9 +11,6 @@ import { assertValidId } from "../../utils/validators.js";
 import { assertCanMessage } from "../../utils/chat-guard.js";
 import { io } from "../../lib/socket.js";
 
-/**
- * Moved from messages.controller.js:L1097-1108
- */
 export const getDisappearing = async (userId, otherId) => {
   assertValidId(otherId, "user ID");
 
@@ -22,9 +19,6 @@ export const getDisappearing = async (userId, otherId) => {
   return { seconds };
 };
 
-/**
- * Moved from messages.controller.js:L1110-1150
- */
 export const setDisappearing = async (userId, otherId, rawSeconds) => {
   const seconds = Number(rawSeconds);
 
@@ -64,9 +58,6 @@ export const setDisappearing = async (userId, otherId, rawSeconds) => {
   };
 };
 
-/**
- * Moved from messages.controller.js:L1152-1186
- */
 export const setArchive = async (userId, otherId, rawArchived) => {
   const archived = rawArchived === true || rawArchived === "true";
 

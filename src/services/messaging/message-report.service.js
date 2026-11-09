@@ -7,9 +7,6 @@ import { REPORT_REASONS } from "../../constants/messages.constants.js";
 import { assertValidId } from "../../utils/validators.js";
 import { isBetween } from "../../utils/message-helpers.js";
 
-/**
- * Moved from messages.controller.js:L1028-1095
- */
 export const reportUser = async (
   reporterId,
   reportedUserId,

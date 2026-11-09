@@ -18,9 +18,6 @@ import { isBetween, formatMessage } from "../../utils/message-helpers.js";
 import { attachLinkPreview } from "../../utils/link-preview.js";
 import { deleteAttachmentMedia } from "../../utils/message-cleanup.js";
 
-/**
- * Moved from messages.controller.js:L263-407
- */
 export const sendMessage = async (
   senderId,
   receiverId,

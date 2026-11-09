@@ -6,9 +6,6 @@ import {
   formatMessage,
 } from "../../utils/message-helpers.js";
 
-/**
- * Moved from messages.controller.js:L258-284
- */
 export const getMessages = async (userId, otherId) => {
   assertValidId(otherId, "User ID");
 
@@ -33,9 +30,6 @@ export const getMessages = async (userId, otherId) => {
   };
 };
 
-/**
- * Moved from messages.controller.js:L666-694
- */
 export const getPinned = async (userId, otherId) => {
   assertValidId(otherId, "user ID");
 
@@ -62,10 +56,11 @@ export const getPinned = async (userId, otherId) => {
   };
 };
 
-/**
- * Moved from messages.controller.js:L696-741
- */
-export const searchMessages = async (userId, otherId, { q: rawQ, limit: rawLimit } = {}) => {
+export const searchMessages = async (
+  userId,
+  otherId,
+  { q: rawQ, limit: rawLimit } = {},
+) => {
   const q = String(rawQ || "").trim();
   const limit = Math.min(Number(rawLimit) || 30, 50);
 

@@ -10,9 +10,6 @@ import {
 } from "../../utils/message-helpers.js";
 import { canViewSync } from "../privacy-visibility.service.js";
 
-/**
- * Moved from messages.controller.js:L76-254
- */
 export const getUsersForSidebar = async (userId, query = {}) => {
   assertValidId(userId, "User ID");
 
@@ -31,10 +28,7 @@ export const getUsersForSidebar = async (userId, query = {}) => {
   const convoAgg = await Message.aggregate([
     {
       $match: {
-        $and: [
-          { $or: [{ senderId: uid }, { receiverId: uid }] },
-          notExpired(),
-        ],
+        $and: [{ $or: [{ senderId: uid }, { receiverId: uid }] }, notExpired()],
         deletedFor: { $ne: uid },
       },
     },
@@ -144,12 +138,7 @@ export const getUsersForSidebar = async (userId, query = {}) => {
 
       const canSee = (visibility, fallback) =>
         !isBlockedEither &&
-        canViewSync(
-          visibility ?? fallback,
-          otherId,
-          userId,
-          targetSavedMeSet,
-        );
+        canViewSync(visibility ?? fallback, otherId, userId, targetSavedMeSet);
 
       const showPhoto = canSee(user.profilePhotoVisibility, "everyone");
       const showLastSeen = canSee(user.lastSeenVisibility, "contacts");

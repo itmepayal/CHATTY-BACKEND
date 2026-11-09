@@ -6,9 +6,6 @@ import {
   MAX_VIDEO_SECONDS,
 } from "../../constants/messages.constants.js";
 
-/**
- * Moved from services/message.service.js:L93-160
- */
 export const processAttachment = async (
   file,
   { isVoice = false, isVideo = false, duration } = {},

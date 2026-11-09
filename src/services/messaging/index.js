@@ -1,6 +1,3 @@
-/**
- * Barrel export for one-to-one messaging domain services.
- */
 export * as chatSettingService from "./chat-setting.service.js";
 export * as reportService from "./message-report.service.js";
 export * as scheduleService from "./message-schedule.service.js";

@@ -2,9 +2,6 @@ import User from "../../models/users.model.js";
 import ApiError from "../../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
 
-/**
- * Moved from services/message.service.js:L30-50
- */
 export const assertE2EEReady = async (senderId, receiverId) => {
   const users = await User.find({
     _id: { $in: [senderId, receiverId] },

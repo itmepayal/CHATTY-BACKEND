@@ -14,9 +14,6 @@ import {
 import { assertValidId } from "../../utils/validators.js";
 import { isBlockedEitherWay } from "../privacy/privacy.service.js";
 
-/**
- * Moved from services/message.service.js:L27-72
- */
 export const deliverMessage = async ({ senderId, receiverId, data }) => {
   const online = isUserOnline(receiverId);
 
@@ -64,9 +61,6 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
   return { message, payload };
 };
 
-/**
- * Moved from messages.controller.js:L476-533
- */
 export const markMessagesSeen = async (userId, otherUserId) => {
   assertValidId(otherUserId, "user ID");
 

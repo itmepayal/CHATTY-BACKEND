@@ -15,9 +15,6 @@ const SPAM = {
   NEW_CHAT_MAX: SPAM_NEW_CHAT_MAX,
 };
 
-/**
- * Moved from services/message.service.js:L59-88
- */
 export const assertNotSpamming = async (senderId, receiverId, text) => {
   if (text) {
     const dup = await Message.countDocuments({

@@ -12,9 +12,6 @@ import {
 } from "../../utils/e2ee.js";
 import { MAX_TEXT_LENGTH } from "../../constants/messages.constants.js";
 
-/**
- * Moved from messages.controller.js:L741-794
- */
 export const scheduleMessage = async (
   senderId,
   receiverId,
@@ -27,10 +24,7 @@ export const scheduleMessage = async (
   assertValidId(receiverId, "receiver ID");
 
   if (receiverId.toString() === senderId.toString()) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "You cannot message yourself.",
-    );
+    throw new ApiError(StatusCodes.BAD_REQUEST, "You cannot message yourself.");
   }
 
   const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
@@ -69,9 +63,6 @@ export const scheduleMessage = async (
   return { doc, message: "Message scheduled." };
 };
 
-/**
- * Moved from messages.controller.js:L796-807
- */
 export const getScheduled = async (userId, { to } = {}) => {
   const filter = { senderId: userId, status: "pending" };
   if (to && mongoose.Types.ObjectId.isValid(to)) {
@@ -83,9 +74,6 @@ export const getScheduled = async (userId, { to } = {}) => {
   return { list, message: "Scheduled messages." };
 };
 
-/**
- * Moved from messages.controller.js:L809-826
- */
 export const cancelScheduled = async (userId, scheduleId) => {
   assertValidId(scheduleId, "schedule ID");
 

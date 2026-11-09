@@ -8,9 +8,6 @@ import { assertValidCipher } from "../../utils/e2ee.js";
 import { MAX_FORWARD_TARGETS } from "../../constants/messages.constants.js";
 import { isExpired, isParticipantOf } from "../../utils/message-helpers.js";
 
-/**
- * Moved from messages.controller.js:L415-507
- */
 export const forwardMessage = async (
   userId,
   messageId,
