@@ -7,6 +7,7 @@ import * as chatSettingService from "../services/messaging/chat-setting.service.
 import * as reportService from "../services/messaging/message-report.service.js";
 import * as scheduleService from "../services/messaging/message-schedule.service.js";
 import * as locationService from "../services/messaging/message-location.service.js";
+import * as queryService from "../services/messaging/message-query.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -256,31 +257,11 @@ const messageController = {
   }),
 
   getMessage: asyncHandler(async (req, res) => {
-    const { id: userToChatId } = req.params;
-    const senderId = req.user._id;
-
-    assertValidId(userToChatId, "User ID");
-
-    const messages = await Message.find({
-      $and: [
-        {
-          $or: [
-            { senderId: senderId, receiverId: userToChatId },
-            { senderId: userToChatId, receiverId: senderId },
-          ],
-        },
-        notExpired(),
-      ],
-      deletedFor: { $ne: senderId },
-    })
-      .sort({ createdAt: 1 })
-      .populate("replyTo", REPLY_SELECT);
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      messages.map(formatMessage),
-      "User messages fetched successfully.",
-    ).send(res);
+    const { messages, message } = await queryService.getMessages(
+      req.user._id,
+      req.params.id,
+    );
+    return new ApiResponse(StatusCodes.OK, messages, message).send(res);
   }),
 
   sendMessage: asyncHandler(async (req, res) => {
@@ -664,80 +645,20 @@ const messageController = {
   }),
 
   getPinned: asyncHandler(async (req, res) => {
-    const userId = req.user._id;
-    const { id: otherId } = req.params;
-
-    assertValidId(otherId, "user ID");
-
-    const pinned = await Message.find({
-      $and: [
-        {
-          $or: [
-            { senderId: userId, receiverId: otherId },
-            { senderId: otherId, receiverId: userId },
-          ],
-        },
-        notExpired(),
-      ],
-      isPinned: true,
-      isDeleted: { $ne: true },
-      deletedFor: { $ne: userId },
-    })
-      .sort({ pinnedAt: -1 })
-      .populate("replyTo", REPLY_SELECT);
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      pinned.map(formatMessage),
-      "Pinned messages.",
-    ).send(res);
+    const { pinned, message } = await queryService.getPinned(
+      req.user._id,
+      req.params.id,
+    );
+    return new ApiResponse(StatusCodes.OK, pinned, message).send(res);
   }),
 
   searchMessages: asyncHandler(async (req, res) => {
-    const userId = req.user._id;
-    const { id: otherId } = req.params;
-    const q = String(req.query.q || "").trim();
-    const limit = Math.min(Number(req.query.limit) || 30, 50);
-
-    assertValidId(otherId, "user ID");
-
-    if (q.length < 2) {
-      return new ApiResponse(
-        StatusCodes.OK,
-        [],
-        "Type at least 2 characters.",
-      ).send(res);
-    }
-
-    const results = await Message.find({
-      $and: [
-        {
-          $or: [
-            { senderId: userId, receiverId: otherId },
-            { senderId: otherId, receiverId: userId },
-          ],
-        },
-        notExpired(),
-      ],
-      deletedFor: { $ne: userId },
-      isDeleted: { $ne: true },
-      e2ee: { $ne: true },
-      text: { $regex: escapeRegex(q), $options: "i" },
-    })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .select("senderId receiverId text createdAt");
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      results.map((m) => ({
-        id: m._id,
-        senderId: m.senderId,
-        text: m.text,
-        createdAt: m.createdAt,
-      })),
-      "Search results.",
-    ).send(res);
+    const { results, message } = await queryService.searchMessages(
+      req.user._id,
+      req.params.id,
+      req.query,
+    );
+    return new ApiResponse(StatusCodes.OK, results, message).send(res);
   }),
 
   scheduleMessage: asyncHandler(async (req, res) => {
