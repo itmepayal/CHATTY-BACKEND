@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import fs from "fs";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
+import * as chatSettingService from "../services/messaging/chat-setting.service.js";
 import User from "../models/users.model.js";
 import Message from "../models/message.model.js";
 import ScheduledMessage from "../models/scheduled-message.model.js";
@@ -1095,11 +1096,10 @@ const messageController = {
   }),
 
   getDisappearing: asyncHandler(async (req, res) => {
-    const { id: otherId } = req.params;
-    assertValidId(otherId, "user ID");
-
-    const seconds = await getDisappearAfter(req.user._id, otherId);
-
+    const { seconds } = await chatSettingService.getDisappearing(
+      req.user._id,
+      req.params.id,
+    );
     return new ApiResponse(
       StatusCodes.OK,
       { seconds },
@@ -1108,80 +1108,24 @@ const messageController = {
   }),
 
   setDisappearing: asyncHandler(async (req, res) => {
-    const { id: otherId } = req.params;
-    const userId = req.user._id;
-    const seconds = Number(req.body.seconds);
-
-    assertValidId(otherId, "user ID");
-
-    if (otherId.toString() === userId.toString()) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user.");
-    }
-    if (!ALLOWED_TIMERS.includes(seconds)) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid timer value.");
-    }
-
-    await assertCanMessage(userId, otherId);
-
-    await ChatSetting.findOneAndUpdate(
-      { pairKey: pairKeyOf(userId, otherId) },
-      { disappearAfter: seconds, updatedBy: userId },
-      { upsert: true },
+    const { seconds, message } = await chatSettingService.setDisappearing(
+      req.user._id,
+      req.params.id,
+      req.body.seconds,
     );
-
-    io.to(userId.toString()).emit("disappearingUpdated", {
-      userId: otherId.toString(),
-      seconds,
-      by: userId,
-    });
-    io.to(otherId.toString()).emit("disappearingUpdated", {
-      userId: userId.toString(),
-      seconds,
-      by: userId,
-    });
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      { seconds },
-      seconds
-        ? "Disappearing messages turned on."
-        : "Disappearing messages turned off.",
-    ).send(res);
+    return new ApiResponse(StatusCodes.OK, { seconds }, message).send(res);
   }),
 
   setArchive: asyncHandler(async (req, res) => {
-    const { id: otherId } = req.params;
-    const userId = req.user._id;
-    const archived = req.body.archived === true || req.body.archived === "true";
-
-    assertValidId(otherId, "user ID");
-
-    if (otherId.toString() === userId.toString()) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user.");
-    }
-    if (!(await User.exists({ _id: otherId }))) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
-    }
-
-    if (archived) {
-      await ChatArchive.updateOne(
-        { ownerId: userId, otherId },
-        { $setOnInsert: { ownerId: userId, otherId } },
-        { upsert: true },
-      );
-    } else {
-      await ChatArchive.deleteOne({ ownerId: userId, otherId });
-    }
-
-    io.to(userId.toString()).emit("chatArchived", {
-      userId: otherId.toString(),
-      archived,
-    });
-
+    const { userId, archived, message } = await chatSettingService.setArchive(
+      req.user._id,
+      req.params.id,
+      req.body.archived,
+    );
     return new ApiResponse(
       StatusCodes.OK,
-      { userId: otherId, archived },
-      archived ? "Chat archived." : "Chat unarchived.",
+      { userId, archived },
+      message,
     ).send(res);
   }),
 
