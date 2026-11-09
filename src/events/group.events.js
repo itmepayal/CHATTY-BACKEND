@@ -55,6 +55,16 @@ export const emitToGroupRoom = (groupId, event, payload) => {
 };
 
 /**
+ * Emits an event directly to a single user's personal room.
+ * @param {string} userId
+ * @param {string} event
+ * @param {any} payload
+ */
+export const emitToUser = (userId, event, payload) => {
+  io.to(String(userId)).emit(event, payload);
+};
+
+/**
  * Broadcasts message edit events to both active room subscribers and personal member rooms.
  * Dual emission ensures clients actively viewing the conversation receive immediate DOM updates,
  * while background/other-tab clients receive conversation list previews without subscribing to all rooms.
@@ -127,16 +137,25 @@ export const broadcastGroupKeysUpdated = (userIds, payload) => {
 };
 
 /**
- * Emits key rotation requirement to all group members.
- * @param {Object} group
+ * Emits key rotation requirement to targeted user IDs (e.g. admins) or all group members.
+ * @param {string[]|Object} targets - Array of user IDs or a group object
  * @param {Object} payload
  */
-export const broadcastGroupKeyRotationRequired = (group, payload) => {
-  emitToGroupMembers(
-    group,
-    GROUP_SOCKET_EVENTS.GROUP_KEY_ROTATION_REQUIRED,
-    payload,
-  );
+export const broadcastGroupKeyRotationRequired = (targets, payload) => {
+  if (Array.isArray(targets)) {
+    targets.forEach((uid) =>
+      io.to(String(uid)).emit(
+        GROUP_SOCKET_EVENTS.GROUP_KEY_ROTATION_REQUIRED,
+        payload,
+      ),
+    );
+  } else if (targets?.members) {
+    emitToGroupMembers(
+      targets,
+      GROUP_SOCKET_EVENTS.GROUP_KEY_ROTATION_REQUIRED,
+      payload,
+    );
+  }
 };
 
 /**

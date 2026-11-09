@@ -35,6 +35,7 @@ import {
   emitGroupConversation,
   emitMemberConversation,
   validateGroupMessageInput,
+  endShare,
 } from "./group.service.js";
 
 /**
@@ -293,6 +294,10 @@ export const editGroupMessageService = async ({
         GROUP_ERROR_MESSAGES.CANNOT_CHANGE_ENCRYPTION,
       );
     }
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Message could not be edited.",
+    );
   }
 
   const payload = formatGroupMessage(updatedMessage);
@@ -330,9 +335,10 @@ export const deleteGroupMessageService = async ({
 
   // Deactivate active LocationShare if deleted message was a live location
   if (message.location?.shareId) {
-    await LocationShare.updateOne(
-      { _id: message.location.shareId },
-      { $set: { status: "stopped", endedAt: new Date() } },
+    await endShare(
+      group,
+      { _id: message.location.shareId, messageId: message._id },
+      "stopped",
     );
   }
 

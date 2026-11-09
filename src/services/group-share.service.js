@@ -182,16 +182,6 @@ export const updateGroupShareService = async ({ group, me, shareId, body }) => {
     );
   }
 
-  const key = String(shareId);
-  const nowMs = Date.now();
-  if (nowMs - (lastUpdateAt.get(key) || 0) < MIN_LOCATION_UPDATE_INTERVAL_MS) {
-    return { skipped: true, shareId: key };
-  }
-  if (lastUpdateAt.size > 5000) lastUpdateAt.clear();
-  lastUpdateAt.set(key, nowMs);
-
-  const now = new Date();
-
   const existingShare = await LocationShare.findById(shareId);
   if (!existingShare || String(existingShare.groupId) !== String(group._id)) {
     throw new ApiError(
@@ -207,6 +197,16 @@ export const updateGroupShareService = async ({ group, me, shareId, body }) => {
     member: null,
     action: "update",
   });
+
+  const key = String(shareId);
+  const nowMs = Date.now();
+  if (nowMs - (lastUpdateAt.get(key) || 0) < MIN_LOCATION_UPDATE_INTERVAL_MS) {
+    return { skipped: true, shareId: key };
+  }
+  if (lastUpdateAt.size > 5000) lastUpdateAt.clear();
+  lastUpdateAt.set(key, nowMs);
+
+  const now = new Date();
 
   if (existingShare.status !== "active" || existingShare.expiresAt <= now) {
     lastUpdateAt.delete(key);

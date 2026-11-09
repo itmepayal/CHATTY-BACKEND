@@ -10,6 +10,7 @@ import GroupArchive, {
 import LocationShare from "../models/location-share.model.js";
 import Contact from "../models/contact.model.js";
 import User from "../models/users.model.js";
+import GroupCall from "../models/group-call.model.js";
 import { deleteFileToCloudinary } from "../config/cloudinary.config.js";
 import { GROUP_SOCKET_EVENTS } from "../constants/group-events.constants.js";
 import {
@@ -28,6 +29,7 @@ import {
   joinGroupRoom,
   leaveGroupRoom,
   emitToGroupMembers,
+  emitToUser,
   broadcastGroupDeleted,
   broadcastGroupArchiveChanged,
   broadcastGroupKeyRotationRequired,
@@ -61,15 +63,28 @@ export const getLatestVersions = async (groupIds) => {
 };
 
 export const storeGroupKeys = async (groupId, entries, wrappedBy) => {
-  const docs = entries.map((e) => ({
-    groupId,
-    userId: e.userId,
-    version: e.version,
-    wrappedKey: e.wrappedKey,
-    iv: e.iv,
-    wrappedBy,
+  if (!entries?.length) return;
+  const ops = entries.map((e) => ({
+    updateOne: {
+      filter: {
+        groupId,
+        userId: e.userId,
+        version: e.version,
+      },
+      update: {
+        $setOnInsert: {
+          groupId,
+          userId: e.userId,
+          version: e.version,
+          wrappedKey: e.wrappedKey,
+          iv: e.iv,
+          wrappedBy,
+        },
+      },
+      upsert: true,
+    },
   }));
-  await GroupKey.insertMany(docs, { ordered: false });
+  await GroupKey.bulkWrite(ops, { ordered: false });
 };
 
 export const requestKeyRotation = async (group, reason) => {
@@ -77,11 +92,9 @@ export const requestKeyRotation = async (group, reason) => {
   const adminIds = group.members
     .filter((m) => m.role === "admin")
     .map((m) => sid(m.userId));
-  adminIds.forEach((uid) => {
-    emitToGroupMembers(group, GROUP_SOCKET_EVENTS.GROUP_KEY_ROTATION_REQUIRED, {
-      groupId: String(group._id),
-      reason,
-    });
+  broadcastGroupKeyRotationRequired(adminIds, {
+    groupId: String(group._id),
+    reason,
   });
 };
 
@@ -317,9 +330,7 @@ export const emitGroupToMembers = async (
       blockedSet,
     );
 
-    emitToGroupMembers(group, event, personalized, [
-      ...memberIds.filter((id) => id !== uid),
-    ]);
+    emitToUser(uid, event, personalized);
   }
 };
 
@@ -333,12 +344,9 @@ export const emitToViewers = async (group, sharerId, event, payload) => {
   const allowed = memberIds.filter(
     (id) => !blockers.has(id) && !blockedSet.has(id),
   );
-  emitToGroupMembers(
-    group,
-    event,
-    payload,
-    memberIds.filter((id) => !allowed.includes(id)),
-  );
+  for (const uid of allowed) {
+    emitToUser(uid, event, payload);
+  }
 };
 
 export const getUnread = (groupId, userId, joinedAt, blockedIds) =>
@@ -446,12 +454,7 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
             : null,
         };
 
-    emitToGroupMembers(
-      group,
-      GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE,
-      memberPayload,
-      [...memberIds.filter((mId) => mId !== id)],
-    );
+    emitToUser(id, GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE, memberPayload);
   }
 
   emitGroupConversation(group);
@@ -547,6 +550,7 @@ export const destroyGroup = async (group) => {
   await GroupArchive.deleteMany({ groupId: group._id });
   await LocationShare.deleteMany({ groupId: group._id });
   await GroupKey.deleteMany({ groupId: group._id });
+  await GroupCall.deleteMany({ groupId: group._id });
   await Group.deleteOne({ _id: group._id });
 
   await Promise.allSettled([
@@ -701,11 +705,13 @@ export const getMyGroupsList = async (me) => {
   const myBlockedSet = new Set(blocked.map(String));
   const fullBlockedSet = new Set([...blockedMeSet, ...myBlockedSet]);
 
-  return Promise.all(
+  const formattedGroups = await Promise.all(
     groups.map(async (g) => {
+      const mine = g.members.find((m) => sid(m.userId) === String(me));
+      const joinedAt = mine?.joinedAt || new Date(0);
       const v = versions.get(String(g._id)) || 0;
-      const unreadCount = await getUnread(g._id, me, new Date(0), blocked);
-      const last = await getLast(g._id, new Date(0), blocked);
+      const unreadCount = await getUnread(g._id, me, joinedAt, blocked);
+      const last = await getLast(g._id, joinedAt, blocked);
 
       let formattedLast = null;
       if (last) {
@@ -736,6 +742,10 @@ export const getMyGroupsList = async (me) => {
         fullBlockedSet,
       );
     }),
+  );
+
+  return formattedGroups.sort(
+    (a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0),
   );
 };
 
