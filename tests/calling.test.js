@@ -6,12 +6,12 @@ import {
 import { createAndLoginUsers } from "./auth-helper.js";
 import request from "supertest";
 import { io as ioClient } from "socket.io-client";
-import Group from "../src/models/group.model.js";
-import Call from "../src/models/call.model.js";
-import GroupCall from "../src/models/group-call.model.js";
-import User from "../src/models/users.model.js";
-import Contact from "../src/models/contact.model.js";
-import { socketLimiter } from "../src/utils/socket-rate-limit.js";
+import Group from "../src/modules/groups/models/group.model.js";
+import Call from "../src/modules/calling/models/call.model.js";
+import GroupCall from "../src/modules/calling/models/group-call.model.js";
+import User from "../src/modules/users/models/users.model.js";
+import Contact from "../src/modules/contacts/models/contact.model.js";
+import { socketLimiter } from "../src/infrastructure/socket/socket-rate-limit.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -485,7 +485,7 @@ async function runCallingTests() {
 
     await testCase("[1-1 Security] WebRTC SDP and ICE candidate payload validation and sanitization (C1, C2)", async () => {
       // Direct validator tests
-      const { validateSdp, validateIceCandidate } = await import("../src/utils/webrtc-validator.js");
+      const { validateSdp, validateIceCandidate } = await import("../src/modules/calling/signaling/webrtc-validator.js");
 
       // SDP type matching and rejection of pranswer / rollback
       assert(validateSdp({ type: "offer", sdp: "v=0..." }, "offer") !== null, "Valid offer passes");
@@ -832,7 +832,7 @@ async function runCallingTests() {
       });
 
       // Create test call records for each
-      const { createCallRecord } = await import("../src/services/calls/call.service.js");
+      const { createCallRecord } = await import("../src/modules/calling/services/call.service.js");
       await Promise.all([
         createCallRecord({ callerId: alice.user._id, receiverId: userNobody._id, type: "audio", status: "completed", duration: 10 }),
         createCallRecord({ callerId: alice.user._id, receiverId: userContactsWithAlice._id, type: "audio", status: "completed", duration: 10 }),

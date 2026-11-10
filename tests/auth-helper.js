@@ -1,7 +1,7 @@
 import request from "supertest";
 import bcrypt from "bcryptjs";
 import { io as ioClient } from "socket.io-client";
-import User from "../src/models/users.model.js";
+import User from "../src/modules/users/models/users.model.js";
 
 export const TEST_PASSWORD = "Password123!";
 

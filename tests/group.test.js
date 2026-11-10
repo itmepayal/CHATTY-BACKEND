@@ -9,12 +9,12 @@ import {
   deletedAssets,
 } from "./test-env.js";
 import { createAndLoginUsers } from "./auth-helper.js";
-import Group from "../src/models/group.model.js";
-import GroupMessage from "../src/models/group-message.model.js";
-import GroupKey from "../src/models/group-key.model.js";
-import LocationShare from "../src/models/location-share.model.js";
-import { createGroupWithMembers } from "../src/services/groups/group-member.service.js";
-import { endShare } from "../src/services/groups/group.service.js";
+import Group from "../src/modules/groups/models/group.model.js";
+import GroupMessage from "../src/modules/groups/models/group-message.model.js";
+import GroupKey from "../src/modules/groups/models/group-key.model.js";
+import LocationShare from "../src/modules/messaging/models/location-share.model.js";
+import { createGroupWithMembers } from "../src/modules/groups/services/group-member.service.js";
+import { endShare } from "../src/modules/groups/services/group.service.js";
 import {
   sendMessageLimiter,
   settingsLimiter,

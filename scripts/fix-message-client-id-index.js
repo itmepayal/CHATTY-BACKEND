@@ -14,7 +14,7 @@
 
 import mongoose from "mongoose";
 import "../src/config/env.config.js";
-import { mongoUri, mongoDbName } from "../src/constants/constants.js";
+import { mongoUri, mongoDbName } from "../src/shared/constants/app.constants.js";
 
 async function runMigration() {
   console.log("[Migration] Connecting to MongoDB...");

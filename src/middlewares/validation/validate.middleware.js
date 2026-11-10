@@ -1,5 +1,5 @@
 import { StatusCodes } from "http-status-codes";
-import ApiError from "../../utils/api-error.js";
+import ApiError from "../../shared/errors/api-error.js";
 
 /**
  * Centralized Zod request validation middleware factory.

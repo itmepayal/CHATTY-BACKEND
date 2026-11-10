@@ -7,7 +7,7 @@ import {
   MAX_MEDIA_FILE_SIZE,
   BLOCKED_EXTENSIONS,
   UPLOAD_DIR as UPLOAD_DIR_CONST,
-} from "../constants/messaging/messages.constants.js";
+} from "../modules/messaging/constants/messages.constants.js";
 
 const UPLOAD_DIR = path.resolve(UPLOAD_DIR_CONST);
 
@@ -42,7 +42,7 @@ export const enforceTypeSizeLimit = (req, res, next) => {
   const limit = isMedia ? MAX_MEDIA_FILE_SIZE : MAX_NORMAL_FILE_SIZE;
 
   if (file.size > limit) {
-    fs.unlink(file.path, () => { });
+    fs.unlink(file.path, () => {});
     return res.status(413).json({
       success: false,
       message: `File too large. Max ${Math.round(limit / 1024 / 1024)}MB allowed.`,
