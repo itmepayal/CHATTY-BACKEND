@@ -16,9 +16,9 @@ import {
   USER_STATUS,
   CONTACT_ERROR_MESSAGES,
   CONTACT_SUCCESS_MESSAGES,
-} from "../../constants/contact.constants.js";
-import { CHAT_LIST_USER_FIELDS } from "../../constants/user-fields.constants.js";
-import * as contactRepo from "../../repositories/contact.repository.js";
+} from "../../constants/contacts/contact.constants.js";
+import { CHAT_LIST_USER_FIELDS } from "../../constants/users/user-fields.constants.js";
+import * as contactRepo from "../../repositories/contacts/contact.repository.js";
 import * as contactEvents from "../../events/contact.events.js";
 import { filterUsersForViewer } from "../privacy/privacy-visibility.service.js";
 

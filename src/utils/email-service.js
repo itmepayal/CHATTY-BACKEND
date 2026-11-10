@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { clientUrl } from "../constants/constants.js";
+import { clientUrl } from "../constants/shared/app.constants.js";
 
 let resendClient = null;
 function getResend() {

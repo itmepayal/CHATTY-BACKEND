@@ -2,7 +2,7 @@ import {
   MAX_NICKNAME_LENGTH,
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
-} from "../constants/contact.constants.js";
+} from "../constants/contacts/contact.constants.js";
 
 /**
  * Sanitizes and bounds a contact nickname string.

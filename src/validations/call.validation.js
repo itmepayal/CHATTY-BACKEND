@@ -2,7 +2,7 @@ import { z } from "zod";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
 import { isValidObjectId } from "../utils/object-id.util.js";
-import { CALL_ERROR_MESSAGES } from "../constants/call.constants.js";
+import { CALL_ERROR_MESSAGES } from "../constants/calling/call.constants.js";
 import { objectIdSchema } from "./common.validation.js";
 
 // --- Zod Schemas ---

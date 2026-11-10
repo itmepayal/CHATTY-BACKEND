@@ -3,7 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import {
   TWO_FA_RATE_WINDOW_MS,
   TWO_FA_MAX_ATTEMPTS,
-} from "../constants/rate-limit.constants.js";
+} from "../constants/shared/rate-limit.constants.js";
 
 const failedAttempts = new Map();
 const WINDOW_MS = TWO_FA_RATE_WINDOW_MS;

@@ -13,7 +13,7 @@ import {
   accessToken as accessTokenSecret,
   refreshTokenSecret,
   AUTH_MESSAGES,
-} from "../../constants/auth.constants.js";
+} from "../../constants/auth/auth.constants.js";
 import {
   normalizeEmail,
   validateRegisterInput,

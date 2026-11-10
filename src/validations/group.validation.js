@@ -7,7 +7,7 @@ import {
   GROUP_NAME_MAX,
   GROUP_ROLES,
   GROUP_ERROR_MESSAGES,
-} from "../constants/group.constants.js";
+} from "../constants/group/index.js";
 import { objectIdSchema } from "./common.validation.js";
 
 // --- Zod Schemas ---

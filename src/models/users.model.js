@@ -6,13 +6,13 @@ import {
   accessTokenExpiresIn,
   refreshTokenSecret,
   refreshTokenExpiresIn,
-} from "../constants/constants.js";
+} from "../constants/auth/auth.constants.js";
 
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
-import { VIS } from "../constants/constants.js";
+import { VIS } from "../constants/privacy/privacy.constants.js";
 
 export { VIS };
 

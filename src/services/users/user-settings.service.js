@@ -15,7 +15,7 @@ import {
   APPEARANCE_BOOL_FIELDS,
   APPEARANCE_DB_KEY,
   VIS,
-} from "../../constants/constants.js";
+} from "../../constants/privacy/privacy.constants.js";
 import { refreshPrivacy } from "../../lib/socket.js";
 
 const PRIVACY_SELECT =
@@ -86,18 +86,18 @@ export const setPrivacy = async (userId, body = {}) => {
   if (visBody.onlineStatusVisibility) {
     $set.showOnlineStatus = visBody.onlineStatusVisibility !== "nobody";
   } else if (boolBody.showOnlineStatus !== undefined) {
-    $set.onlineStatusVisibility = boolBody.showOnlineStatus ? "everyone" : "nobody";
+    $set.onlineStatusVisibility = boolBody.showOnlineStatus
+      ? "everyone"
+      : "nobody";
   }
 
   if (!Object.keys($set).length) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "No privacy fields provided.");
   }
 
-  const updated = await userRepository.findByIdAndUpdate(
-    userId,
-    { $set },
-    { new: true, runValidators: true },
-  ).select(PRIVACY_SELECT);
+  const updated = await userRepository
+    .findByIdAndUpdate(userId, { $set }, { new: true, runValidators: true })
+    .select(PRIVACY_SELECT);
 
   if (!updated) {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
@@ -109,9 +109,9 @@ export const setPrivacy = async (userId, body = {}) => {
 };
 
 export const getChatPreferences = async (userId) => {
-  const user = await userRepository.findById(userId).select(
-    "enterToSend largeEmoji autoScroll",
-  );
+  const user = await userRepository
+    .findById(userId)
+    .select("enterToSend largeEmoji autoScroll");
   if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
   return {
@@ -124,11 +124,9 @@ export const getChatPreferences = async (userId) => {
 export const setChatPreferences = async (userId, body) => {
   const $set = assertBooleanFields(body, CHAT_PREF_FIELDS, "chat-pref");
 
-  const updated = await userRepository.findByIdAndUpdate(
-    userId,
-    { $set },
-    { new: true, runValidators: true },
-  ).select("enterToSend largeEmoji autoScroll");
+  const updated = await userRepository
+    .findByIdAndUpdate(userId, { $set }, { new: true, runValidators: true })
+    .select("enterToSend largeEmoji autoScroll");
 
   if (!updated) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
@@ -140,9 +138,11 @@ export const setChatPreferences = async (userId, body) => {
 };
 
 export const getAppearanceSettings = async (userId) => {
-  const user = await userRepository.findById(userId).select(
-    "appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
-  );
+  const user = await userRepository
+    .findById(userId)
+    .select(
+      "appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
+    );
   if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
   return {
@@ -204,13 +204,11 @@ export const setAppearanceSettings = async (userId, body) => {
       "No appearance fields provided.",
     );
 
-  const updated = await userRepository.findByIdAndUpdate(
-    userId,
-    { $set },
-    { new: true, runValidators: true },
-  ).select(
-    "appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
-  );
+  const updated = await userRepository
+    .findByIdAndUpdate(userId, { $set }, { new: true, runValidators: true })
+    .select(
+      "appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
+    );
 
   if (!updated) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 

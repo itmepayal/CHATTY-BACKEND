@@ -8,7 +8,7 @@ import {
   CALL_STATUS,
   CALL_SOCKET_EVENTS,
   CALL_LIMITS,
-} from "../constants/call.constants.js";
+} from "../constants/calling/call.constants.js";
 import {
   validateSdp,
   validateIceCandidate,
@@ -16,7 +16,7 @@ import {
 } from "../utils/webrtc-validator.js";
 import { createGroupCallRecord } from "../services/calls/group-call.service.js";
 import { socketLimiter } from "../utils/socket-rate-limit.js";
-import { SOCKET_RATE_LIMITS } from "../constants/rate-limit.constants.js";
+import { SOCKET_RATE_LIMITS } from "../constants/shared/rate-limit.constants.js";
 
 const MAX_PARTICIPANTS = CALL_LIMITS.MAX_GROUP_CALL_PARTICIPANTS;
 const RING_TIMEOUT_MS = CALL_LIMITS.GROUP_RING_TIMEOUT_MS;

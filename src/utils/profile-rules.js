@@ -1,4 +1,4 @@
-import { GENDERS } from "../constants/constants.js";
+import { GENDERS } from "../constants/users/user-fields.constants.js";
 
 export const isValidTimeZone = (tz) => {
   try {

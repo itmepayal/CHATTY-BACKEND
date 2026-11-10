@@ -3,8 +3,8 @@ import ApiError from "../../utils/api-error.js";
 import * as userRepository from "../../repositories/users/user.repository.js";
 import * as groupKeyRepository from "../../repositories/groups/group-key.repository.js";
 import * as groupRepository from "../../repositories/groups/group.repository.js";
-import { GROUP_SOCKET_EVENTS } from "../../constants/group-events.constants.js";
-import { GROUP_ERROR_MESSAGES } from "../../constants/group.constants.js";
+import { GROUP_SOCKET_EVENTS } from "../../constants/group/group-events.constants.js";
+import { GROUP_ERROR_MESSAGES } from "../../constants/group/group.constants.js";
 import { canSetGroupKeys } from "../../policies/group.policy.js";
 import { parseKeyEntries } from "../../utils/e2ee.js";
 import { getGroupAndMember } from "../../utils/group-guard.js";
@@ -34,13 +34,15 @@ export const validateInitialKeyEntries = ({ keyEntries, me, memberIds }) => {
 };
 
 export const getMyKeysPayload = async (group, me) => {
-  const keys = await groupKeyRepository.find({ groupId: group._id, userId: me })
+  const keys = await groupKeyRepository
+    .find({ groupId: group._id, userId: me })
     .sort({ version: 1 })
     .lean();
 
   const wrapperIds = [...new Set(keys.map((k) => String(k.wrappedBy)))];
   const wrappers = wrapperIds.length
-    ? await userRepository.find({ _id: { $in: wrapperIds } })
+    ? await userRepository
+        .find({ _id: { $in: wrapperIds } })
         .select("+publicKey")
         .lean()
     : [];
@@ -69,7 +71,8 @@ export const getPendingKeyMembersPayload = async (group) => {
     return { notEncrypted: true, latestVersion: 0, pending: [] };
   }
 
-  const rows = await groupKeyRepository.find({ groupId: group._id })
+  const rows = await groupKeyRepository
+    .find({ groupId: group._id })
     .select("userId version")
     .lean();
 
@@ -91,9 +94,10 @@ export const getPendingKeyMembersPayload = async (group) => {
   }
 
   if (pending.length) {
-    const users = await userRepository.find({
-      _id: { $in: pending.map((p) => p.userId) },
-    })
+    const users = await userRepository
+      .find({
+        _id: { $in: pending.map((p) => p.userId) },
+      })
       .select("+publicKey")
       .lean();
     const pubMap = new Map(
@@ -191,7 +195,10 @@ export const applyGroupKeys = async ({ group, member, entries, me }) => {
     await storeGroupKeys(group._id, entries, me);
   } catch (error) {
     if (isNewVersion) {
-      await groupKeyRepository.deleteMany({ groupId: group._id, version: maxIncoming });
+      await groupKeyRepository.deleteMany({
+        groupId: group._id,
+        version: maxIncoming,
+      });
       await groupRepository.updateOne(
         { _id: group._id, keyVersion: maxIncoming },
         { keyVersion: latest },
@@ -201,7 +208,10 @@ export const applyGroupKeys = async ({ group, member, entries, me }) => {
   }
 
   if (isNewVersion) {
-    await groupRepository.updateOne({ _id: group._id }, { keyRotationPending: false });
+    await groupRepository.updateOne(
+      { _id: group._id },
+      { keyRotationPending: false },
+    );
   }
 
   const latestVersion = Math.max(latest, maxIncoming);
@@ -229,7 +239,12 @@ export const getPendingKeyMembersForRequest = async ({ groupId, me }) => {
   return getPendingKeyMembersPayload(group);
 };
 
-export const setGroupKeysForRequest = async ({ groupId, me, keys, version }) => {
+export const setGroupKeysForRequest = async ({
+  groupId,
+  me,
+  keys,
+  version,
+}) => {
   const { group, member } = await getGroupAndMember(groupId, me);
   const entries = parseKeyEntries(keys, version);
   return applyGroupKeys({ group, member, entries, me });
@@ -245,4 +260,3 @@ const groupKeyService = {
 };
 
 export default groupKeyService;
-

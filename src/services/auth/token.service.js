@@ -6,7 +6,7 @@ import * as sessionRepository from "../../repositories/auth/session.repository.j
 import {
   refreshTokenSecret,
   AUTH_MESSAGES,
-} from "../../constants/auth.constants.js";
+} from "../../constants/auth/auth.constants.js";
 
 export const extractRefreshToken = (req) =>
   req.cookies?.refreshToken ||

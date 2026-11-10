@@ -21,7 +21,7 @@ import {
   assertValidCipher,
   MAX_CIPHERTEXT_LENGTH,
 } from "../../../utils/e2ee.js";
-import { MAX_TEXT_LENGTH } from "../../../constants/messages.constants.js";
+import { MAX_TEXT_LENGTH } from "../../../constants/messaging/messages.constants.js";
 
 export const sendMessage = async (
   senderId,

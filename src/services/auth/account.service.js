@@ -5,7 +5,7 @@ import * as sessionRepository from "../../repositories/auth/session.repository.j
 import * as messageRepository from "../../repositories/messaging/message.repository.js";
 import * as groupRepository from "../../repositories/groups/group.repository.js";
 import * as groupMessageRepository from "../../repositories/groups/group-message.repository.js";
-import * as contactRepository from "../../repositories/contact.repository.js";
+import * as contactRepository from "../../repositories/contacts/contact.repository.js";
 import * as locationShareRepository from "../../repositories/messaging/location-share.repository.js";
 import * as groupKeyRepository from "../../repositories/groups/group-key.repository.js";
 import * as scheduledMessageRepository from "../../repositories/messaging/scheduled-message.repository.js";
@@ -25,7 +25,7 @@ import {
   recordFail,
   clearFail,
 } from "../../utils/two-factor-rate-limit.js";
-import { CONFIRM_WORD } from "../../constants/auth.constants.js";
+import { CONFIRM_WORD } from "../../constants/auth/auth.constants.js";
 
 const getResourceType = (attachment, fallback = "image") =>
   attachment?.resourceType || fallback;

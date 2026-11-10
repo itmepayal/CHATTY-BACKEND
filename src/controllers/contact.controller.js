@@ -1,7 +1,7 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import { StatusCodes } from "http-status-codes";
 import ApiResponse from "../utils/api-response.js";
-import { CONTACT_SUCCESS_MESSAGES } from "../constants/contact.constants.js";
+import { CONTACT_SUCCESS_MESSAGES } from "../constants/contacts/contact.constants.js";
 import * as contactService from "../services/contacts/contact.service.js";
 
 export const searchUsers = asyncHandler(async (req, res) => {

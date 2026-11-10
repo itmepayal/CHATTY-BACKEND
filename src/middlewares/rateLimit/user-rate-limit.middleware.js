@@ -2,7 +2,7 @@ import {
   createRateLimiter,
   defaultUserKeyGenerator,
 } from "./rate-limit.factory.js";
-import { RATE_LIMIT_CONFIG } from "../../constants/rate-limit.constants.js";
+import { RATE_LIMIT_CONFIG } from "../../constants/shared/rate-limit.constants.js";
 
 export const sendMessageLimiter = createRateLimiter({
   windowMs: RATE_LIMIT_CONFIG.SEND_MESSAGE.windowMs,

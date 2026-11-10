@@ -1,7 +1,7 @@
 import {
   accessCookieOptions,
   refreshCookieOptions,
-} from "../../constants/auth.constants.js";
+} from "../../constants/auth/auth.constants.js";
 
 export const setAuthCookies = (res, accessToken, refreshToken) => {
   res

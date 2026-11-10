@@ -4,7 +4,7 @@ import { uploadFileToCloudinary } from "../../../config/cloudinary.config.js";
 import {
   MAX_VOICE_SECONDS,
   MAX_VIDEO_SECONDS,
-} from "../../../constants/messages.constants.js";
+} from "../../../constants/messaging/messages.constants.js";
 
 export const processAttachment = async (
   file,

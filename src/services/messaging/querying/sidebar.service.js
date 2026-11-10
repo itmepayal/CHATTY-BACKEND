@@ -1,6 +1,6 @@
 import * as userRepository from "../../../repositories/users/user.repository.js";
 import * as messageRepository from "../../../repositories/messaging/message.repository.js";
-import * as contactRepository from "../../../repositories/contact.repository.js";
+import * as contactRepository from "../../../repositories/contacts/contact.repository.js";
 import { getArchivedSet } from "../../../repositories/messaging/chat-setting.repository.js";
 import { assertValidId, escapeRegex } from "../../../utils/validators.js";
 import {

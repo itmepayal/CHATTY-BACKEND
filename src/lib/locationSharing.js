@@ -5,7 +5,7 @@ import { groupRoom } from "./socket-state.js";
 import {
   MIN_LOCATION_UPDATE_INTERVAL_MS,
   LOCATION_EXPIRY_SWEEP_INTERVAL_MS,
-} from "../constants/constants.js";
+} from "../constants/messaging/messages.constants.js";
 
 const MIN_INTERVAL_MS = MIN_LOCATION_UPDATE_INTERVAL_MS;
 const isObjectId = (v) => typeof v === "string" && /^[a-f\d]{24}$/i.test(v);

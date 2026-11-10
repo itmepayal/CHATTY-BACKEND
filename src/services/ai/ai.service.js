@@ -1,20 +1,18 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../utils/api-error.js";
-import { geminiApiKey } from "../../constants/constants.js";
+import { geminiApiKey } from "../../constants/shared/app.constants.js";
 import {
   AI_ATTEMPTS_PER_MODEL,
   AI_REQUEST_TIMEOUT_MS,
   AI_REQUEST_DEADLINE_MS,
   AI_RETRYABLE_STATUS,
-} from "../../constants/constants.js";
-import {
   AI_GENERATION_CONFIG,
   AI_FEATURES,
   AI_LABELS,
   AI_ERROR_MESSAGES,
-} from "../../constants/ai.constants.js";
-import { SYSTEM_PROMPTS } from "../../constants/aiPrompts.js";
+} from "../../constants/ai/ai.constants.js";
+import { SYSTEM_PROMPTS } from "../../constants/ai/ai-prompts.constants.js";
 import {
   validateText,
   validateTone,

@@ -1,7 +1,7 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import { StatusCodes } from "http-status-codes";
 import ApiResponse from "../utils/api-response.js";
-import { AI_SUCCESS_MESSAGES } from "../constants/ai.constants.js";
+import { AI_SUCCESS_MESSAGES } from "../constants/ai/ai.constants.js";
 import * as aiService from "../services/ai/ai.service.js";
 
 export const correctEnglish = asyncHandler(async (req, res) => {

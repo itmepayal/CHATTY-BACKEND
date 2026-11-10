@@ -7,18 +7,18 @@ import * as groupKeyRepository from "../../repositories/groups/group-key.reposit
 import * as groupArchiveRepository from "../../repositories/groups/group-archive.repository.js";
 import { getArchivedGroupSet } from "../../repositories/groups/group-archive.repository.js";
 import * as locationShareRepository from "../../repositories/messaging/location-share.repository.js";
-import * as contactRepository from "../../repositories/contact.repository.js";
+import * as contactRepository from "../../repositories/contacts/contact.repository.js";
 import * as userRepository from "../../repositories/users/user.repository.js";
-import * as groupCallRepository from "../../repositories/groups/group-call.repository.js";
+import * as groupCallRepository from "../../repositories/calling/group-call.repository.js";
 import { io } from "../../lib/socket.js";
 import { terminateGroupCallByGroup } from "../../lib/groupCallSignaling.js";
 import { deleteFileToCloudinary } from "../../config/cloudinary.config.js";
-import { GROUP_SOCKET_EVENTS } from "../../constants/group-events.constants.js";
+import { GROUP_SOCKET_EVENTS } from "../../constants/group/group-events.constants.js";
 import {
   MAX_GROUP_TEXT,
   MAX_CIPHERTEXT_LENGTH,
   GROUP_ERROR_MESSAGES,
-} from "../../constants/group.constants.js";
+} from "../../constants/group/index.js";
 import { parseBool, assertValidCipher } from "../../utils/e2ee.js";
 import {
   canViewSync,

@@ -2,7 +2,7 @@ import Message from "../models/message.model.js";
 import { io } from "../lib/socket.js";
 import { wipeMessage } from "../utils/message-cleanup.js";
 import { emitConversationUpdate } from "../utils/message-helpers.js";
-import { DISAPPEARING_SWEEP_INTERVAL_MS } from "../constants/constants.js";
+import { DISAPPEARING_SWEEP_INTERVAL_MS } from "../constants/messaging/messages.constants.js";
 
 export const sweepDisappearingMessages = async () => {
   try {

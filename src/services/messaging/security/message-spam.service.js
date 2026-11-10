@@ -11,7 +11,7 @@ import {
   SPAM_DUP_MAX,
   SPAM_NEW_CHAT_WINDOW_MS,
   SPAM_NEW_CHAT_MAX,
-} from "../../../constants/messages.constants.js";
+} from "../../../constants/messaging/messages.constants.js";
 
 const SPAM = {
   DUP_WINDOW_MS: SPAM_DUP_WINDOW_MS,

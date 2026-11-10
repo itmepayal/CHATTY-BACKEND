@@ -7,7 +7,7 @@ import {
   RECOVERY_CODE_COUNT,
   RECOVERY_CODE_BYTES,
   BCRYPT_ROUNDS_RECOVERY,
-} from "../constants/constants.js";
+} from "../constants/auth/auth.constants.js";
 
 authenticator.options = {
   window: 1,

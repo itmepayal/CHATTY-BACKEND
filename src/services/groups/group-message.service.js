@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../utils/api-error.js";
 import * as groupMessageRepository from "../../repositories/groups/group-message.repository.js";
-import * as contactRepository from "../../repositories/contact.repository.js";
+import * as contactRepository from "../../repositories/contacts/contact.repository.js";
 import { readClientId } from "../../utils/validators.js";
 import { parseBool, assertValidCipher } from "../../utils/e2ee.js";
 import { canViewSync } from "../privacy/privacy-visibility.service.js";
@@ -21,8 +21,8 @@ import {
 import {
   EDIT_WINDOW_MS,
   GROUP_ERROR_MESSAGES,
-} from "../../constants/group.constants.js";
-import { GROUP_SOCKET_EVENTS } from "../../constants/group-events.constants.js";
+} from "../../constants/group/index.js";
+import { GROUP_SOCKET_EVENTS } from "../../constants/group/group-events.constants.js";
 import {
   sid,
   formatGroupMessage,

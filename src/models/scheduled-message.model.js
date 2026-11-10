@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { MAX_CIPHERTEXT_LENGTH } from "../constants/constants.js";
+import { MAX_CIPHERTEXT_LENGTH } from "../constants/messaging/messages.constants.js";
 
 const ScheduledMessageSchema = new mongoose.Schema(
   {

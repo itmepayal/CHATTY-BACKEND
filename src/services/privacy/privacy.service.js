@@ -5,7 +5,7 @@
 
 import { StatusCodes } from "http-status-codes";
 import * as userRepository from "../../repositories/users/user.repository.js";
-import * as contactRepository from "../../repositories/contact.repository.js";
+import * as contactRepository from "../../repositories/contacts/contact.repository.js";
 import ApiError from "../../utils/api-error.js";
 import { isUserOnline, getPrivacy } from "../../lib/socket-state.js";
 import { toObjectId, isValidObjectId } from "../../utils/object-id.util.js";

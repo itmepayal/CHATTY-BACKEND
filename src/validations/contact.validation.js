@@ -6,7 +6,7 @@ import {
   MAX_NICKNAME_LENGTH,
   MAX_BULK_CONTACTS,
   CONTACT_ERROR_MESSAGES,
-} from "../constants/contact.constants.js";
+} from "../constants/contacts/contact.constants.js";
 import { objectIdSchema } from "./common.validation.js";
 
 export const userIdParamSchema = z.object({

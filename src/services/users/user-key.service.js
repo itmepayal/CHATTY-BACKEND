@@ -4,7 +4,7 @@
  */
 
 import { StatusCodes } from "http-status-codes";
-import * as userRepository from "../../repositories/users/user.repository.js";
+import * as userKeyRepository from "../../repositories/users/user-key.repository.js";
 import * as groupKeyRepository from "../../repositories/groups/group-key.repository.js";
 import ApiError from "../../utils/api-error.js";
 import { isValidObjectId } from "../../utils/object-id.util.js";
@@ -26,7 +26,7 @@ export const savePublicKey = async (userId, body) => {
 
   const publicKey = { kty: "EC", crv: "P-256", x: pk.x, y: pk.y };
 
-  const existing = await userRepository.findById(userId).select("+publicKey +password");
+  const existing = await userKeyRepository.findUserWithPublicKey(userId);
   if (!existing) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
   const same =
@@ -56,13 +56,10 @@ export const savePublicKey = async (userId, body) => {
     }
   }
 
-  const updated = await userRepository
-    .findByIdAndUpdate(
-      userId,
-      { $set: { publicKey, publicKeyUpdatedAt: new Date() } },
-      { new: true },
-    )
-    .select("+publicKey");
+  const updated = await userKeyRepository.updateUserPublicKey(
+    userId,
+    publicKey,
+  );
 
   if (!updated) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
@@ -81,9 +78,7 @@ export const fetchUserPublicKey = async (targetId) => {
   if (!isValidObjectId(targetId))
     throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
 
-  const user = await userRepository.findById(targetId).select(
-    "+publicKey publicKeyUpdatedAt",
-  );
+  const user = await userKeyRepository.findPublicKeyByUserId(targetId);
   if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
   if (!user.publicKey)

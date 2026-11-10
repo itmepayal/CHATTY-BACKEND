@@ -1,9 +1,9 @@
 import crypto from "crypto";
 import * as callRepository from "../../repositories/calling/call.repository.js";
 import * as userRepository from "../../repositories/users/user.repository.js";
-import * as contactRepository from "../../repositories/contact.repository.js";
+import * as contactRepository from "../../repositories/contacts/contact.repository.js";
 import { canViewSync } from "../privacy/privacy-visibility.service.js";
-import { CALL_LIMITS } from "../../constants/call.constants.js";
+import { CALL_LIMITS } from "../../constants/calling/call.constants.js";
 
 export const formatCallRecord = (
   c,

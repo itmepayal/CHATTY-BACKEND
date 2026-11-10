@@ -4,7 +4,7 @@ import {
   cloudinaryName,
   cloudinaryApiKey,
   cloudinaryApiSecret,
-} from "../constants/constants.js";
+} from "../constants/shared/app.constants.js";
 
 cloudinary.config({
   cloud_name: cloudinaryName,
@@ -23,7 +23,7 @@ const uploadFileToCloudinary = async (localFilePath) => {
     console.error("Error uploading file to Cloudinary:", error);
     return null;
   } finally {
-    await fs.unlink(localFilePath).catch(() => { });
+    await fs.unlink(localFilePath).catch(() => {});
   }
 };
 

@@ -8,7 +8,7 @@ import {
   AES_GCM_IV_BYTES,
   AES_GCM_TAG_BYTES,
   BASE64_ENCODING,
-} from "../constants/constants.js";
+} from "../constants/messaging/messages.constants.js";
 
 const IV_BYTES = AES_GCM_IV_BYTES;
 const GCM_TAG_BYTES = AES_GCM_TAG_BYTES;
@@ -19,7 +19,7 @@ const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 export {
   MAX_CIPHERTEXT_LENGTH,
   MAX_WRAPPED_KEY_LENGTH,
-} from "../constants/constants.js";
+} from "../constants/messaging/messages.constants.js";
 
 export const parseBool = (v) => v === true || v === "true";
 

@@ -15,8 +15,8 @@ import { parseBool, parseKeyEntries } from "../../utils/e2ee.js";
 import {
   MAX_GROUP_MEMBERS,
   GROUP_ERROR_MESSAGES,
-} from "../../constants/group.constants.js";
-import { GROUP_SOCKET_EVENTS } from "../../constants/group-events.constants.js";
+} from "../../constants/group/index.js";
+import { GROUP_SOCKET_EVENTS } from "../../constants/group/group-events.constants.js";
 import { assertCanAddToGroup } from "../privacy/privacy-visibility.service.js";
 import {
   canRemoveMember,

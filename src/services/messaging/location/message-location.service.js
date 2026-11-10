@@ -2,7 +2,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../utils/api-error.js";
 import * as messageRepository from "../../../repositories/messaging/message.repository.js";
 import * as locationShareRepository from "../../../repositories/messaging/location-share.repository.js";
-import { LIVE_DURATIONS_MIN } from "../../../constants/messages.constants.js";
+import { LIVE_DURATIONS_MIN } from "../../../constants/messaging/messages.constants.js";
 import { assertValidId, toNum, validCoords } from "../../../utils/validators.js";
 import { assertCanMessage } from "../../../utils/chat-guard.js";
 import { deliverMessage } from "../core/message.service.js";

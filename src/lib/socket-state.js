@@ -2,7 +2,7 @@ import User from "../models/users.model.js";
 
 export const groupRoom = (groupId) => `group:${groupId}`;
 
-export const onlineUsers = new Map(); // userId (string) -> Set of socket.ids (string)
+export const onlineUsers = new Map();
 
 export const DEFAULT_PRIVACY = {
   showOnlineStatus: true,

@@ -1,79 +1,232 @@
 import User from "../../models/users.model.js";
+import { toObjectId } from "../../utils/object-id.util.js";
 
-export const find = (filter) => User.find(filter);
+export const create = async (userData, options = {}) => {
+  if (options.session) {
+    const [user] = await User.create([userData], { session: options.session });
+    return user;
+  }
 
-export const exists = (filter) => User.exists(filter);
+  return User.create(userData);
+};
 
-export const findByEmail = (email) => User.findOne({ email });
+export const createUser = (userData, options) => create(userData, options);
 
-export const findByEmailWithLoginSecrets = (email) =>
-  User.findOne({ email }).select(
-    "+password +twoFactorSecret +twoFactorEnabled +loginAlerts",
-  );
+export const find = (filter = {}, projection, options = {}) => {
+  const query = User.find(filter);
 
-export const createUser = (userData) => User.create(userData);
+  if (projection) query.select(projection);
+  if (options.session) query.session(options.session);
 
-export const findById = (id) => User.findById(id);
+  return query;
+};
 
-export const findByIdSelect = (id, select) => User.findById(id).select(select);
+export const findOne = (filter = {}, projection, options = {}) => {
+  const query = User.findOne(filter);
 
-export const findByIdLeanSelect = (id, select) =>
-  User.findById(id).select(select).lean();
+  if (projection) query.select(projection);
+  if (options.session) query.session(options.session);
 
-export const findByIdAndUpdate = (id, update, options) =>
-  User.findByIdAndUpdate(id, update, options);
+  return query;
+};
+
+export const exists = async (filter, options = {}) => {
+  const query = User.exists(filter);
+
+  if (options.session) query.session(options.session);
+
+  const result = await query;
+
+  return Boolean(result);
+};
+
+export const existsById = async (id, options = {}) => {
+  const query = User.exists({ _id: toObjectId(id) });
+
+  if (options.session) query.session(options.session);
+
+  const result = await query;
+
+  return Boolean(result);
+};
+
+export const findByEmail = (email, options = {}) => {
+  const query = User.findOne({ email: String(email).toLowerCase() });
+
+  if (options.projection) query.select(options.projection);
+  if (options.session) query.session(options.session);
+
+  return query;
+};
+
+export const findByEmailWithLoginSecrets = (email, options = {}) => {
+  const query = User.findOne({
+    email: String(email).toLowerCase(),
+  }).select("+password +twoFactorSecret +twoFactorEnabled +loginAlerts");
+
+  if (options.session) query.session(options.session);
+
+  return query;
+};
+
+export const findById = (id, options = {}) => {
+  const query = User.findById(toObjectId(id));
+
+  if (options.projection) query.select(options.projection);
+  if (options.session) query.session(options.session);
+
+  return query;
+};
+
+export const findByIdSelect = (id, select, options = {}) => {
+  const query = User.findById(toObjectId(id)).select(select);
+
+  if (options.session) query.session(options.session);
+
+  return query;
+};
+
+export const findByIdLeanSelect = (id, select, options = {}) => {
+  const query = User.findById(toObjectId(id)).select(select);
+
+  if (options.session) query.session(options.session);
+
+  return query.lean();
+};
+
+export const findByIdAndUpdate = (id, update, options = {}) =>
+  User.findByIdAndUpdate(toObjectId(id), update, options);
 
 export const findByIdAndUpdateSelect = (id, update, options, select) =>
-  User.findByIdAndUpdate(id, update, options).select(select);
+  User.findByIdAndUpdate(toObjectId(id), update, options).select(select);
 
-export const findByIdAndDelete = (id, options) =>
-  User.findByIdAndDelete(id, options);
+export const updateById = async (id, update, options = { new: true }) => {
+  const query = User.findByIdAndUpdate(toObjectId(id), update, {
+    new: true,
+    runValidators: true,
+    ...options,
+  });
 
-export const existsById = (id) => User.exists({ _id: id });
+  if (options.session) query.session(options.session);
 
-export const existsUsernameExcept = (username, userId) =>
-  User.exists({ username, _id: { $ne: userId } });
+  return options.lean === false ? query : query.lean();
+};
 
-export const existsBlockedEitherWay = (a, b) =>
-  User.exists({
+export const updateOne = (filter, update, options = {}) =>
+  User.updateOne(filter, update, options);
+
+export const updateMany = (filter, update, options = {}) =>
+  User.updateMany(filter, update, options);
+
+export const findByIdAndDelete = (id, options = {}) =>
+  User.findByIdAndDelete(toObjectId(id), options);
+
+export const deleteById = (id, options) => findByIdAndDelete(id, options);
+
+export const existsUsernameExcept = async (username, userId, options = {}) => {
+  const query = User.exists({
+    username: String(username).toLowerCase(),
+    _id: { $ne: toObjectId(userId) },
+  });
+
+  if (options.session) query.session(options.session);
+
+  const found = await query;
+
+  return Boolean(found);
+};
+
+export const existsBlockedEitherWay = async (a, b, options = {}) => {
+  const query = User.exists({
     $or: [
-      { _id: a, blockedUsers: b },
-      { _id: b, blockedUsers: a },
+      { _id: toObjectId(a), blockedUsers: toObjectId(b) },
+      { _id: toObjectId(b), blockedUsers: toObjectId(a) },
     ],
   });
 
-export const existsViewerBlockedTarget = (viewerId, targetUserId) =>
-  User.exists({ _id: viewerId, blockedUsers: targetUserId });
+  if (options.session) query.session(options.session);
 
-export const findByResetToken = (hashedToken) =>
-  User.findOne({
+  const found = await query;
+
+  return Boolean(found);
+};
+
+export const existsViewerBlockedTarget = async (
+  viewerId,
+  targetUserId,
+  options = {},
+) => {
+  const query = User.exists({
+    _id: toObjectId(viewerId),
+    blockedUsers: toObjectId(targetUserId),
+  });
+
+  if (options.session) query.session(options.session);
+
+  const found = await query;
+
+  return Boolean(found);
+};
+
+export const findByResetToken = (hashedToken, options = {}) => {
+  const query = User.findOne({
     passwordResetToken: hashedToken,
     passwordResetExpires: { $gt: new Date() },
   }).select("+passwordResetToken +passwordResetExpires +tokenVersion");
 
-export const findByIds = (ids, select) => {
-  const query = User.find({ _id: { $in: ids } });
-  if (select) query.select(select);
+  if (options.session) query.session(options.session);
+
   return query;
 };
 
-export const findByIdsLean = (ids, select) => findByIds(ids, select).lean();
+export const findByIds = (ids, select, options = {}) => {
+  const query = User.find({
+    _id: { $in: ids.map(toObjectId) },
+  });
 
-export const findBlockersOf = (userIds, targetId) =>
-  User.find({ _id: { $in: userIds }, blockedUsers: targetId })
-    .select("_id")
-    .lean();
+  if (select) query.select(select);
+  if (options.session) query.session(options.session);
 
-export const pullRelationFromAll = (userId, options) =>
-  User.updateMany(
-    { $or: [{ blockedUsers: userId }, { favorites: userId }] },
-    { $pull: { blockedUsers: userId, favorites: userId } },
+  return query;
+};
+
+export const findByIdsLean = (ids, select, options = {}) =>
+  findByIds(ids, select, options).lean();
+
+export const findBlockersOf = (userIds, targetId, options = {}) => {
+  const query = User.find({
+    _id: { $in: userIds.map(toObjectId) },
+    blockedUsers: toObjectId(targetId),
+  }).select("_id");
+
+  if (options.session) query.session(options.session);
+
+  return query.lean();
+};
+
+export const pullRelationFromAll = (userId, options = {}) => {
+  const uid = toObjectId(userId);
+
+  return User.updateMany(
+    {
+      $or: [{ blockedUsers: uid }, { favorites: uid }],
+    },
+    {
+      $pull: {
+        blockedUsers: uid,
+        favorites: uid,
+      },
+    },
     options,
   );
+};
 
-export const findUsersMatching = (filter, select) => {
+export const findUsersMatching = (filter, select, options = {}) => {
   const query = User.find(filter);
+
   if (select) query.select(select);
+  if (options.session) query.session(options.session);
+
   return query;
 };
 
@@ -82,3 +235,36 @@ export const generateUserTokens = (userId, sessionId) =>
 
 export const startSession = () => User.startSession();
 
+const userRepository = Object.freeze({
+  create,
+  createUser,
+  find,
+  findOne,
+  exists,
+  existsById,
+  findByEmail,
+  findByEmailWithLoginSecrets,
+  findById,
+  findByIdSelect,
+  findByIdLeanSelect,
+  findByIdAndUpdate,
+  findByIdAndUpdateSelect,
+  findByIdAndDelete,
+  updateById,
+  updateOne,
+  updateMany,
+  deleteById,
+  existsUsernameExcept,
+  existsBlockedEitherWay,
+  existsViewerBlockedTarget,
+  findByResetToken,
+  findByIds,
+  findByIdsLean,
+  findBlockersOf,
+  pullRelationFromAll,
+  findUsersMatching,
+  generateUserTokens,
+  startSession,
+});
+
+export default userRepository;
