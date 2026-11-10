@@ -141,7 +141,7 @@ export async function setupTestEnvironment() {
   await mongoose.connect(testDbUri);
 
   // Import app & socket.io server
-  const { app, server, io } = await import("../src/lib/socket.js");
+  const { app, server, io } = await import("../src/infrastructure/socket/socket.js");
   await import("../src/app/app.js");
 
   appInstance = app;

@@ -10,18 +10,18 @@ import {
   deletedAssets,
 } from "./test-env.js";
 import { createAndLoginUsers, TEST_PASSWORD } from "./auth-helper.js";
-import Message from "../src/models/message.model.js";
-import ScheduledMessage from "../src/models/scheduled-message.model.js";
-import LocationShare from "../src/models/location-share.model.js";
-import Call from "../src/models/call.model.js";
-import ChatSetting from "../src/models/chat-setting.model.js";
-import ChatArchive from "../src/models/chat-archive.model.js";
-import Report from "../src/models/report.model.js";
-import User from "../src/models/users.model.js";
-import { privacyByUser, loadPrivacy } from "../src/lib/socket.js";
-import { isPrivateIp, safeFetch } from "../src/utils/link-preview.js";
-import { recoverStrandedJobs } from "../src/jobs/scheduler.js";
-import { sweepDisappearingMessages } from "../src/jobs/disappearing.js";
+import Message from "../src/modules/messaging/models/message.model.js";
+import ScheduledMessage from "../src/modules/messaging/models/scheduled-message.model.js";
+import LocationShare from "../src/modules/messaging/models/location-share.model.js";
+import Call from "../src/modules/calling/models/call.model.js";
+import ChatSetting from "../src/modules/messaging/models/chat-setting.model.js";
+import ChatArchive from "../src/modules/messaging/models/chat-archive.model.js";
+import Report from "../src/modules/messaging/models/report.model.js";
+import User from "../src/modules/users/models/users.model.js";
+import { privacyByUser, loadPrivacy } from "../src/infrastructure/socket/socket.js";
+import { isPrivateIp, safeFetch } from "../src/shared/utils/link-preview.js";
+import { recoverStrandedJobs } from "../src/modules/messaging/jobs/scheduler.js";
+import { sweepDisappearingMessages } from "../src/modules/messaging/jobs/disappearing.js";
 import {
   sendMessageLimiter,
   reactLimiter,
@@ -1524,7 +1524,7 @@ async function runAllTests() {
       });
 
       const { emitConversationUpdate } =
-        await import("../src/utils/message-helpers.js");
+        await import("../src/modules/messaging/utils/message-helpers.js");
       await emitConversationUpdate(charlieId, aliceId);
       await new Promise((r) => setTimeout(r, 100));
 
@@ -2744,7 +2744,7 @@ async function runAllTests() {
 
     // 26. Route-Table Snapshot (assert all 22 registered routes and method/path in order)
     {
-      const { default: router } = await import("../src/routes/message.routes.js");
+      const { default: router } = await import("../src/modules/messaging/routes/message.routes.js");
       const routes = [];
       router.stack.forEach((layer) => {
         if (layer.route) {

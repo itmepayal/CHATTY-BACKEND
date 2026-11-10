@@ -1,0 +1,10 @@
+export * from "./user.repository.js";
+export * from "./user-profile.repository.js";
+export * from "./user-settings.repository.js";
+export * from "./user-key.repository.js";
+export * from "./user-relation.repository.js";
+export { default as userRepository } from "./user.repository.js";
+export { default as userProfileRepository } from "./user-profile.repository.js";
+export { default as userSettingsRepository } from "./user-settings.repository.js";
+export { default as userKeyRepository } from "./user-key.repository.js";
+export { default as userRelationRepository } from "./user-relation.repository.js";

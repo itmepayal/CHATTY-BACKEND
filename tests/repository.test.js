@@ -25,7 +25,7 @@ import repositories, {
   callRepository,
   groupCallRepository,
   privacyRepository,
-} from "../src/repositories/index.js";
+} from "../src/modules/repositories.js";
 
 test("Repository Architecture Comprehensive Suite", async () => {
   await setupTestEnvironment();
