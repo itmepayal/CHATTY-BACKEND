@@ -1,11 +1,14 @@
-import mongoose from "mongoose";
-import User from "../../models/users.model.js";
-import Contact from "../../models/contact.model.js";
-import ApiError from "../../utils/api-error.js";
-import { StatusCodes } from "http-status-codes";
-import { isUserOnline, getPrivacy } from "../../lib/socket-state.js";
+/**
+ * Privacy Service
+ * Enforces user visibility rules, blocking checks, contact relationships, and data sanitization.
+ */
 
-const toObjectId = (id) => new mongoose.Types.ObjectId(id);
+import { StatusCodes } from "http-status-codes";
+import * as userRepository from "../../repositories/users/user.repository.js";
+import * as contactRepository from "../../repositories/contact.repository.js";
+import ApiError from "../../utils/api-error.js";
+import { isUserOnline, getPrivacy } from "../../lib/socket-state.js";
+import { toObjectId, isValidObjectId } from "../../utils/object-id.util.js";
 
 const SENSITIVE_KEYS = [
   "password",
@@ -44,7 +47,7 @@ export const isBlockedEitherWay = async (a, b) => {
   const bStr = String(b);
   if (aStr === bStr) return false;
 
-  const found = await User.exists({
+  const found = await userRepository.exists({
     $or: [
       { _id: a, blockedUsers: b },
       { _id: b, blockedUsers: a },
@@ -62,7 +65,7 @@ export const isContact = async (ownerId, contactId) => {
   const cStr = String(contactId);
   if (oStr === cStr) return true;
 
-  const found = await Contact.exists({ ownerId, contactId });
+  const found = await contactRepository.exists({ ownerId, contactId });
   return Boolean(found);
 };
 
@@ -71,7 +74,8 @@ export const isContact = async (ownerId, contactId) => {
  */
 export const getContactIdSet = async (userId) => {
   const me = String(userId);
-  const rows = await Contact.find({ ownerId: userId })
+  const rows = await contactRepository
+    .find({ ownerId: userId })
     .select("contactId")
     .lean();
   const set = new Set();
@@ -117,7 +121,10 @@ export const canViewSync = (visibility, ownerId, viewerId, contacts) => {
  * Get authoritative lastSeenVisibility for a user.
  */
 export const getLastSeenVisibility = async (userId) => {
-  const user = await User.findById(userId).select("lastSeenVisibility").lean();
+  const user = await userRepository
+    .findById(userId)
+    .select("lastSeenVisibility")
+    .lean();
   return user?.lastSeenVisibility ?? "contacts";
 };
 
@@ -125,7 +132,8 @@ export const getLastSeenVisibility = async (userId) => {
  * Get authoritative onlineStatusVisibility for a user.
  */
 export const getOnlineStatusVisibility = async (userId) => {
-  const user = await User.findById(userId)
+  const user = await userRepository
+    .findById(userId)
     .select("onlineStatusVisibility showOnlineStatus")
     .lean();
   if (!user) return "everyone";
@@ -140,7 +148,8 @@ export const canViewLastSeen = async (viewerId, targetUserId) => {
   if (String(viewerId) === String(targetUserId)) return true;
   if (await isBlockedEitherWay(viewerId, targetUserId)) return false;
 
-  const target = await User.findById(targetUserId)
+  const target = await userRepository
+    .findById(targetUserId)
     .select("lastSeenVisibility")
     .lean();
   if (!target) return false;
@@ -159,7 +168,8 @@ export const canViewOnlineStatus = async (viewerId, targetUserId) => {
   if (String(viewerId) === String(targetUserId)) return true;
   if (await isBlockedEitherWay(viewerId, targetUserId)) return false;
 
-  const target = await User.findById(targetUserId)
+  const target = await userRepository
+    .findById(targetUserId)
     .select("showOnlineStatus onlineStatusVisibility lastSeenVisibility")
     .lean();
   if (!target) return false;
@@ -181,7 +191,8 @@ export const canViewProfilePhoto = async (viewerId, targetUserId) => {
   if (String(viewerId) === String(targetUserId)) return true;
   if (await isBlockedEitherWay(viewerId, targetUserId)) return false;
 
-  const target = await User.findById(targetUserId)
+  const target = await userRepository
+    .findById(targetUserId)
     .select("profilePhotoVisibility")
     .lean();
   if (!target) return false;
@@ -200,7 +211,8 @@ export const canViewAbout = async (viewerId, targetUserId) => {
   if (String(viewerId) === String(targetUserId)) return true;
   if (await isBlockedEitherWay(viewerId, targetUserId)) return false;
 
-  const target = await User.findById(targetUserId)
+  const target = await userRepository
+    .findById(targetUserId)
     .select("aboutVisibility")
     .lean();
   if (!target) return false;
@@ -216,7 +228,8 @@ export const canAddUserToGroup = async (actorId, targetUserId) => {
   if (String(actorId) === String(targetUserId)) return true;
   if (await isBlockedEitherWay(actorId, targetUserId)) return false;
 
-  const target = await User.findById(targetUserId)
+  const target = await userRepository
+    .findById(targetUserId)
     .select("groupAddPermission")
     .lean();
   if (!target) return false;
@@ -276,7 +289,10 @@ export const getPresenceForViewer = async (viewerId, targetUserId) => {
     return { isOnline: false, lastSeen: null };
   }
 
-  const target = await User.findById(targetUserId).select("lastSeen").lean();
+  const target = await userRepository
+    .findById(targetUserId)
+    .select("lastSeen")
+    .lean();
   return {
     isOnline: false,
     lastSeen: target?.lastSeen || null,
@@ -290,16 +306,18 @@ export const getFilteredPresence = getPresenceForViewer;
  */
 export const checkGroupAddPermission = async (adderId, targetIds) => {
   const adder = String(adderId);
-  const targets = await User.find({ _id: { $in: targetIds } })
+  const targets = await userRepository
+    .find({ _id: { $in: targetIds } })
     .select("groupAddPermission blockedUsers fullName")
     .lean();
 
   const foundMap = new Map(targets.map((t) => [String(t._id), t]));
   const targetObjectIds = targets.map((t) => t._id);
-  const contactsWhoSavedAdder = await Contact.find({
-    ownerId: { $in: targetObjectIds },
-    contactId: adder,
-  })
+  const contactsWhoSavedAdder = await contactRepository
+    .find({
+      ownerId: { $in: targetObjectIds },
+      contactId: adder,
+    })
     .select("ownerId")
     .lean();
 
@@ -307,7 +325,7 @@ export const checkGroupAddPermission = async (adderId, targetIds) => {
     contactsWhoSavedAdder.map((c) => String(c.ownerId)),
   );
 
-  const me = await User.findById(adder).select("blockedUsers").lean();
+  const me = await userRepository.findById(adder).select("blockedUsers").lean();
   const myBlockedSet = new Set((me?.blockedUsers || []).map(String));
 
   const allowed = [];
@@ -376,11 +394,12 @@ export const assertCanAddToGroup = async (adderId, targetIds) => {
  * Returns sanitized and authoritative user profile for viewer.
  */
 export const getFilteredUserProfile = async (viewerId, targetUserId) => {
-  if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
+  if (!isValidObjectId(targetUserId)) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user ID.");
   }
 
-  const target = await User.findById(targetUserId)
+  const target = await userRepository
+    .findById(targetUserId)
     .select(
       "fullName username avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission blockedUsers location website createdAt updatedAt",
     )
@@ -410,8 +429,8 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
   }
 
   const [blockedByViewer, blockedByTarget] = await Promise.all([
-    User.exists({ _id: viewerId, blockedUsers: targetUserId }),
-    User.exists({ _id: targetUserId, blockedUsers: viewerId }),
+    userRepository.exists({ _id: viewerId, blockedUsers: targetUserId }),
+    userRepository.exists({ _id: targetUserId, blockedUsers: viewerId }),
   ]);
   const isBlockedEither = Boolean(blockedByViewer || blockedByTarget);
   if (isBlockedEither) {
@@ -579,11 +598,13 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
   }
 
   const [meDoc, blockers, contactsWhoSavedViewer] = await Promise.all([
-    User.findById(vId).select("blockedUsers").lean(),
-    User.find({ _id: { $in: targetIds }, blockedUsers: vId })
+    userRepository.findById(vId).select("blockedUsers").lean(),
+    userRepository
+      .find({ _id: { $in: targetIds }, blockedUsers: vId })
       .select("_id")
       .lean(),
-    Contact.find({ ownerId: { $in: targetIds }, contactId: vId })
+    contactRepository
+      .find({ ownerId: { $in: targetIds }, contactId: vId })
       .select("ownerId")
       .lean(),
   ]);
@@ -720,3 +741,33 @@ export const buildPrivacyAwareNotification = async ({
     },
   };
 };
+
+const privacyService = {
+  isBlockedEitherWay,
+  isContact,
+  getContactIdSet,
+  canView,
+  canViewSync,
+  getLastSeenVisibility,
+  getOnlineStatusVisibility,
+  canViewLastSeen,
+  canViewOnlineStatus,
+  canViewProfilePhoto,
+  canViewAbout,
+  canAddUserToGroup,
+  canSendReadReceipt,
+  canSendTypingIndicator,
+  getPresenceForViewer,
+  getFilteredPresence,
+  checkGroupAddPermission,
+  assertCanAddToGroup,
+  getFilteredUserProfile,
+  getVisibleUserProfile,
+  sanitizeUserForViewer,
+  filterUserForViewer,
+  sanitizeUsersForViewer,
+  filterUsersForViewer,
+  buildPrivacyAwareNotification,
+};
+
+export default privacyService;

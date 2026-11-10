@@ -1,5 +1,5 @@
 import { Router } from "express";
-import authMiddleware from "../../middlewares/authMidleware.middleware.js";
+import authMiddleware from "../../middlewares/auth.middleware.js";
 import contactController from "../../controllers/contact.controller.js";
 import {
   validateUserIdParam,

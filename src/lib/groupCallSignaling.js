@@ -2,21 +2,32 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import Group from "../models/group.model.js";
 import User from "../models/users.model.js";
-import GroupCall from "../models/group-call.model.js";
 import { isUserInCall } from "./callSignaling.js";
-import { canViewProfilePhoto } from "../services/privacy-visibility.service.js";
+import { canViewProfilePhoto } from "../services/privacy/privacy-visibility.service.js";
 import {
-  MAX_CALL_PARTICIPANTS,
-  GROUP_CALL_RING_TIMEOUT_MS,
-} from "../constants/constants.js";
+  CALL_STATUS,
+  CALL_SOCKET_EVENTS,
+  CALL_LIMITS,
+} from "../constants/call.constants.js";
+import {
+  validateSdp,
+  validateIceCandidate,
+  validateMediaPayload,
+} from "../utils/webrtc-validator.js";
+import { createGroupCallRecord } from "../services/calls/group-call.service.js";
+import { socketLimiter } from "../utils/socket-rate-limit.js";
+import { SOCKET_RATE_LIMITS } from "../constants/rate-limit.constants.js";
 
-const MAX_PARTICIPANTS = MAX_CALL_PARTICIPANTS;
-const RING_TIMEOUT_MS = GROUP_CALL_RING_TIMEOUT_MS;
+const MAX_PARTICIPANTS = CALL_LIMITS.MAX_GROUP_CALL_PARTICIPANTS;
+const RING_TIMEOUT_MS = CALL_LIMITS.GROUP_RING_TIMEOUT_MS;
 
 const calls = new Map();
 const userGroup = new Map();
 
 export const isUserInGroupCall = (userId) => userGroup.has(String(userId));
+
+export const getActiveGroupCall = (groupId) =>
+  calls.get(String(groupId)) || null;
 
 const isId = (id) => mongoose.Types.ObjectId.isValid(id);
 
@@ -38,17 +49,23 @@ const getProfile = async (userId, fallbackName) => {
 };
 
 async function finishCall(io, call, { status, reason = "" }) {
-  if (calls.get(call.groupId) !== call) return;
+  if (!call || calls.get(call.groupId) !== call) return;
 
-  clearTimeout(call.timer);
+  if (call.timer) {
+    clearTimeout(call.timer);
+    call.timer = null;
+  }
+
   calls.delete(call.groupId);
-  for (const uid of call.participants.keys()) userGroup.delete(uid);
+  for (const uid of call.participants.keys()) {
+    userGroup.delete(uid);
+  }
 
   const endedAt = new Date();
   const duration = call.connectedAt
     ? Math.max(0, Math.round((endedAt - call.connectedAt) / 1000))
     : 0;
-  const finalStatus = call.everMulti ? "completed" : status;
+  const finalStatus = call.everMulti ? CALL_STATUS.COMPLETED : status;
 
   const payload = {
     callId: call.callId,
@@ -57,12 +74,14 @@ async function finishCall(io, call, { status, reason = "" }) {
     reason,
     duration,
   };
+
   for (const memberId of call.memberIds) {
-    io.to(memberId).emit("gcall:ended", payload);
+    io.to(memberId).emit(CALL_SOCKET_EVENTS.GCALL_ENDED, payload);
   }
 
   try {
-    await GroupCall.create({
+    await createGroupCallRecord({
+      callId: call.callId,
       groupId: call.groupId,
       startedBy: call.startedBy,
       type: call.type,
@@ -79,13 +98,13 @@ async function finishCall(io, call, { status, reason = "" }) {
 }
 
 function removeParticipant(io, call, userId, reason = "left") {
-  if (!call.participants.has(userId)) return;
+  if (!call || !call.participants.has(userId)) return;
 
   call.participants.delete(userId);
   userGroup.delete(userId);
 
   for (const p of call.participants.values()) {
-    io.to(p.socketId).emit("gcall:peer-left", {
+    io.to(p.socketId).emit(CALL_SOCKET_EVENTS.GCALL_PEER_LEFT, {
       callId: call.callId,
       userId,
       reason,
@@ -93,14 +112,41 @@ function removeParticipant(io, call, userId, reason = "left") {
   }
 
   if (call.participants.size === 0) {
-    finishCall(io, call, { status: "cancelled", reason: "empty" });
+    finishCall(io, call, { status: CALL_STATUS.CANCELLED, reason: "empty" });
   } else if (call.participants.size === 1 && call.everMulti) {
-    finishCall(io, call, { status: "completed", reason: "everyone-left" });
+    finishCall(io, call, {
+      status: CALL_STATUS.COMPLETED,
+      reason: "everyone-left",
+    });
   }
 }
 
+export const terminateGroupCallByGroup = (
+  io,
+  groupId,
+  reason = "group-deleted",
+) => {
+  const call = calls.get(String(groupId));
+  if (call && io) {
+    finishCall(io, call, { status: CALL_STATUS.CANCELLED, reason });
+  }
+};
+
+export const evictMemberFromGroupCall = (
+  io,
+  groupId,
+  userId,
+  reason = "member-removed",
+) => {
+  const call = calls.get(String(groupId));
+  if (call && io) {
+    removeParticipant(io, call, String(userId), reason);
+  }
+};
+
 export function registerGroupCallHandlers(io, socket) {
-  const userId = socket.data.userId;
+  const userId = socket.data?.userId ? String(socket.data.userId) : null;
+  if (!userId) return;
 
   const myCall = (callId) => {
     const gid = userGroup.get(userId);
@@ -110,8 +156,8 @@ export function registerGroupCallHandlers(io, socket) {
     return call;
   };
 
-  socket.on("gcall:start", async (payload, ack) => {
-    const reply = typeof ack === "function" ? ack : () => { };
+  socket.on(CALL_SOCKET_EVENTS.GCALL_START, async (payload, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
     try {
       const { groupId, type } = payload || {};
       if (!isId(groupId) || !["audio", "video"].includes(type)) {
@@ -127,8 +173,6 @@ export function registerGroupCallHandlers(io, socket) {
         .lean();
       if (!group) return reply({ ok: false, reason: "not-member" });
 
-      const profile = await getProfile(userId, socket.data.fullName);
-
       const existing = calls.get(gid);
       if (existing) {
         return reply({
@@ -138,9 +182,12 @@ export function registerGroupCallHandlers(io, socket) {
           type: existing.type,
         });
       }
+
       if (isUserInCall(userId) || isUserInGroupCall(userId)) {
         return reply({ ok: false, reason: "busy" });
       }
+
+      const profile = await getProfile(userId, socket.data?.fullName);
 
       const callId = crypto.randomUUID();
       const call = {
@@ -169,7 +216,10 @@ export function registerGroupCallHandlers(io, socket) {
       };
 
       call.timer = setTimeout(() => {
-        finishCall(io, call, { status: "missed", reason: "no-answer" });
+        finishCall(io, call, {
+          status: CALL_STATUS.MISSED,
+          reason: "no-answer",
+        });
       }, RING_TIMEOUT_MS);
 
       calls.set(gid, call);
@@ -182,10 +232,11 @@ export function registerGroupCallHandlers(io, socket) {
         type,
         starter: profile,
       };
+
       for (const memberId of call.memberIds) {
         if (memberId !== userId) {
           const canView = await canViewProfilePhoto(memberId, userId);
-          io.to(memberId).emit("gcall:incoming", {
+          io.to(memberId).emit(CALL_SOCKET_EVENTS.GCALL_INCOMING, {
             ...incoming,
             starter: {
               ...profile,
@@ -202,94 +253,126 @@ export function registerGroupCallHandlers(io, socket) {
     }
   });
 
-  socket.on("gcall:join", async (payload, ack) => {
-    const reply = typeof ack === "function" ? ack : () => { };
+  socket.on(CALL_SOCKET_EVENTS.GCALL_JOIN, async (payload, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
     try {
       const gid = String(payload?.groupId || "");
+      if (!isId(gid)) return reply({ ok: false, reason: "invalid" });
+
       const call = calls.get(gid);
       if (!call) return reply({ ok: false, reason: "no-call" });
-      if (!call.memberIds.includes(userId)) {
+
+      const isMember = await Group.exists({
+        _id: gid,
+        "members.userId": userId,
+      });
+      if (!isMember) {
         return reply({ ok: false, reason: "not-member" });
       }
+
       if (call.participants.has(userId)) {
-        return reply({ ok: false, reason: "already-joined" });
-      }
-      if (isUserInCall(userId) || isUserInGroupCall(userId)) {
-        return reply({ ok: false, reason: "busy" });
-      }
-      if (call.participants.size >= MAX_PARTICIPANTS) {
-        return reply({ ok: false, reason: "full" });
-      }
+        const currentP = call.participants.get(userId);
+        if (currentP.socketId === socket.id) {
+          return reply({ ok: false, reason: "already-joined" });
+        }
+        currentP.socketId = socket.id;
+      } else {
+        if (isUserInCall(userId) || isUserInGroupCall(userId)) {
+          return reply({ ok: false, reason: "busy" });
+        }
+        if (call.participants.size >= MAX_PARTICIPANTS) {
+          return reply({ ok: false, reason: "full" });
+        }
 
-      const profile = await getProfile(userId, socket.data.fullName);
+        const profile = await getProfile(userId, socket.data?.fullName);
 
-      if (
-        calls.get(gid) !== call ||
-        call.participants.has(userId) ||
-        call.participants.size >= MAX_PARTICIPANTS
-      ) {
-        return reply({ ok: false, reason: "unavailable" });
-      }
+        if (call.participants.size >= MAX_PARTICIPANTS) {
+          return reply({ ok: false, reason: "unavailable" });
+        }
 
-      const peers = [...call.participants.entries()].map(([uid, p]) => ({
-        userId: uid,
-        fullName: p.fullName,
-        avatar: p.avatar,
-      }));
+        const peers = [...call.participants.entries()].map(([uid, p]) => ({
+          userId: uid,
+          fullName: p.fullName,
+          avatar: p.avatar,
+        }));
 
-      call.participants.set(userId, {
-        socketId: socket.id,
-        fullName: profile.fullName,
-        avatar: profile.avatar,
-      });
-      userGroup.set(userId, gid);
-      call.everJoined.add(userId);
-      call.maxParticipants = Math.max(
-        call.maxParticipants,
-        call.participants.size,
-      );
-
-      if (!call.everMulti) {
-        call.everMulti = true;
-        call.connectedAt = new Date();
-        clearTimeout(call.timer);
-      }
-
-      socket.to(userId).emit("gcall:joined-elsewhere", {
-        callId: call.callId,
-      });
-
-      for (const p of peers) {
-        const canView = await canViewProfilePhoto(p.userId, userId);
-        io.to(call.participants.get(p.userId).socketId).emit(
-          "gcall:peer-joined",
-          {
-            callId: call.callId,
-            ...profile,
-            avatar: canView ? profile.avatar : "",
-          },
+        call.participants.set(userId, {
+          socketId: socket.id,
+          fullName: profile.fullName,
+          avatar: profile.avatar,
+        });
+        userGroup.set(userId, gid);
+        call.everJoined.add(userId);
+        call.maxParticipants = Math.max(
+          call.maxParticipants,
+          call.participants.size,
         );
+
+        if (!call.everMulti) {
+          call.everMulti = true;
+          call.connectedAt = new Date();
+          if (call.timer) {
+            clearTimeout(call.timer);
+            call.timer = null;
+          }
+        }
+
+        socket.to(userId).emit(CALL_SOCKET_EVENTS.GCALL_JOINED_ELSEWHERE, {
+          callId: call.callId,
+        });
+
+        for (const p of peers) {
+          const canView = await canViewProfilePhoto(p.userId, userId);
+          const targetSocket = call.participants.get(p.userId)?.socketId;
+          if (targetSocket) {
+            io.to(targetSocket).emit(CALL_SOCKET_EVENTS.GCALL_PEER_JOINED, {
+              callId: call.callId,
+              ...profile,
+              avatar: canView ? profile.avatar : "",
+            });
+          }
+        }
+
+        const safePeers = await Promise.all(
+          peers.map(async (p) => {
+            const canView = await canViewProfilePhoto(userId, p.userId);
+            return {
+              ...p,
+              avatar: canView ? p.avatar : "",
+            };
+          }),
+        );
+
+        return reply({
+          ok: true,
+          callId: call.callId,
+          type: call.type,
+          peers: safePeers,
+        });
       }
 
-      const safePeers = await Promise.all(
-        peers.map(async (p) => {
-          const canView = await canViewProfilePhoto(userId, p.userId);
-          return {
-            ...p,
-            avatar: canView ? p.avatar : "",
-          };
-        }),
-      );
+      const peers = [...call.participants.entries()]
+        .filter(([uid]) => uid !== userId)
+        .map(([uid, p]) => ({
+          userId: uid,
+          fullName: p.fullName,
+          avatar: p.avatar,
+        }));
 
-      reply({ ok: true, callId: call.callId, type: call.type, peers: safePeers });
+      reply({
+        ok: true,
+        callId: call.callId,
+        type: call.type,
+        peers,
+      });
     } catch (err) {
       console.error("[gcall] join failed:", err?.message || err);
       reply({ ok: false, reason: "error" });
     }
   });
 
-  socket.on("gcall:status", ({ groupId } = {}, ack) => {
-    const reply = typeof ack === "function" ? ack : () => { };
+  socket.on(CALL_SOCKET_EVENTS.GCALL_STATUS, ({ groupId } = {}, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
     const call = calls.get(String(groupId || ""));
     if (!call || !call.memberIds.includes(userId)) {
       return reply({ active: false });
@@ -303,39 +386,75 @@ export function registerGroupCallHandlers(io, socket) {
     });
   });
 
-  socket.on("gcall:signal", ({ callId, to, data } = {}) => {
+  socket.on(CALL_SOCKET_EVENTS.GCALL_SIGNAL, ({ callId, to, data } = {}) => {
     const call = myCall(callId);
-    if (!call || !data) return;
+    if (!call || !data || !to || String(to) === userId) return;
+
+    if (
+      !socketLimiter.consume(
+        userId,
+        CALL_SOCKET_EVENTS.GCALL_SIGNAL,
+        SOCKET_RATE_LIMITS.GCALL_SIGNAL,
+      )
+    ) {
+      return;
+    }
+
     const target = call.participants.get(String(to));
     if (!target) return;
-    io.to(target.socketId).emit("gcall:signal", {
+
+    let validatedData = null;
+    if (data.description) {
+      const sdp = validateSdp(data.description);
+      if (sdp) validatedData = { description: sdp };
+    } else if (data.candidate) {
+      const cand = validateIceCandidate(data.candidate);
+      if (cand) validatedData = { candidate: cand };
+    }
+
+    if (!validatedData) return;
+
+    io.to(target.socketId).emit(CALL_SOCKET_EVENTS.GCALL_SIGNAL, {
       callId,
       from: userId,
-      data,
+      data: validatedData,
     });
   });
 
-  socket.on("gcall:media", ({ callId, audio, video } = {}) => {
+  socket.on(CALL_SOCKET_EVENTS.GCALL_MEDIA, ({ callId, audio, video } = {}) => {
     const call = myCall(callId);
     if (!call) return;
+
+    if (
+      !socketLimiter.consume(
+        userId,
+        CALL_SOCKET_EVENTS.GCALL_MEDIA,
+        SOCKET_RATE_LIMITS.GCALL_MEDIA,
+      )
+    ) {
+      return;
+    }
+
+    const media = validateMediaPayload({ audio, video });
     for (const [uid, p] of call.participants) {
       if (uid !== userId) {
-        io.to(p.socketId).emit("gcall:media", {
+        io.to(p.socketId).emit(CALL_SOCKET_EVENTS.GCALL_MEDIA, {
           callId,
           userId,
-          audio: Boolean(audio),
-          video: Boolean(video),
+          audio: media.audio,
+          video: media.video,
         });
       }
     }
   });
 
-  socket.on("gcall:leave", ({ callId } = {}) => {
+  socket.on(CALL_SOCKET_EVENTS.GCALL_LEAVE, ({ callId } = {}) => {
     const call = myCall(callId);
     if (call) removeParticipant(io, call, userId, "left");
   });
 
   socket.on("disconnect", () => {
+    socketLimiter.reset(userId);
     const gid = userGroup.get(userId);
     const call = gid && calls.get(gid);
     if (call && call.participants.get(userId)?.socketId === socket.id) {

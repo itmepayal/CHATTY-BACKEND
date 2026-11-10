@@ -1,7 +1,7 @@
 import express from "express";
 
 import messageController from "../../controllers/messages.controller.js";
-import authMiddleware from "../../middlewares/authMidleware.middleware.js";
+import authMiddleware from "../../middlewares/auth.middleware.js";
 
 import upload, {
   enforceTypeSizeLimit,

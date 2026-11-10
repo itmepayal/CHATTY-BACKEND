@@ -1,18 +1,17 @@
-import mongoose from "mongoose";
 import ApiError from "../../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import User from "../../models/users.model.js";
-import Session from "../../models/session.model.js";
-import Message from "../../models/message.model.js";
-import Group from "../../models/group.model.js";
-import GroupMessage from "../../models/group-message.model.js";
-import Contact from "../../models/contact.model.js";
-import LocationShare from "../../models/location-share.model.js";
-import GroupKey from "../../models/group-key.model.js";
-import ScheduledMessage from "../../models/scheduled-message.model.js";
-import Call from "../../models/call.model.js";
-import ChatArchive from "../../models/chat-archive.model.js";
-import GroupArchive from "../../models/group-archive.model.js";
+import * as userRepository from "../../repositories/users/user.repository.js";
+import * as sessionRepository from "../../repositories/auth/session.repository.js";
+import * as messageRepository from "../../repositories/messaging/message.repository.js";
+import * as groupRepository from "../../repositories/groups/group.repository.js";
+import * as groupMessageRepository from "../../repositories/groups/group-message.repository.js";
+import * as contactRepository from "../../repositories/contact.repository.js";
+import * as locationShareRepository from "../../repositories/messaging/location-share.repository.js";
+import * as groupKeyRepository from "../../repositories/groups/group-key.repository.js";
+import * as scheduledMessageRepository from "../../repositories/messaging/scheduled-message.repository.js";
+import * as callRepository from "../../repositories/calling/call.repository.js";
+import * as chatSettingRepository from "../../repositories/messaging/chat-setting.repository.js";
+import * as groupArchiveRepository from "../../repositories/groups/group-archive.repository.js";
 import { deleteFileToCloudinary } from "../../config/cloudinary.config.js";
 import {
   io,
@@ -90,9 +89,10 @@ const byJoinedAt = (a, b) => new Date(a.joinedAt) - new Date(b.joinedAt);
 
 const detachUserFromGroups = async (userId) => {
   const uid = String(userId);
-  const groups = await Group.find({ "members.userId": userId })
-    .select("_id owner members avatar")
-    .lean();
+  const groups = await groupRepository.findByMemberLean(
+    userId,
+    "_id owner members avatar",
+  );
 
   const ops = [];
   const deletedGroupIds = [];
@@ -154,7 +154,7 @@ const detachUserFromGroups = async (userId) => {
     });
   }
 
-  if (ops.length) await Group.bulkWrite(ops, { ordered: true });
+  if (ops.length) await groupRepository.bulkWrite(ops, { ordered: true });
 
   return { deletedGroupIds, deletedGroupAvatars, notices };
 };
@@ -244,9 +244,9 @@ export const deleteUserAccount = async ({
   validateDeletionConfirmation(confirmation);
   validatePasswordInput(password);
 
-  const user = await User.findById(userId).select(
-    "+password +twoFactorSecret +recoveryCodes",
-  );
+  const user = await userRepository
+    .findById(userId)
+    .select("+password +twoFactorSecret +recoveryCodes");
 
   if (!user) {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
@@ -278,10 +278,11 @@ export const deleteUserAccount = async ({
     ],
   };
 
-  const groupMessagesWithAssets = await GroupMessage.find({
-    ...groupCleanupFilter,
-    ...HAS_ATTACHMENT,
-  })
+  const groupMessagesWithAssets = await groupMessageRepository
+    .find({
+      ...groupCleanupFilter,
+      ...HAS_ATTACHMENT,
+    })
     .select(
       "image.public_id file.public_id file.resourceType audio.public_id audio.resourceType video.public_id video.resourceType",
     )
@@ -293,10 +294,11 @@ export const deleteUserAccount = async ({
   ];
 
   const dmFilter = { $or: [{ senderId: userId }, { receiverId: userId }] };
-  const dmMessagesWithAssets = await Message.find({
-    ...dmFilter,
-    ...HAS_ATTACHMENT,
-  })
+  const dmMessagesWithAssets = await messageRepository
+    .find({
+      ...dmFilter,
+      ...HAS_ATTACHMENT,
+    })
     .select(
       "image.public_id file.public_id file.resourceType audio.public_id audio.resourceType video.public_id video.resourceType",
     )
@@ -304,20 +306,22 @@ export const deleteUserAccount = async ({
 
   const dmAssets = dmMessagesWithAssets.flatMap(extractAssets);
 
-  const dmPartners = await Message.distinct("senderId", {
-    receiverId: userId,
-  }).then(async (senderIds) => {
-    const receiverIds = await Message.distinct("receiverId", {
-      senderId: userId,
+  const dmPartners = await messageRepository
+    .distinct("senderId", {
+      receiverId: userId,
+    })
+    .then(async (senderIds) => {
+      const receiverIds = await messageRepository.distinct("receiverId", {
+        senderId: userId,
+      });
+      return [...new Set([...senderIds, ...receiverIds].map(String))];
     });
-    return [...new Set([...senderIds, ...receiverIds].map(String))];
-  });
 
   let session = null;
   let useTransaction = false;
 
   try {
-    session = await mongoose.startSession();
+    session = await userRepository.startSession();
     session.startTransaction();
     useTransaction = true;
   } catch (err) {
@@ -331,28 +335,25 @@ export const deleteUserAccount = async ({
   const sessionOpt = useTransaction ? { session } : {};
 
   try {
-    await GroupMessage.updateMany(
+    await groupMessageRepository.updateMany(
       { $or: [{ readBy: userId }, { silentReadBy: userId }] },
       { $pull: { readBy: userId, silentReadBy: userId } },
       sessionOpt,
     );
 
-    await GroupMessage.deleteMany(groupCleanupFilter, sessionOpt);
+    await groupMessageRepository.deleteMany(groupCleanupFilter, sessionOpt);
 
     if (deletedGroupIds.length) {
-      await Group.deleteMany({ _id: { $in: deletedGroupIds } }, sessionOpt);
+      await groupRepository.deleteManyByIds(deletedGroupIds, sessionOpt);
     }
 
-    await Message.deleteMany(dmFilter, sessionOpt);
+    await messageRepository.deleteMany(dmFilter, sessionOpt);
 
-    await Session.deleteMany({ userId }, sessionOpt);
+    await sessionRepository.deleteAllForUser(userId, sessionOpt);
 
-    await Contact.deleteMany(
-      { $or: [{ ownerId: userId }, { contactId: userId }] },
-      sessionOpt,
-    );
+    await contactRepository.deleteInvolvingUser(userId, sessionOpt);
 
-    await LocationShare.deleteMany(
+    await locationShareRepository.deleteMany(
       {
         $or: [
           { sharerId: userId },
@@ -365,7 +366,7 @@ export const deleteUserAccount = async ({
       sessionOpt,
     );
 
-    await GroupKey.deleteMany(
+    await groupKeyRepository.deleteForUserOrGroups(
       {
         $or: [
           { userId },
@@ -377,19 +378,13 @@ export const deleteUserAccount = async ({
       sessionOpt,
     );
 
-    await ScheduledMessage.deleteMany({ senderId: userId }, sessionOpt);
+    await scheduledMessageRepository.deleteForSender(userId, sessionOpt);
 
-    await Call.deleteMany(
-      { $or: [{ callerId: userId }, { receiverId: userId }] },
-      sessionOpt,
-    );
+    await callRepository.deleteForUser(userId, sessionOpt);
 
-    await ChatArchive.deleteMany(
-      { $or: [{ ownerId: userId }, { otherId: userId }] },
-      sessionOpt,
-    );
+    await chatSettingRepository.deleteArchivesForUser(userId, sessionOpt);
 
-    await GroupArchive.deleteMany(
+    await groupArchiveRepository.deleteMany(
       {
         $or: [
           { ownerId: userId },
@@ -401,13 +396,9 @@ export const deleteUserAccount = async ({
       sessionOpt,
     );
 
-    await User.updateMany(
-      { $or: [{ blockedUsers: userId }, { favorites: userId }] },
-      { $pull: { blockedUsers: userId, favorites: userId } },
-      sessionOpt,
-    );
+    await userRepository.pullRelationFromAll(userId, sessionOpt);
 
-    await User.findByIdAndDelete(userId, sessionOpt);
+    await userRepository.findByIdAndDelete(userId, sessionOpt);
 
     if (useTransaction) {
       await session.commitTransaction();
@@ -446,3 +437,10 @@ export const deleteUserAccount = async ({
 };
 
 export const deleteAccount = deleteUserAccount;
+
+const accountService = {
+  deleteAccount,
+  deleteUserAccount,
+};
+
+export default accountService;

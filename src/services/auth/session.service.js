@@ -1,6 +1,11 @@
-import Session from "../../models/session.model.js";
-import User from "../../models/users.model.js";
-import { parseDevice, getIp, sanitizeIp } from "../../utils/device-info.js";
+import * as userRepository from "../../repositories/users/user.repository.js";
+import {
+  createSession,
+  findOwnedSession,
+  findActiveSessionsForUser,
+  revokeOtherActiveSessions,
+} from "../../repositories/auth/session.repository.js";
+import { parseDevice, sanitizeIp } from "../../utils/device-info.js";
 import { sendLoginAlertEmail } from "../../utils/email-service.js";
 import ApiError from "../../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
@@ -11,18 +16,18 @@ import {
 } from "../../lib/socket.js";
 import { formatDistanceToNow } from "../../utils/time-utils.js";
 
-export const createLoginSession = async (req, user) => {
-  const deviceInfo = parseDevice(req.headers["user-agent"]);
-  const rawIp = getIp(req);
+export const createLoginSession = async (user, { userAgent, ip } = {}) => {
+  const deviceInfo = parseDevice(userAgent);
+  const rawIp = ip;
 
-  const session = await Session.create({
+  const session = await createSession({
     userId: user._id,
     device: deviceInfo,
     ip: sanitizeIp(rawIp),
     location: "Location unavailable",
   });
 
-  const { accessToken, refreshToken } = await User.generateToken(
+  const { accessToken, refreshToken } = await userRepository.generateUserTokens(
     user._id,
     session._id,
   );
@@ -58,34 +63,18 @@ const formatSession = (session, currentSessionId) => ({
     : false,
 });
 
-const getActiveSessionsQuery = (userId, currentSessionId) => ({
-  userId,
-  revoked: false,
-  ...(currentSessionId ? { _id: { $ne: currentSessionId } } : {}),
-  expiresAt: { $gt: new Date() },
-});
-
 const emitSessionEvent = (userId, event, payload) => {
   io.to(String(userId)).emit(event, payload);
 };
 
-const getOwnedSession = async (userId, sessionId) =>
-  Session.findOne({
-    _id: sessionId,
-    userId,
-  });
-
 export const listUserSessions = async ({ userId, currentSessionId }) => {
-  const sessions = await Session.find(getActiveSessionsQuery(userId, null))
-    .sort({ lastActivity: -1 })
-    .select("_id device ip location lastActivity createdAt")
-    .lean();
+  const sessions = await findActiveSessionsForUser(userId);
 
   return sessions.map((session) => formatSession(session, currentSessionId));
 };
 
 export const revokeUserSession = async ({ userId, sessionId }) => {
-  const session = await getOwnedSession(userId, sessionId);
+  const session = await findOwnedSession(userId, sessionId);
 
   if (!session) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Session not found.");
@@ -104,11 +93,10 @@ export const revokeUserSession = async ({ userId, sessionId }) => {
 };
 
 export const revokeOtherUserSessions = async ({ userId, currentSessionId }) => {
-  const filter = getActiveSessionsQuery(userId, currentSessionId);
-
-  const { modifiedCount } = await Session.updateMany(filter, {
-    $set: { revoked: true },
-  });
+  const { modifiedCount } = await revokeOtherActiveSessions(
+    userId,
+    currentSessionId,
+  );
 
   emitSessionEvent(userId, "session:revoke-others", {
     keepSessionId: currentSessionId || null,
@@ -117,3 +105,12 @@ export const revokeOtherUserSessions = async ({ userId, currentSessionId }) => {
 
   return { revokedCount: modifiedCount };
 };
+
+const sessionService = {
+  createLoginSession,
+  listUserSessions,
+  revokeUserSession,
+  revokeOtherUserSessions,
+};
+
+export default sessionService;

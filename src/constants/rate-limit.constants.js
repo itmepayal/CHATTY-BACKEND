@@ -74,6 +74,22 @@ export const SOCKET_RATE_LIMITS = Object.freeze({
     capacity: 5,
     refillPerSec: 5 / 30,
   },
+  CALL_ICE: {
+    capacity: 50,
+    refillPerSec: 25,
+  },
+  CALL_MEDIA: {
+    capacity: 20,
+    refillPerSec: 5,
+  },
+  GCALL_SIGNAL: {
+    capacity: 100,
+    refillPerSec: 50,
+  },
+  GCALL_MEDIA: {
+    capacity: 20,
+    refillPerSec: 5,
+  },
   PRIVACY_UPDATE: {
     capacity: 5,
     refillPerSec: 5 / 60,

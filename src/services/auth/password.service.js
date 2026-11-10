@@ -1,8 +1,8 @@
 import crypto from "crypto";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../utils/api-error.js";
-import User from "../../models/users.model.js";
-import Session from "../../models/session.model.js";
+import * as userRepository from "../../repositories/users/user.repository.js";
+import * as sessionRepository from "../../repositories/auth/session.repository.js";
 import {
   RESET_TOKEN_BYTES,
   RESET_TOKEN_TTL_MS,
@@ -26,7 +26,7 @@ import {
   validateForgotPasswordInput,
   validateResetPasswordInput,
   validateChangePasswordInput,
-} from "../../validators/auth.validator.js";
+} from "../../validations/auth.validation.js";
 
 export const requestPasswordReset = async ({ email, platform }) => {
   const normalised = normalizeEmail(email);
@@ -35,7 +35,7 @@ export const requestPasswordReset = async ({ email, platform }) => {
   const isMobile = platform === "mobile";
   const GENERIC_MSG = AUTH_MESSAGES.GENERIC_RESET_MSG;
 
-  const user = await User.findOne({ email: normalised });
+  const user = await userRepository.findByEmail(normalised);
   if (!user) {
     return { message: GENERIC_MSG };
   }
@@ -77,10 +77,7 @@ export const getOpenAppResetHtml = (token) => {
 export const resetPassword = async ({ token, password, confirmPassword }) => {
   validateResetPasswordInput({ token, password, confirmPassword });
 
-  const user = await User.findOne({
-    passwordResetToken: hashToken(token),
-    passwordResetExpires: { $gt: new Date() },
-  }).select("+passwordResetToken +passwordResetExpires +tokenVersion");
+  const user = await userRepository.findByResetToken(hashToken(token));
 
   if (!user) {
     throw new ApiError(
@@ -95,10 +92,7 @@ export const resetPassword = async ({ token, password, confirmPassword }) => {
   user.tokenVersion = (user.tokenVersion || 0) + 1;
   await user.save();
 
-  await Session.updateMany(
-    { userId: user._id },
-    { $set: { revoked: true } },
-  ).catch(() => {});
+  await sessionRepository.revokeAllForUser(user._id).catch(() => {});
 
   io.to(String(user._id)).emit("session:revoked", { all: true });
   await disconnectUser(user._id);
@@ -119,7 +113,7 @@ export const changePassword = async ({
     confirmPassword,
   });
 
-  const user = await User.findById(userId).select("+password");
+  const user = await userRepository.findByIdSelect(userId, "+password");
   if (!user) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.USER_NOT_FOUND);
   }
@@ -136,13 +130,9 @@ export const changePassword = async ({
   await user.save();
 
   if (currentSessionId) {
-    await Session.updateMany(
-      {
-        userId: user._id,
-        _id: { $ne: currentSessionId },
-      },
-      { $set: { revoked: true } },
-    ).catch(() => {});
+    await sessionRepository
+      .revokeOthersForUser(user._id, currentSessionId)
+      .catch(() => {});
 
     io.to(String(user._id)).emit("session:revoke-others", {
       keepSessionId: currentSessionId,
@@ -152,3 +142,13 @@ export const changePassword = async ({
 
   return { message: AUTH_MESSAGES.PASSWORD_CHANGED };
 };
+
+const passwordService = {
+  requestPasswordReset,
+  getOpenAppResetHtml,
+  resetPassword,
+  changePassword,
+};
+
+export default passwordService;
+

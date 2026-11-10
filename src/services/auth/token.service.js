@@ -1,8 +1,8 @@
 import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../utils/api-error.js";
-import User from "../../models/users.model.js";
-import Session from "../../models/session.model.js";
+import * as userRepository from "../../repositories/users/user.repository.js";
+import * as sessionRepository from "../../repositories/auth/session.repository.js";
 import {
   refreshTokenSecret,
   AUTH_MESSAGES,
@@ -31,7 +31,7 @@ export const rotateTokens = async (token) => {
   }
 
   if (decoded.sessionId) {
-    const session = await Session.findById(decoded.sessionId);
+    const session = await sessionRepository.findById(decoded.sessionId);
 
     if (!session || session.revoked || session.expiresAt < new Date()) {
       throw new ApiError(
@@ -47,7 +47,7 @@ export const rotateTokens = async (token) => {
       );
     }
 
-    const user = await User.findById(decoded.id).select("+tokenVersion");
+    const user = await userRepository.findById(decoded.id).select("+tokenVersion");
     if (!user) {
       throw new ApiError(
         StatusCodes.UNAUTHORIZED,
@@ -90,7 +90,7 @@ export const rotateTokens = async (token) => {
     };
   }
 
-  const user = await User.findById(decoded.id).select("+tokenVersion");
+  const user = await userRepository.findById(decoded.id).select("+tokenVersion");
   if (!user) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.USER_NOT_FOUND);
   }
@@ -108,3 +108,11 @@ export const rotateTokens = async (token) => {
     refreshToken: newRefreshToken,
   };
 };
+
+const tokenService = {
+  extractRefreshToken,
+  rotateTokens,
+};
+
+export default tokenService;
+

@@ -1,23 +1,69 @@
 import crypto from "crypto";
-import Call from "../models/call.model.js";
+import mongoose from "mongoose";
+import User from "../models/users.model.js";
 import { assertCanMessage } from "../utils/chat-guard.js";
 import { CALL_RING_TIMEOUT_MS } from "../constants/constants.js";
 import { safeHandler } from "../utils/socket-safe.js";
 import { socketLimiter } from "../utils/socket-rate-limit.js";
 import { SOCKET_RATE_LIMITS } from "../constants/rate-limit.constants.js";
+import {
+  CALL_STATUS,
+  CALL_LIFECYCLE_STATE,
+  CALL_SOCKET_EVENTS,
+  CALL_LIMITS,
+} from "../constants/call.constants.js";
+import {
+  validateSdp,
+  validateIceCandidate,
+  validateMediaPayload,
+} from "../utils/webrtc-validator.js";
+import { createCallRecord } from "../services/calls/call.service.js";
 
-const RING_TIMEOUT_MS = CALL_RING_TIMEOUT_MS;
+const RING_TIMEOUT_MS = CALL_RING_TIMEOUT_MS || CALL_LIMITS.RING_TIMEOUT_MS;
 
 const calls = new Map();
 const userCall = new Map();
 
 export const isUserInCall = (userId) => userCall.has(String(userId));
 
+export const getActiveCall = (callId) => calls.get(String(callId)) || null;
+
+/**
+ * Atomic transition for the 1-to-1 call state machine.
+ */
+const transitionCallState = (call, nextState) => {
+  if (!call || call.state === CALL_LIFECYCLE_STATE.ENDED) {
+    return false;
+  }
+
+  if (nextState === CALL_LIFECYCLE_STATE.ACCEPTED) {
+    if (call.state !== CALL_LIFECYCLE_STATE.RINGING) return false;
+    call.state = CALL_LIFECYCLE_STATE.ACCEPTED;
+    call.answeredAt = new Date();
+    return true;
+  }
+
+  if (nextState === CALL_LIFECYCLE_STATE.ENDED) {
+    call.state = CALL_LIFECYCLE_STATE.ENDED;
+    return true;
+  }
+
+  return false;
+};
+
 async function finishCall(io, callId, { status, endedBy = null, reason = "" }) {
   const call = calls.get(callId);
   if (!call) return;
 
-  clearTimeout(call.timer);
+  if (!transitionCallState(call, CALL_LIFECYCLE_STATE.ENDED)) {
+    return;
+  }
+
+  if (call.timer) {
+    clearTimeout(call.timer);
+    call.timer = null;
+  }
+
   calls.delete(callId);
   userCall.delete(call.callerId);
   userCall.delete(call.receiverId);
@@ -27,8 +73,12 @@ async function finishCall(io, callId, { status, endedBy = null, reason = "" }) {
     ? Math.max(0, Math.round((endedAt - call.answeredAt) / 1000))
     : 0;
 
-  const finalStatus =
-    status === "ended" ? (call.answeredAt ? "completed" : "cancelled") : status;
+  let finalStatus = status;
+  if (status === "ended") {
+    finalStatus = call.answeredAt
+      ? CALL_STATUS.COMPLETED
+      : CALL_STATUS.CANCELLED;
+  }
 
   const payload = {
     callId,
@@ -38,11 +88,12 @@ async function finishCall(io, callId, { status, endedBy = null, reason = "" }) {
     endedBy: endedBy ? String(endedBy) : null,
   };
 
-  io.to(call.callerId).emit("call:ended", payload);
-  io.to(call.receiverId).emit("call:ended", payload);
+  io.to(call.callerId).emit(CALL_SOCKET_EVENTS.CALL_ENDED, payload);
+  io.to(call.receiverId).emit(CALL_SOCKET_EVENTS.CALL_ENDED, payload);
 
   try {
-    await Call.create({
+    await createCallRecord({
+      callId: call.callId,
       callerId: call.callerId,
       receiverId: call.receiverId,
       type: call.type,
@@ -63,41 +114,56 @@ export function registerCallHandlers(
   socket,
   { isUserOnline, isBusy = () => false },
 ) {
-  const userId = socket.data.userId;
+  const userId = socket.data?.userId ? String(socket.data.userId) : null;
+  if (!userId) return;
 
   const getCallFor = (callId) => {
-    const call = calls.get(callId);
+    if (!callId) return null;
+    const call = calls.get(String(callId));
     if (!call) return null;
     if (call.callerId !== userId && call.receiverId !== userId) return null;
     return call;
   };
 
-  const peerSocketId = (call) =>
-    userId === call.callerId ? call.receiverSocketId : call.callerSocketId;
+  const getPeerDestination = (call) => {
+    const isCaller = userId === call.callerId;
+    const targetSocketId = isCaller
+      ? call.receiverSocketId
+      : call.callerSocketId;
+    const peerUserId = isCaller ? call.receiverId : call.callerId;
+    return targetSocketId || peerUserId;
+  };
 
   socket.on(
-    "call:invite",
-    safeHandler("call:invite", async (payload, ack) => {
+    CALL_SOCKET_EVENTS.CALL_INVITE,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_INVITE, async (payload, ack) => {
       const reply = typeof ack === "function" ? ack : () => {};
       try {
-        const to = payload?.to;
+        const to = payload?.to ? String(payload.to) : null;
         const type = payload?.type;
 
-        if (!to || typeof to !== "string" || to === userId) {
-          return reply({ ok: false, reason: "invalid" });
-        }
-        if (!["audio", "video"].includes(type)) {
+        if (
+          !to ||
+          !mongoose.Types.ObjectId.isValid(to) ||
+          to === userId ||
+          !["audio", "video"].includes(type)
+        ) {
           return reply({ ok: false, reason: "invalid" });
         }
 
         if (
           !socketLimiter.consume(
             userId,
-            "call:invite",
+            CALL_SOCKET_EVENTS.CALL_INVITE,
             SOCKET_RATE_LIMITS.CALL_INVITE,
           )
         ) {
           return reply({ ok: false, reason: "rate_limited" });
+        }
+
+        const callee = await User.findById(to).select("status fullName").lean();
+        if (!callee || callee.status === "suspended") {
+          return reply({ ok: false, reason: "not-allowed" });
         }
 
         try {
@@ -122,6 +188,7 @@ export function registerCallHandlers(
           callerId: userId,
           receiverId: to,
           type,
+          state: CALL_LIFECYCLE_STATE.RINGING,
           callerSocketId: socket.id,
           receiverSocketId: null,
           startedAt: new Date(),
@@ -130,17 +197,20 @@ export function registerCallHandlers(
         };
 
         call.timer = setTimeout(() => {
-          finishCall(io, callId, { status: "missed", reason: "no-answer" });
+          finishCall(io, callId, {
+            status: CALL_STATUS.MISSED,
+            reason: "no-answer",
+          });
         }, RING_TIMEOUT_MS);
 
         calls.set(callId, call);
         userCall.set(userId, callId);
         userCall.set(to, callId);
 
-        io.to(to).emit("call:incoming", {
+        io.to(to).emit(CALL_SOCKET_EVENTS.CALL_INCOMING, {
           callId,
           from: userId,
-          fromName: socket.data.fullName,
+          fromName: socket.data?.fullName || "User",
           type,
         });
 
@@ -153,86 +223,197 @@ export function registerCallHandlers(
   );
 
   socket.on(
-    "call:accept",
-    safeHandler("call:accept", ({ callId } = {}) => {
+    CALL_SOCKET_EVENTS.CALL_ACCEPT,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_ACCEPT, (payload, ack) => {
+      const reply = typeof ack === "function" ? ack : () => {};
+      const callId = payload?.callId;
       const call = getCallFor(callId);
-      if (!call || call.receiverId !== userId || call.answeredAt) return;
 
-      clearTimeout(call.timer);
-      call.answeredAt = new Date();
+      if (!call || call.receiverId !== userId) {
+        return reply({ ok: false, reason: "not-found" });
+      }
+
+      if (!transitionCallState(call, CALL_LIFECYCLE_STATE.ACCEPTED)) {
+        return reply({ ok: false, reason: "already-ended" });
+      }
+
+      if (call.timer) {
+        clearTimeout(call.timer);
+        call.timer = null;
+      }
+
       call.receiverSocketId = socket.id;
 
-      socket.to(userId).emit("call:answered-elsewhere", { callId });
+      socket.to(userId).emit(CALL_SOCKET_EVENTS.CALL_ANSWERED_ELSEWHERE, {
+        callId,
+      });
 
-      io.to(call.callerSocketId).emit("call:accepted", { callId });
+      const callerTarget = call.callerSocketId || call.callerId;
+      io.to(callerTarget).emit(CALL_SOCKET_EVENTS.CALL_ACCEPTED, { callId });
+
+      reply({ ok: true, callId });
     }),
   );
 
   socket.on(
-    "call:reject",
-    safeHandler("call:reject", ({ callId } = {}) => {
+    CALL_SOCKET_EVENTS.CALL_REJECT,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_REJECT, (payload, ack) => {
+      const reply = typeof ack === "function" ? ack : () => {};
+      const callId = payload?.callId;
       const call = getCallFor(callId);
-      if (!call || call.receiverId !== userId || call.answeredAt) return;
-      finishCall(io, callId, { status: "rejected", endedBy: userId });
+
+      if (
+        !call ||
+        call.receiverId !== userId ||
+        call.state !== CALL_LIFECYCLE_STATE.RINGING
+      ) {
+        return reply({ ok: false, reason: "invalid" });
+      }
+
+      finishCall(io, callId, {
+        status: CALL_STATUS.REJECTED,
+        endedBy: userId,
+      });
+      reply({ ok: true });
     }),
   );
 
   socket.on(
-    "call:end",
-    safeHandler("call:end", ({ callId } = {}) => {
+    CALL_SOCKET_EVENTS.CALL_CANCEL,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_CANCEL, (payload, ack) => {
+      const reply = typeof ack === "function" ? ack : () => {};
+      const callId = payload?.callId;
+      const call = getCallFor(callId);
+
+      if (!call || call.callerId !== userId) {
+        return reply({ ok: false, reason: "invalid" });
+      }
+
+      finishCall(io, callId, {
+        status: CALL_STATUS.CANCELLED,
+        endedBy: userId,
+        reason: "cancelled",
+      });
+      reply({ ok: true });
+    }),
+  );
+
+  socket.on(
+    CALL_SOCKET_EVENTS.CALL_END,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_END, (payload, ack) => {
+      const reply = typeof ack === "function" ? ack : () => {};
+      const callId = payload?.callId;
+      const call = getCallFor(callId);
+
+      if (!call) return reply({ ok: false, reason: "not-found" });
+
+      finishCall(io, callId, {
+        status: "ended",
+        endedBy: userId,
+      });
+      reply({ ok: true });
+    }),
+  );
+
+  socket.on(
+    CALL_SOCKET_EVENTS.CALL_OFFER,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_OFFER, (payload) => {
+      if (!payload || typeof payload !== "object") return;
+      const { callId, offer } = payload;
       const call = getCallFor(callId);
       if (!call) return;
-      finishCall(io, callId, { status: "ended", endedBy: userId });
-    }),
-  );
 
-  socket.on(
-    "call:offer",
-    safeHandler("call:offer", ({ callId, offer } = {}) => {
-      const call = getCallFor(callId);
-      const target = call && peerSocketId(call);
-      if (!target || !offer) return;
-      io.to(target).emit("call:offer", { callId, offer });
-    }),
-  );
+      const validOffer = validateSdp(offer, "offer");
+      if (!validOffer) return;
 
-  socket.on(
-    "call:answer",
-    safeHandler("call:answer", ({ callId, answer } = {}) => {
-      const call = getCallFor(callId);
-      const target = call && peerSocketId(call);
-      if (!target || !answer) return;
-      io.to(target).emit("call:answer", { callId, answer });
-    }),
-  );
-
-  socket.on(
-    "call:ice",
-    safeHandler("call:ice", ({ callId, candidate } = {}) => {
-      const call = getCallFor(callId);
-      const target = call && peerSocketId(call);
-      if (!target || !candidate) return;
-      io.to(target).emit("call:ice", { callId, candidate });
-    }),
-  );
-
-  socket.on(
-    "call:media",
-    safeHandler("call:media", ({ callId, audio, video } = {}) => {
-      const call = getCallFor(callId);
-      const target = call && peerSocketId(call);
-      if (!target) return;
-      io.to(target).emit("call:media", {
+      const destination = getPeerDestination(call);
+      io.to(destination).emit(CALL_SOCKET_EVENTS.CALL_OFFER, {
         callId,
-        audio: Boolean(audio),
-        video: Boolean(video),
+        offer: validOffer,
+      });
+    }),
+  );
+
+  socket.on(
+    CALL_SOCKET_EVENTS.CALL_ANSWER,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_ANSWER, (payload) => {
+      if (!payload || typeof payload !== "object") return;
+      const { callId, answer } = payload;
+      const call = getCallFor(callId);
+      if (!call) return;
+
+      const validAnswer = validateSdp(answer, "answer");
+      if (!validAnswer) return;
+
+      const destination = getPeerDestination(call);
+      io.to(destination).emit(CALL_SOCKET_EVENTS.CALL_ANSWER, {
+        callId,
+        answer: validAnswer,
+      });
+    }),
+  );
+
+  socket.on(
+    CALL_SOCKET_EVENTS.CALL_ICE,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_ICE, (payload) => {
+      if (!payload || typeof payload !== "object") return;
+      const { callId, candidate } = payload;
+      const call = getCallFor(callId);
+      if (!call) return;
+
+      if (
+        !socketLimiter.consume(
+          userId,
+          CALL_SOCKET_EVENTS.CALL_ICE,
+          SOCKET_RATE_LIMITS.CALL_ICE,
+        )
+      ) {
+        return;
+      }
+
+      const validCand = validateIceCandidate(candidate);
+      if (!validCand) return;
+
+      const destination = getPeerDestination(call);
+      io.to(destination).emit(CALL_SOCKET_EVENTS.CALL_ICE, {
+        callId,
+        candidate: validCand,
+      });
+    }),
+  );
+
+  socket.on(
+    CALL_SOCKET_EVENTS.CALL_MEDIA,
+    safeHandler(CALL_SOCKET_EVENTS.CALL_MEDIA, (payload) => {
+      if (!payload || typeof payload !== "object") return;
+      const { callId } = payload;
+      const call = getCallFor(callId);
+      if (!call) return;
+
+      if (
+        !socketLimiter.consume(
+          userId,
+          CALL_SOCKET_EVENTS.CALL_MEDIA,
+          SOCKET_RATE_LIMITS.CALL_MEDIA,
+        )
+      ) {
+        return;
+      }
+
+      const media = validateMediaPayload(payload);
+      const destination = getPeerDestination(call);
+      io.to(destination).emit(CALL_SOCKET_EVENTS.CALL_MEDIA, {
+        callId,
+        audio: media.audio,
+        video: media.video,
       });
     }),
   );
 
   socket.on(
     "disconnect",
-    safeHandler("call:disconnect", () => {
+    safeHandler("call:disconnect", async () => {
+      socketLimiter.reset(userId);
       const callId = userCall.get(userId);
       const call = callId && calls.get(callId);
       if (!call) return;
@@ -240,10 +421,6 @@ export function registerCallHandlers(
       const isCallSocket =
         call.callerSocketId === socket.id ||
         call.receiverSocketId === socket.id;
-      const isCalleeRinging =
-        call.receiverId === userId &&
-        !call.answeredAt &&
-        call.receiverSocketId === null;
 
       if (isCallSocket) {
         finishCall(io, callId, {
@@ -251,12 +428,25 @@ export function registerCallHandlers(
           endedBy: userId,
           reason: "disconnected",
         });
-      } else if (isCalleeRinging) {
-        finishCall(io, callId, {
-          status: "missed",
-          endedBy: userId,
-          reason: "callee-disconnected",
-        });
+      } else if (
+        call.receiverId === userId &&
+        call.state === CALL_LIFECYCLE_STATE.RINGING
+      ) {
+        try {
+          const remainingSockets = await io.in(String(userId)).fetchSockets();
+          const otherSockets = remainingSockets.filter(
+            (s) => s.id !== socket.id,
+          );
+          if (otherSockets.length === 0) {
+            finishCall(io, callId, {
+              status: CALL_STATUS.MISSED,
+              endedBy: userId,
+              reason: "callee-disconnected",
+            });
+          }
+        } catch (_err) {
+          // If check fails, fallback to keeping call alive until timeout
+        }
       }
     }),
   );

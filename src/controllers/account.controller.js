@@ -1,34 +1,29 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
-import ApiResponse from "../utils/api-response.js";
 import { StatusCodes } from "http-status-codes";
-import {
-  accessCookieOptions,
-  refreshCookieOptions,
-} from "../constants/auth.constants.js";
-import { deleteAccount } from "../services/auth/account.service.js";
+import ApiResponse from "../utils/api-response.js";
+import { clearAuthCookies } from "../helpers/auth/auth-cookies.helper.js";
+import * as accountService from "../services/auth/account.service.js";
+
+export const deleteAccount = asyncHandler(async (req, res) => {
+  await accountService.deleteAccount({
+    userId: req.user._id,
+    confirmation: req.body.confirmation,
+    password: req.body.password,
+    code: req.body.code,
+    useRecoveryCode: req.body.useRecoveryCode,
+  });
+
+  clearAuthCookies(res);
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    null,
+    "Your account has been permanently deleted.",
+  ).send(res);
+});
 
 const accountController = {
-  deleteAccount: asyncHandler(async (req, res) => {
-    const { confirmation, password, code, useRecoveryCode } = req.body;
-
-    await deleteAccount({
-      userId: req.user._id,
-      confirmation,
-      password,
-      code,
-      useRecoveryCode,
-    });
-
-    res
-      .clearCookie("accessToken", accessCookieOptions)
-      .clearCookie("refreshToken", refreshCookieOptions);
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      null,
-      "Your account has been permanently deleted.",
-    ).send(res);
-  }),
+  deleteAccount,
 };
 
 export default accountController;

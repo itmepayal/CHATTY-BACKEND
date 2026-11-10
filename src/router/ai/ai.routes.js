@@ -1,6 +1,6 @@
 import { Router } from "express";
 import aiController from "../../controllers/ai.controller.js";
-import authMiddleware from "../../middlewares/authMidleware.middleware.js";
+import authMiddleware from "../../middlewares/auth.middleware.js";
 import {
   publicChatLimiter,
   toolsLimiter,

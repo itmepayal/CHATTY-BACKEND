@@ -1,8 +1,9 @@
 import { Router } from "express";
 import groupController from "../controllers/group.controller.js";
-import authMiddleware from "../middlewares/authMidleware.middleware.js";
+import authMiddleware from "../middlewares/auth.middleware.js";
 import upload, {
   enforceTypeSizeLimit,
+  autoCleanupMulterOnFailure,
 } from "../middlewares/multer.middleware.js";
 import {
   sendMessageLimiter,
@@ -31,6 +32,7 @@ router
   .post(
     settingsLimiter,
     upload.single("avatar"),
+    autoCleanupMulterOnFailure,
     enforceTypeSizeLimit,
     validateCreateGroupBody,
     groupController.createGroup,
@@ -53,11 +55,16 @@ router.post(
 // Group messaging routes
 router
   .route("/:id/messages")
-  .get(validateGroupIdParam, validatePaginationQuery, groupController.getGroupMessages)
+  .get(
+    validateGroupIdParam,
+    validatePaginationQuery,
+    groupController.getGroupMessages,
+  )
   .post(
     sendMessageLimiter,
     validateGroupIdParam,
     upload.single("image"),
+    autoCleanupMulterOnFailure,
     enforceTypeSizeLimit,
     groupController.sendGroupMessage,
   );
@@ -103,11 +110,7 @@ router.post(
 );
 
 // Archive / Unarchive routes
-router.put(
-  "/:id/archive",
-  validateGroupIdParam,
-  groupController.archiveGroup,
-);
+router.put("/:id/archive", validateGroupIdParam, groupController.archiveGroup);
 router.delete(
   "/:id/archive",
   validateGroupIdParam,
@@ -145,6 +148,7 @@ router
     settingsLimiter,
     validateGroupIdParam,
     upload.single("avatar"),
+    autoCleanupMulterOnFailure,
     enforceTypeSizeLimit,
     validateUpdateGroupBody,
     groupController.updateGroup,

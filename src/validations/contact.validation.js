@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
 import { isValidObjectId } from "../utils/object-id.util.js";
@@ -6,10 +7,65 @@ import {
   MAX_BULK_CONTACTS,
   CONTACT_ERROR_MESSAGES,
 } from "../constants/contact.constants.js";
+import { objectIdSchema } from "./common.validation.js";
 
-/**
- * Validates request parameter :userId
- */
+export const userIdParamSchema = z.object({
+  userId: objectIdSchema,
+});
+
+export const otherUserIdParamSchema = z.object({
+  otherUserId: objectIdSchema,
+});
+
+export const addContactBodySchema = z
+  .object({
+    nickname: z
+      .string()
+      .trim()
+      .max(MAX_NICKNAME_LENGTH, CONTACT_ERROR_MESSAGES.INVALID_NICKNAME)
+      .optional()
+      .nullable(),
+  })
+  .passthrough();
+
+export const updateNicknameBodySchema = z
+  .object({
+    nickname: z
+      .string()
+      .trim()
+      .max(MAX_NICKNAME_LENGTH, CONTACT_ERROR_MESSAGES.INVALID_NICKNAME)
+      .optional()
+      .nullable(),
+  })
+  .passthrough();
+
+export const contactPaginationQuerySchema = z
+  .object({
+    page: z.coerce
+      .number()
+      .int()
+      .min(1, "Page must be a positive integer.")
+      .optional(),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1, "Limit must be a positive integer.")
+      .optional(),
+    search: z.string().optional(),
+  })
+  .passthrough();
+
+export const bulkAddBodySchema = z
+  .object({
+    contactIds: z
+      .array(objectIdSchema, {
+        required_error: CONTACT_ERROR_MESSAGES.INVALID_BULK_ARRAY,
+      })
+      .min(1, CONTACT_ERROR_MESSAGES.INVALID_BULK_ARRAY)
+      .max(MAX_BULK_CONTACTS, CONTACT_ERROR_MESSAGES.EXCEEDED_BULK_LIMIT),
+  })
+  .passthrough();
+
 export const validateUserIdParam = (req, _res, next) => {
   if (!isValidObjectId(req.params.userId)) {
     throw new ApiError(
@@ -20,9 +76,6 @@ export const validateUserIdParam = (req, _res, next) => {
   next();
 };
 
-/**
- * Validates request parameter :otherUserId
- */
 export const validateOtherUserIdParam = (req, _res, next) => {
   if (!isValidObjectId(req.params.otherUserId)) {
     throw new ApiError(
@@ -33,19 +86,13 @@ export const validateOtherUserIdParam = (req, _res, next) => {
   next();
 };
 
-/**
- * Validates request body for adding a contact
- */
 export const validateAddContactBody = (req, _res, next) => {
   const { nickname } = req.body || {};
   if (nickname !== undefined && nickname !== null) {
-    if (typeof nickname !== "string") {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        CONTACT_ERROR_MESSAGES.INVALID_NICKNAME,
-      );
-    }
-    if (nickname.trim().length > MAX_NICKNAME_LENGTH) {
+    if (
+      typeof nickname !== "string" ||
+      nickname.trim().length > MAX_NICKNAME_LENGTH
+    ) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         CONTACT_ERROR_MESSAGES.INVALID_NICKNAME,
@@ -55,19 +102,13 @@ export const validateAddContactBody = (req, _res, next) => {
   next();
 };
 
-/**
- * Validates request body for updating contact nickname
- */
 export const validateUpdateNicknameBody = (req, _res, next) => {
   const { nickname } = req.body || {};
   if (nickname !== undefined && nickname !== null) {
-    if (typeof nickname !== "string") {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        CONTACT_ERROR_MESSAGES.INVALID_NICKNAME,
-      );
-    }
-    if (nickname.trim().length > MAX_NICKNAME_LENGTH) {
+    if (
+      typeof nickname !== "string" ||
+      nickname.trim().length > MAX_NICKNAME_LENGTH
+    ) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         CONTACT_ERROR_MESSAGES.INVALID_NICKNAME,
@@ -77,9 +118,6 @@ export const validateUpdateNicknameBody = (req, _res, next) => {
   next();
 };
 
-/**
- * Validates request query for pagination and search
- */
 export const validatePaginationQuery = (req, _res, next) => {
   const { page, limit } = req.query;
   if (page !== undefined) {

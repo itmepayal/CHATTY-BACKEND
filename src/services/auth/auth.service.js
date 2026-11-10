@@ -1,8 +1,8 @@
 import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../utils/api-error.js";
-import User from "../../models/users.model.js";
-import Session from "../../models/session.model.js";
+import * as userRepository from "../../repositories/users/user.repository.js";
+import * as sessionRepository from "../../repositories/auth/session.repository.js";
 import {
   uploadFileToCloudinary,
   deleteFileToCloudinary,
@@ -19,10 +19,17 @@ import {
   validateRegisterInput,
   validateLoginInput,
   validateLoginAlertsInput,
-} from "../../validators/auth.validator.js";
+} from "../../validations/auth.validation.js";
 import { io, disconnectUser, disconnectUserSession } from "../../lib/socket.js";
 
-export const register = async ({ req, fullName, email, password, file }) => {
+export const register = async ({
+  fullName,
+  email,
+  password,
+  file,
+  userAgent,
+  ip,
+}) => {
   const normalisedEmail = normalizeEmail(email);
   validateRegisterInput({
     fullName,
@@ -31,7 +38,7 @@ export const register = async ({ req, fullName, email, password, file }) => {
     file,
   });
 
-  const userExists = await User.findOne({ email: normalisedEmail });
+  const userExists = await userRepository.findByEmail(normalisedEmail);
   if (userExists) {
     throw new ApiError(StatusCodes.CONFLICT, "Email already registered.");
   }
@@ -45,7 +52,7 @@ export const register = async ({ req, fullName, email, password, file }) => {
   let sessionResult;
 
   try {
-    user = await User.create({
+    user = await userRepository.createUser({
       fullName: fullName.trim(),
       email: normalisedEmail,
       password,
@@ -55,7 +62,7 @@ export const register = async ({ req, fullName, email, password, file }) => {
       },
     });
 
-    sessionResult = await createLoginSession(req, user);
+    sessionResult = await createLoginSession(user, { userAgent, ip });
   } catch (err) {
     if (avatar?.public_id) {
       await deleteFileToCloudinary(avatar.public_id, "image").catch(() => {});
@@ -74,13 +81,11 @@ export const register = async ({ req, fullName, email, password, file }) => {
   };
 };
 
-export const login = async ({ req, email, password }) => {
+export const login = async ({ email, password, userAgent, ip }) => {
   const normalisedEmail = normalizeEmail(email);
   validateLoginInput({ email: normalisedEmail, password });
 
-  const user = await User.findOne({ email: normalisedEmail }).select(
-    "+password +twoFactorSecret +twoFactorEnabled +loginAlerts",
-  );
+  const user = await userRepository.findByEmailWithLoginSecrets(normalisedEmail);
 
   const INVALID_CREDENTIALS = AUTH_MESSAGES.INVALID_CREDENTIALS;
 
@@ -105,7 +110,10 @@ export const login = async ({ req, email, password }) => {
     };
   }
 
-  const { accessToken, refreshToken } = await createLoginSession(req, user);
+  const { accessToken, refreshToken } = await createLoginSession(user, {
+    userAgent,
+    ip,
+  });
 
   return {
     twoFactorRequired: false,
@@ -149,7 +157,7 @@ export const logout = async ({
   }
 
   if (targetSessionId) {
-    await Session.findByIdAndUpdate(targetSessionId, { revoked: true }).catch(
+    await sessionRepository.revokeById(targetSessionId).catch(
       () => {},
     );
     if (userId) {
@@ -159,7 +167,7 @@ export const logout = async ({
       await disconnectUserSession(userId, targetSessionId);
     }
   } else if (userId) {
-    await Session.updateMany({ userId }, { $set: { revoked: true } }).catch(
+    await sessionRepository.revokeAllForUser(userId).catch(
       () => {},
     );
     await disconnectUser(userId);
@@ -186,7 +194,18 @@ export const getAuthenticatedUser = (user) => {
 export const updateLoginAlerts = async ({ userId, enabled }) => {
   validateLoginAlertsInput(enabled);
 
-  await User.findByIdAndUpdate(userId, { loginAlerts: enabled });
+  await userRepository.findByIdAndUpdate(userId, { loginAlerts: enabled });
 
   return { loginAlerts: enabled };
 };
+
+const authService = {
+  register,
+  login,
+  logout,
+  getAuthenticatedUser,
+  updateLoginAlerts,
+};
+
+export default authService;
+

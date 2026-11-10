@@ -389,3 +389,6 @@ export const PRIVACY_VIS_FIELDS = Object.freeze([
   "aboutVisibility",
   "groupAddPermission",
 ]);
+
+export const VIS = Object.freeze(["everyone", "contacts", "nobody"]);
+export const VISIBILITY_OPTIONS = VIS;
