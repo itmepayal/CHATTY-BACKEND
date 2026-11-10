@@ -28,6 +28,14 @@
  *           type: string
  *           format: date-time
  *           nullable: true
+ *         answeredAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         endedAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
  *         user:
  *           type: object
  *           description: The other party in the call
@@ -54,6 +62,13 @@
  *           maximum: 100
  *           default: 50
  *         description: Maximum number of records to return (capped at 100)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
  *     responses:
  *       200:
  *         description: Call history fetched successfully
@@ -79,6 +94,8 @@
  *                   status: completed
  *                   duration: 145
  *                   startedAt: "2026-10-29T10:00:00.000Z"
+ *                   answeredAt: "2026-10-29T10:00:05.000Z"
+ *                   endedAt: "2026-10-29T10:02:30.000Z"
  *                   user:
  *                     id: 665f1c2e9b1e8a0012a4b123
  *                     fullName: Jane Doe

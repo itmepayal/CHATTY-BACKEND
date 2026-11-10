@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../utils/api-error.js";
-import User from "../../models/users.model.js";
+import * as userRepository from "../../repositories/users/user.repository.js";
 import {
   generateSecret,
   buildOtpUri,
@@ -20,11 +20,11 @@ import { createLoginSession } from "./session.service.js";
 import {
   validate2FAVerifyLoginInput,
   validateTotpCodeInput,
-} from "../../validators/auth.validator.js";
+} from "../../validations/auth.validation.js";
 import { AUTH_MESSAGES } from "../../constants/auth.constants.js";
 
 export const setup2FA = async (userId) => {
-  const user = await User.findById(userId).select(
+  const user = await userRepository.findById(userId).select(
     "+twoFactorPendingSecret +twoFactorSecret",
   );
 
@@ -52,7 +52,7 @@ export const setup2FA = async (userId) => {
 export const enable2FA = async ({ userId, code }) => {
   validateTotpCodeInput(code, "Verification code is required.");
 
-  const user = await User.findById(userId).select(
+  const user = await userRepository.findById(userId).select(
     "+twoFactorPendingSecret +twoFactorSecret",
   );
 
@@ -93,10 +93,11 @@ export const enable2FA = async ({ userId, code }) => {
 };
 
 export const verifyLogin2FA = async ({
-  req,
   challengeToken,
   code,
   useRecoveryCode,
+  userAgent,
+  ip,
 }) => {
   validate2FAVerifyLoginInput({ challengeToken, code });
 
@@ -110,7 +111,7 @@ export const verifyLogin2FA = async ({
     );
   }
 
-  const user = await User.findById(decoded.id).select(
+  const user = await userRepository.findById(decoded.id).select(
     "+twoFactorSecret +recoveryCodes +loginAlerts",
   );
 
@@ -152,7 +153,10 @@ export const verifyLogin2FA = async ({
 
   clearFail(user._id);
 
-  const { accessToken, refreshToken } = await createLoginSession(req, user);
+  const { accessToken, refreshToken } = await createLoginSession(user, {
+    userAgent,
+    ip,
+  });
 
   return {
     user,
@@ -167,7 +171,7 @@ export const disable2FA = async ({ userId, code }) => {
     "Current authenticator code is required to disable 2FA.",
   );
 
-  const user = await User.findById(userId).select("+twoFactorSecret");
+  const user = await userRepository.findById(userId).select("+twoFactorSecret");
 
   if (!user.twoFactorEnabled) {
     throw new ApiError(StatusCodes.CONFLICT, AUTH_MESSAGES.TWO_FA_NOT_ENABLED);
@@ -192,7 +196,7 @@ export const disable2FA = async ({ userId, code }) => {
 export const regenerateRecoveryCodes = async ({ userId, code }) => {
   validateTotpCodeInput(code, "Current authenticator code is required.");
 
-  const user = await User.findById(userId).select(
+  const user = await userRepository.findById(userId).select(
     "+twoFactorSecret +recoveryCodes",
   );
 
@@ -219,3 +223,14 @@ export const regenerateRecoveryCodes = async ({ userId, code }) => {
     warning: AUTH_MESSAGES.RECOVERY_CODES_REGEN_WARNING,
   };
 };
+
+const twoFactorService = {
+  setup2FA,
+  enable2FA,
+  verifyLogin2FA,
+  disable2FA,
+  regenerateRecoveryCodes,
+};
+
+export default twoFactorService;
+

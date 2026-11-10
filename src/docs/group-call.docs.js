@@ -19,7 +19,7 @@
  *           example: audio
  *         status:
  *           type: string
- *           enum: [missed, rejected, cancelled, completed, failed]
+ *           enum: [missed, cancelled, completed, failed]
  *           example: completed
  *         duration:
  *           type: number
@@ -30,7 +30,20 @@
  *           type: string
  *           format: date-time
  *           nullable: true
- *         initiator:
+ *         endedAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         participantCount:
+ *           type: number
+ *           example: 3
+ *         maxParticipants:
+ *           type: number
+ *           example: 4
+ *         startedByMe:
+ *           type: boolean
+ *           example: true
+ *         startedBy:
  *           type: object
  *           nullable: true
  *           properties:
@@ -63,6 +76,13 @@
  *           maximum: 100
  *           default: 50
  *         description: Maximum number of records (capped at 100)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
  *     responses:
  *       200:
  *         description: Group calls fetched successfully
@@ -103,6 +123,13 @@
  *           maximum: 100
  *           default: 50
  *         description: Maximum number of records (capped at 100)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
  *     responses:
  *       200:
  *         description: Group call history fetched successfully

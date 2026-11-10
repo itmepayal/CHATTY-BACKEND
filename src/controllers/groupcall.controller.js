@@ -1,39 +1,40 @@
-import { StatusCodes } from "http-status-codes";
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
+import { StatusCodes } from "http-status-codes";
 import ApiResponse from "../utils/api-response.js";
-import { getGroupAndMember } from "../utils/group-guard.js";
-import {
-  getGroupCallHistoryList,
-  getMyGroupCallsList,
-} from "../services/group-call.service.js";
+import * as groupCallService from "../services/calls/group-call.service.js";
+
+export const getGroupCallHistory = asyncHandler(async (req, res) => {
+  const data = await groupCallService.getGroupCallHistoryForRequest({
+    groupId: req.params.id,
+    me: req.user._id,
+    limit: req.query.limit,
+    page: req.query.page,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Group call history fetched successfully.",
+  ).send(res);
+});
+
+export const getMyGroupCalls = asyncHandler(async (req, res) => {
+  const data = await groupCallService.getMyGroupCallsList({
+    me: req.user._id,
+    limit: req.query.limit,
+    page: req.query.page,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Group calls fetched successfully.",
+  ).send(res);
+});
 
 const groupCallController = {
-  getGroupCallHistory: asyncHandler(async (req, res) => {
-    const me = req.user._id;
-    const { group, member } = await getGroupAndMember(req.params.id, me);
-    const limit = Math.min(Number(req.query.limit) || 50, 100);
-
-    const data = await getGroupCallHistoryList({ group, member, me, limit });
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      data,
-      "Group call history fetched successfully.",
-    ).send(res);
-  }),
-
-  getMyGroupCalls: asyncHandler(async (req, res) => {
-    const me = req.user._id;
-    const limit = Math.min(Number(req.query.limit) || 50, 100);
-
-    const data = await getMyGroupCallsList({ me, limit });
-
-    return new ApiResponse(
-      StatusCodes.OK,
-      data,
-      "Group calls fetched successfully.",
-    ).send(res);
-  }),
+  getGroupCallHistory,
+  getMyGroupCalls,
 };
 
 export default groupCallController;

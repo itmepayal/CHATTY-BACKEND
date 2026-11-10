@@ -16,6 +16,11 @@ export const errorHandler = (err, _req, res, _next) => {
     message = `Invalid ${err.path}.`;
   }
 
+  if (err.name === "ZodError" || (err.issues && Array.isArray(err.issues))) {
+    statusCode = StatusCodes.BAD_REQUEST;
+    message = err.issues?.[0]?.message || "Validation error.";
+  }
+
   if (err.name === "ValidationError") {
     statusCode = StatusCodes.BAD_REQUEST;
     message = Object.values(err.errors)

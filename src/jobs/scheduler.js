@@ -1,5 +1,5 @@
 import ScheduledMessage from "../models/scheduled-message.model.js";
-import { deliverMessage } from "../services/message.service.js";
+import { deliverMessage } from "../services/messaging/core/message.service.js";
 import { assertCanMessage } from "../utils/chat-guard.js";
 import { attachLinkPreview } from "../utils/link-preview.js";
 import { SCHEDULER_TICK_MS } from "../constants/constants.js";

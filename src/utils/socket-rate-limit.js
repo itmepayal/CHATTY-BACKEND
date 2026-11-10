@@ -1,27 +1,12 @@
-/**
- * Reusable In-Memory Token Bucket Rate Limiter for Socket Events
- * Tracks tokens per userId and event type with automated idle bucket eviction.
- */
 class SocketRateLimiter {
   constructor() {
     this.buckets = new Map();
-    // Cleanup idle buckets every 5 minutes to prevent memory leaks
     this.cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000);
     if (this.cleanupTimer.unref) {
       this.cleanupTimer.unref();
     }
   }
 
-  /**
-   * Consumes a token for a given user and action.
-   *
-   * @param {string} userId - User identifier
-   * @param {string} action - Action name (e.g., 'call:invite', 'privacy:update', 'typing')
-   * @param {Object} config
-   * @param {number} config.capacity - Maximum tokens allowed in bucket
-   * @param {number} config.refillPerSec - Tokens refilled per second
-   * @returns {boolean} - true if allowed, false if rate limited
-   */
   consume(userId, action, { capacity, refillPerSec }) {
     if (!userId) return false;
     const key = `${userId}:${action}`;
@@ -34,7 +19,6 @@ class SocketRateLimiter {
       return true;
     }
 
-    // Refill tokens based on elapsed time
     const elapsedSec = (now - bucket.lastRefill) / 1000;
     bucket.tokens = Math.min(
       capacity,
@@ -48,6 +32,23 @@ class SocketRateLimiter {
     }
 
     return false;
+  }
+
+  reset(userId, action) {
+    if (!userId) return;
+    if (action) {
+      this.buckets.delete(`${userId}:${action}`);
+    } else {
+      for (const key of this.buckets.keys()) {
+        if (key.startsWith(`${userId}:`)) {
+          this.buckets.delete(key);
+        }
+      }
+    }
+  }
+
+  resetAll() {
+    this.buckets.clear();
   }
 
   cleanup() {

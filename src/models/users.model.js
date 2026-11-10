@@ -12,8 +12,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/api-error.js";
+import { VIS } from "../constants/constants.js";
 
-export const VIS = ["everyone", "contacts", "nobody"];
+export { VIS };
 
 const UserSchema = new mongoose.Schema(
   {

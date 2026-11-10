@@ -1,7 +1,9 @@
 import express from "express";
 import authController from "../../controllers/auth.controller.js";
-import upload from "../../middlewares/multer.middleware.js";
-import authMiddleware from "../../middlewares/authMidleware.middleware.js";
+import upload, {
+  autoCleanupMulterOnFailure,
+} from "../../middlewares/multer.middleware.js";
+import authMiddleware from "../../middlewares/auth.middleware.js";
 import twoFactorController from "../../controllers/twoFactor.controller.js";
 import sessionController from "../../controllers/sessions.controller.js";
 import accountController from "../../controllers/account.controller.js";
@@ -21,6 +23,7 @@ router
   .post(
     registerRateLimiter,
     upload.single("avatar"),
+    autoCleanupMulterOnFailure,
     authController.registerUser,
   );
 router.route("/refresh").post(refreshRateLimiter, authController.refreshToken);
