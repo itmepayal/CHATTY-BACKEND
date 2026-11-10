@@ -7,7 +7,7 @@ import {
   MAX_MEDIA_FILE_SIZE,
   BLOCKED_EXTENSIONS,
   UPLOAD_DIR as UPLOAD_DIR_CONST,
-} from "../constants/constants.js";
+} from "../constants/messaging/messages.constants.js";
 
 const UPLOAD_DIR = path.resolve(UPLOAD_DIR_CONST);
 

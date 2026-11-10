@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import ApiError from "./api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { CONTACT_ERROR_MESSAGES } from "../constants/contact.constants.js";
+import { CONTACT_ERROR_MESSAGES } from "../constants/contacts/contact.constants.js";
 
 /**
  * Validates whether a value is a valid 24-character hex MongoDB ObjectId.

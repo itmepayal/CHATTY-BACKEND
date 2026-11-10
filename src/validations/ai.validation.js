@@ -5,7 +5,7 @@ import {
   ALLOWED_TONES,
   AI_LIMITS,
   AI_ERROR_MESSAGES,
-} from "../constants/ai.constants.js";
+} from "../constants/ai/ai.constants.js";
 
 export const correctBodySchema = z.object({
   text: z

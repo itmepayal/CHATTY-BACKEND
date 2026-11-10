@@ -1,5 +1,5 @@
 import { io, groupRoom } from "../../lib/socket.js";
-import { GROUP_SOCKET_EVENTS } from "../../constants/group/group.events.js";
+import { GROUP_SOCKET_EVENTS } from "../../constants/group/group-events.constants.js";
 
 export const joinGroupRoom = (userId, groupId) => {
   io.in(String(userId)).socketsJoin(groupRoom(groupId));

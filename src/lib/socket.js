@@ -7,18 +7,16 @@ import Group from "../models/group.model.js";
 import User from "../models/users.model.js";
 import Contact from "../models/contact.model.js";
 import Session from "../models/session.model.js";
-import {
-  accessToken as accessTokenSecret,
-  corsOriginValidator,
-} from "../constants/constants.js";
+import { accessToken as accessTokenSecret } from "../constants/auth/auth.constants.js";
+import { corsOriginValidator } from "../constants/shared/app.constants.js";
 import {
   BLOCK_CACHE_TTL_MS,
   SOCKET_THROTTLE_MS,
-} from "../constants/constants.js";
+} from "../constants/messaging/messages.constants.js";
 import { registerCallHandlers } from "./callSignaling.js";
 import { safeHandler } from "../utils/socket-safe.js";
 import { socketLimiter } from "../utils/socket-rate-limit.js";
-import { SOCKET_RATE_LIMITS } from "../constants/rate-limit.constants.js";
+import { SOCKET_RATE_LIMITS } from "../constants/shared/rate-limit.constants.js";
 import {
   registerGroupCallHandlers,
   isUserInGroupCall,
@@ -89,7 +87,6 @@ const isBlockedEitherWay = async (a, b) => {
 
   return value;
 };
-
 
 export const isUserViewingChat = async (receiverId, senderId) => {
   const sockets = await io.in(receiverId.toString()).fetchSockets();
@@ -494,7 +491,6 @@ export const refreshPrivacy = async (userId) => {
     }
   }
 
-  // Immediately push fresh authorized online user list to ALL currently connected users
   for (const activeId of onlineUsers.keys()) {
     await sendAuthorizedOnlineList(activeId);
   }

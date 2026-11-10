@@ -1,7 +1,7 @@
 import asyncHandler from "../middlewares/asyncHandler.middleware.js";
 import { StatusCodes } from "http-status-codes";
 import ApiResponse from "../utils/api-response.js";
-import { GROUP_SUCCESS_MESSAGES } from "../constants/group.constants.js";
+import { GROUP_SUCCESS_MESSAGES } from "../constants/group/group.constants.js";
 import * as groupService from "../services/groups/group.service.js";
 import * as groupMemberService from "../services/groups/group-member.service.js";
 import * as groupMessageService from "../services/groups/group-message.service.js";

@@ -3,102 +3,94 @@ import User from "../../models/users.model.js";
 import Message from "../../models/message.model.js";
 import { toObjectId } from "../../utils/object-id.util.js";
 import { escapeRegex } from "../../utils/sanitize.util.js";
-import { USER_STATUS } from "../../constants/contact.constants.js";
+import {
+  USER_STATUS,
+  SEARCH_RESULT_LIMIT,
+} from "../../constants/contacts/contact.constants.js";
 import {
   CONTACT_POPULATE_FIELDS,
   SEARCH_USER_FIELDS,
-} from "../../constants/user-fields.constants.js";
+} from "../../constants/users/user-fields.constants.js";
 
-/**
- * Finds a single user document by ID.
- * @param {string} userId
- * @param {string} [selectFields]
- * @returns {Promise<object|null>}
- */
-export const findUserById = async (userId, selectFields = "_id status") =>
-  User.findById(toObjectId(userId)).select(selectFields).lean();
+export const findUserById = async (
+  userId,
+  selectFields = "_id status",
+  options = {},
+) => {
+  const query = User.findById(toObjectId(userId)).select(selectFields);
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
 
-/**
- * Finds user documents matching a list of IDs.
- * @param {string[]} userIds
- * @param {string} [selectFields]
- * @returns {Promise<object[]>}
- */
 export const findUsersByIds = async (
   userIds,
   selectFields = CONTACT_POPULATE_FIELDS,
-) =>
-  User.find({
+  options = {},
+) => {
+  const query = User.find({
     _id: { $in: userIds.map(toObjectId) },
     status: { $ne: USER_STATUS.SUSPENDED },
-  })
-    .select(selectFields)
-    .lean();
+  }).select(selectFields);
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
 
-/**
- * Finds the list of blocked user IDs for a given user.
- * @param {string} userId
- * @returns {Promise<string[]>}
- */
-export const findUserBlockedList = async (userId) => {
-  const doc = await User.findById(toObjectId(userId))
-    .select("blockedUsers")
-    .lean();
+export const findUsersWithBlocked = async (userIds, options = {}) => {
+  const query = User.find({
+    _id: { $in: userIds.map(toObjectId) },
+    status: { $ne: USER_STATUS.SUSPENDED },
+  }).select("_id blockedUsers fullName username");
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
+
+export const findUserBlockedList = async (userId, options = {}) => {
+  const query = User.findById(toObjectId(userId)).select("blockedUsers");
+  if (options.session) query.session(options.session);
+  const doc = await query.lean();
   return (doc?.blockedUsers || []).map(String);
 };
 
-/**
- * Checks bidirectional blocking between user A and user B.
- * @param {string} userA
- * @param {string} userB
- * @returns {Promise<boolean>}
- */
-export const isBlockedBidirectional = async (userA, userB) => {
-  const found = await User.exists({
+export const isBlockedBidirectional = async (userA, userB, options = {}) => {
+  const query = User.exists({
     $or: [
       { _id: toObjectId(userA), blockedUsers: toObjectId(userB) },
       { _id: toObjectId(userB), blockedUsers: toObjectId(userA) },
     ],
   });
+  if (options.session) query.session(options.session);
+  const found = await query;
   return Boolean(found);
 };
 
-/**
- * Finds existing contacts for an owner with an exact contact ID.
- * @param {string} ownerId
- * @param {string} contactId
- * @returns {Promise<object|null>}
- */
-export const findContact = async (ownerId, contactId) =>
-  Contact.findOne({
+export const findContact = async (ownerId, contactId, options = {}) => {
+  const query = Contact.findOne({
     ownerId: toObjectId(ownerId),
     contactId: toObjectId(contactId),
-  }).lean();
+  });
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
 
-/**
- * Finds a contact by owner and contact ID, populating user details.
- * @param {string} ownerId
- * @param {string} contactId
- * @returns {Promise<object|null>}
- */
-export const findContactWithUser = async (ownerId, contactId) =>
-  Contact.findOne({
+export const existsContact = async (ownerId, contactId, options = {}) => {
+  const query = Contact.exists({
     ownerId: toObjectId(ownerId),
     contactId: toObjectId(contactId),
-  })
-    .populate("contactId", CONTACT_POPULATE_FIELDS)
-    .lean();
+  });
+  if (options.session) query.session(options.session);
+  const found = await query;
+  return Boolean(found);
+};
 
-/**
- * Performs an aggregation pipeline for owner's contacts with exact DB filtering and pagination.
- * @param {string} ownerId
- * @param {object} options
- * @param {number} options.skip
- * @param {number} options.limitNum
- * @param {boolean} options.isPaginated
- * @param {string} options.search
- * @returns {Promise<{ contacts: object[], total: number }>}
- */
+export const findContactWithUser = async (ownerId, contactId, options = {}) => {
+  const query = Contact.findOne({
+    ownerId: toObjectId(ownerId),
+    contactId: toObjectId(contactId),
+  }).populate("contactId", CONTACT_POPULATE_FIELDS);
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
+
 export const findContactsAggregation = async (
   ownerId,
   { skip = 0, limitNum = 20, isPaginated = false, search = "" } = {},
@@ -163,9 +155,11 @@ export const findContactsAggregation = async (
                 phone: "$contactDetails.phone",
                 isOnline: "$contactDetails.isOnline",
                 lastSeen: "$contactDetails.lastSeen",
-                profilePhotoVisibility: "$contactDetails.profilePhotoVisibility",
+                profilePhotoVisibility:
+                  "$contactDetails.profilePhotoVisibility",
                 aboutVisibility: "$contactDetails.aboutVisibility",
-                onlineStatusVisibility: "$contactDetails.onlineStatusVisibility",
+                onlineStatusVisibility:
+                  "$contactDetails.onlineStatusVisibility",
                 lastSeenVisibility: "$contactDetails.lastSeenVisibility",
                 status: "$contactDetails.status",
               },
@@ -182,162 +176,252 @@ export const findContactsAggregation = async (
   return { rows, total };
 };
 
-/**
- * Counts total contacts saved by an owner.
- * @param {string} ownerId
- * @returns {Promise<number>}
- */
-export const countContacts = async (ownerId) =>
-  Contact.countDocuments({ ownerId: toObjectId(ownerId) });
+export const countContacts = async (ownerId, options = {}) => {
+  const query = Contact.countDocuments({ ownerId: toObjectId(ownerId) });
+  if (options.session) query.session(options.session);
+  return query;
+};
 
-/**
- * Upserts a contact entry for ownerId and contactId with a given nickname.
- * @param {string} ownerId
- * @param {string} contactId
- * @param {string} nickname
- * @returns {Promise<object>}
- */
-export const upsertContact = async (ownerId, contactId, nickname) =>
-  Contact.findOneAndUpdate(
+export const upsertContact = async (
+  ownerId,
+  contactId,
+  nickname,
+  options = {},
+) => {
+  const query = Contact.findOneAndUpdate(
     { ownerId: toObjectId(ownerId), contactId: toObjectId(contactId) },
     { $set: { nickname, contactId: toObjectId(contactId) } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  ).lean();
+    { upsert: true, new: true, setDefaultsOnInsert: true, ...options },
+  );
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
 
-/**
- * Deletes a single contact entry between owner and contact.
- * @param {string} ownerId
- * @param {string} contactId
- * @returns {Promise<{ deletedCount: number }>}
- */
-export const deleteContact = async (ownerId, contactId) =>
-  Contact.deleteOne({
-    ownerId: toObjectId(ownerId),
-    contactId: toObjectId(contactId),
-  });
+export const deleteContact = async (ownerId, contactId, options = {}) =>
+  Contact.deleteOne(
+    {
+      ownerId: toObjectId(ownerId),
+      contactId: toObjectId(contactId),
+    },
+    options,
+  );
 
-/**
- * Updates the nickname of an existing contact.
- * @param {string} ownerId
- * @param {string} contactId
- * @param {string} nickname
- * @returns {Promise<object|null>}
- */
-export const updateNickname = async (ownerId, contactId, nickname) =>
-  Contact.findOneAndUpdate(
+export const updateNickname = async (
+  ownerId,
+  contactId,
+  nickname,
+  options = {},
+) => {
+  const query = Contact.findOneAndUpdate(
     { ownerId: toObjectId(ownerId), contactId: toObjectId(contactId) },
     { $set: { nickname } },
-    { new: true },
-  ).lean();
+    { new: true, ...options },
+  );
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
 
-/**
- * Finds contact IDs saved by owner that are also present in a target list.
- * @param {string} ownerId
- * @param {string[]} contactIds
- * @returns {Promise<string[]>}
- */
-export const findExistingContactIds = async (ownerId, contactIds) => {
-  const docs = await Contact.find({
+export const findExistingContactIds = async (
+  ownerId,
+  contactIds,
+  options = {},
+) => {
+  const query = Contact.find({
     ownerId: toObjectId(ownerId),
     contactId: { $in: contactIds.map(toObjectId) },
-  })
-    .select("contactId")
-    .lean();
+  }).select("contactId");
+  if (options.session) query.session(options.session);
+  const docs = await query.lean();
   return docs.map((d) => String(d.contactId));
 };
 
-/**
- * Performs bulk insertion of contacts for an owner.
- * @param {object[]} docs
- * @param {object} [options]
- * @returns {Promise<object[]>}
- */
+export const findExistingContactIdSet = async (
+  ownerId,
+  candidateIds,
+  options = {},
+) => {
+  const ids = await findExistingContactIds(ownerId, candidateIds, options);
+  return new Set(ids);
+};
+
+export const findContactIds = async (ownerId, options = {}) => {
+  const query = Contact.find({ ownerId: toObjectId(ownerId) }).select(
+    "contactId",
+  );
+  if (options.session) query.session(options.session);
+  const docs = await query.lean();
+  return docs.map((d) => String(d.contactId));
+};
+
+export const bulkUpsertContacts = async (ownerId, contactIds, options = {}) => {
+  const oId = toObjectId(ownerId);
+  const ops = contactIds.map((cid) => ({
+    updateOne: {
+      filter: { ownerId: oId, contactId: toObjectId(cid) },
+      update: { $setOnInsert: { ownerId: oId, contactId: toObjectId(cid) } },
+      upsert: true,
+    },
+  }));
+  return Contact.bulkWrite(ops, { ordered: false, ...options });
+};
+
 export const insertManyContacts = async (docs, options = { ordered: false }) =>
   Contact.insertMany(docs, options);
 
-/**
- * Finds mutual contacts saved by both userA and userB.
- * @param {string} userA
- * @param {string} userB
- * @returns {Promise<object[]>}
- */
-export const findMutualContacts = async (userA, userB) => {
+export const findMutualContactIds = async (userA, userB, options = {}) => {
+  const queryA = Contact.find({ ownerId: toObjectId(userA) }).select(
+    "contactId",
+  );
+  const queryB = Contact.find({ ownerId: toObjectId(userB) }).select(
+    "contactId",
+  );
+  if (options.session) {
+    queryA.session(options.session);
+    queryB.session(options.session);
+  }
   const [contactsA, contactsB] = await Promise.all([
-    Contact.find({ ownerId: toObjectId(userA) }).select("contactId").lean(),
-    Contact.find({ ownerId: toObjectId(userB) }).select("contactId").lean(),
+    queryA.lean(),
+    queryB.lean(),
   ]);
 
   const setB = new Set(contactsB.map((c) => String(c.contactId)));
-  const mutualIds = contactsA
-    .map((c) => String(c.contactId))
-    .filter((id) => setB.has(id));
-
-  if (mutualIds.length === 0) return [];
-
-  return User.find({
-    _id: { $in: mutualIds.map(toObjectId) },
-    status: { $ne: USER_STATUS.SUSPENDED },
-  })
-    .select(CONTACT_POPULATE_FIELDS)
-    .lean();
+  return contactsA.map((c) => String(c.contactId)).filter((id) => setB.has(id));
 };
 
-/**
- * Searches users matching a query string across fullName, username, and email.
- * @param {string} query
- * @param {string} excludeUserId
- * @param {number} [limit=20]
- * @returns {Promise<object[]>}
- */
+export const findMutualContacts = async (userA, userB, options = {}) => {
+  const mutualIds = await findMutualContactIds(userA, userB, options);
+  if (mutualIds.length === 0) return [];
+
+  const query = User.find({
+    _id: { $in: mutualIds.map(toObjectId) },
+    status: { $ne: USER_STATUS.SUSPENDED },
+  }).select(CONTACT_POPULATE_FIELDS);
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
+
+export const searchDiscoverableUsers = async (
+  {
+    currentUserId,
+    blockedUserIds = [],
+    nameOrUsernameRegex,
+    exactEmail,
+    limit = SEARCH_RESULT_LIMIT,
+  },
+  options = {},
+) => {
+  const blockedOids = blockedUserIds.map(toObjectId);
+  const query = User.find({
+    _id: { $ne: toObjectId(currentUserId), $nin: blockedOids },
+    status: { $ne: USER_STATUS.SUSPENDED },
+    $or: [
+      { fullName: nameOrUsernameRegex },
+      { username: nameOrUsernameRegex },
+      { email: exactEmail },
+    ],
+  })
+    .select(SEARCH_USER_FIELDS)
+    .limit(limit);
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
+
 export const searchUsers = async (
   query,
   excludeUserId,
   limit = SEARCH_RESULT_LIMIT,
+  options = {},
 ) => {
   const escaped = escapeRegex(query);
   const regex = new RegExp(escaped, "i");
 
-  return User.find({
+  const q = User.find({
     _id: { $ne: toObjectId(excludeUserId) },
     status: { $ne: USER_STATUS.SUSPENDED },
     $or: [{ fullName: regex }, { username: regex }, { email: regex }],
   })
     .select(SEARCH_USER_FIELDS)
-    .limit(limit)
-    .lean();
+    .limit(limit);
+  if (options.session) q.session(options.session);
+  return options.lean === false ? q : q.lean();
 };
 
-/**
- * Queries contacts with custom filter.
- * @param {object} filter
- * @returns {import("mongoose").Query}
- */
-export const find = (filter) => Contact.find(filter);
+export const aggregateChatListMessages = async (
+  currentUserId,
+  activeContactIds,
+  options = {},
+) => {
+  const uid = toObjectId(currentUserId);
+  const cids = activeContactIds.map(toObjectId);
+  const pipeline = [
+    {
+      $match: {
+        $or: [
+          { senderId: uid, receiverId: { $in: cids } },
+          { receiverId: uid, senderId: { $in: cids } },
+        ],
+        deletedFor: { $ne: uid },
+        deletedForEveryone: { $ne: true },
+      },
+    },
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: {
+          $cond: [{ $eq: ["$senderId", uid] }, "$receiverId", "$senderId"],
+        },
+        lastMessage: { $first: "$$ROOT" },
+      },
+    },
+  ];
 
-/**
- * Checks existence with custom filter.
- * @param {object} filter
- * @returns {Promise<boolean>}
- */
-export const exists = async (filter) => {
-  const found = await Contact.exists(filter);
+  const results = await Message.aggregate(pipeline);
+  const map = new Map();
+  for (const row of results) {
+    map.set(String(row._id), row.lastMessage);
+  }
+  return map;
+};
+
+export const find = (filter = {}, projection, options = {}) => {
+  const query = Contact.find(filter);
+  if (projection) query.select(projection);
+  if (options.session) query.session(options.session);
+  return query;
+};
+
+export const exists = async (filter, options = {}) => {
+  const query = Contact.exists(filter);
+  if (options.session) query.session(options.session);
+  const found = await query;
   return Boolean(found);
 };
 
-export const deleteManyForUser = (userId, options) =>
-  Contact.deleteMany(
-    { $or: [{ ownerId: userId }, { contactId: userId }] },
+export const deleteInvolvingUser = (userId, options = {}) => {
+  const uid = toObjectId(userId);
+  return Contact.deleteMany(
+    { $or: [{ ownerId: uid }, { contactId: uid }] },
     options,
   );
+};
 
-export const distinctContactIds = (filter) => Contact.distinct("contactId", filter);
+export const deleteManyForUser = (userId, options) =>
+  deleteInvolvingUser(userId, options);
 
-const contactRepository = {
+export const distinctContactIds = (filter, options = {}) => {
+  const query = Contact.distinct("contactId", filter);
+  if (options.session) query.session(options.session);
+  return query;
+};
+
+const contactRepository = Object.freeze({
   findUserById,
   findUsersByIds,
+  findUsersWithBlocked,
   findUserBlockedList,
   isBlockedBidirectional,
   findContact,
+  existsContact,
   findContactWithUser,
   findContactsAggregation,
   countContacts,
@@ -345,13 +429,20 @@ const contactRepository = {
   deleteContact,
   updateNickname,
   findExistingContactIds,
+  findExistingContactIdSet,
+  findContactIds,
+  bulkUpsertContacts,
   insertManyContacts,
+  findMutualContactIds,
   findMutualContacts,
+  searchDiscoverableUsers,
   searchUsers,
+  aggregateChatListMessages,
   find,
   exists,
+  deleteInvolvingUser,
   deleteManyForUser,
   distinctContactIds,
-};
+});
 
 export default contactRepository;

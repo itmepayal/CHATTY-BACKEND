@@ -7,7 +7,7 @@ import ApiError from "../../../utils/api-error.js";
 import { assertValidId } from "../../../utils/validators.js";
 import { assertValidCipher } from "../../../utils/e2ee.js";
 import { isExpired, isParticipantOf } from "../../../utils/message-helpers.js";
-import { MAX_FORWARD_TARGETS } from "../../../constants/messages.constants.js";
+import { MAX_FORWARD_TARGETS } from "../../../constants/messaging/messages.constants.js";
 
 export const forwardMessage = async (
   userId,

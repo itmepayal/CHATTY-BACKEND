@@ -1,5 +1,5 @@
 import { createRateLimiter } from "./rate-limit.factory.js";
-import { RATE_LIMIT_CONFIG } from "../../constants/rate-limit.constants.js";
+import { RATE_LIMIT_CONFIG } from "../../constants/shared/rate-limit.constants.js";
 
 export const strictLimiter = createRateLimiter({
   windowMs: RATE_LIMIT_CONFIG.AUTH_STRICT.windowMs,

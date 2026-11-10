@@ -3,7 +3,7 @@ import User from "../models/users.model.js";
 import Session from "../models/session.model.js";
 import ApiError from "../utils/api-error.js";
 import { StatusCodes } from "http-status-codes";
-import { accessToken, AUTH_MESSAGES } from "../constants/auth.constants.js";
+import { accessToken, AUTH_MESSAGES } from "../constants/auth/auth.constants.js";
 
 const authMiddleware = async (req, res, next) => {
   try {

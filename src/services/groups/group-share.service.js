@@ -7,8 +7,8 @@ import {
   LIVE_DURATIONS_MIN,
   MIN_LOCATION_UPDATE_INTERVAL_MS,
   GROUP_ERROR_MESSAGES,
-} from "../../constants/group.constants.js";
-import { GROUP_SOCKET_EVENTS } from "../../constants/group-events.constants.js";
+} from "../../constants/group/index.js";
+import { GROUP_SOCKET_EVENTS } from "../../constants/group/group-events.constants.js";
 import { validCoords, readLocation } from "../../utils/validators.js";
 import { getBlockedByMe, getBlockersOf, getGroupAndMember } from "../../utils/group-guard.js";
 import { canManageShare } from "../../policies/group.policy.js";

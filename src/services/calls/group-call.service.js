@@ -1,11 +1,11 @@
 import crypto from "crypto";
 import * as groupRepository from "../../repositories/groups/group.repository.js";
-import * as groupCallRepository from "../../repositories/groups/group-call.repository.js";
+import * as groupCallRepository from "../../repositories/calling/group-call.repository.js";
 import * as userRepository from "../../repositories/users/user.repository.js";
-import * as contactRepository from "../../repositories/contact.repository.js";
+import * as contactRepository from "../../repositories/contacts/contact.repository.js";
 const sid = (x) => String(x?._id ?? x);
 import { canViewSync } from "../privacy/privacy-visibility.service.js";
-import { CALL_LIMITS } from "../../constants/call.constants.js";
+import { CALL_LIMITS } from "../../constants/calling/call.constants.js";
 import { getGroupAndMember } from "../../utils/group-guard.js";
 
 export const formatGroupCall = (c, meId, targetSavedMeSet, blockedSet) => {

@@ -1,46 +1,73 @@
 import User from "../../models/users.model.js";
 import { toObjectId } from "../../utils/object-id.util.js";
 
-/**
- * Finds user public key with password for verification.
- * @param {string|import("mongoose").Types.ObjectId} userId
- * @returns {Promise<import("mongoose").Document|null>}
- */
-export const findUserWithPublicKey = async (userId) => {
-  return User.findById(toObjectId(userId)).select("+publicKey +password");
+export const findUserWithPublicKey = async (userId, options = {}) => {
+  const query = User.findById(toObjectId(userId)).select(
+    "+publicKey +password",
+  );
+
+  if (options.session) query.session(options.session);
+
+  return options.lean ? query.lean() : query;
 };
 
-/**
- * Updates a user's public key.
- * @param {string|import("mongoose").Types.ObjectId} userId
- * @param {object} publicKey
- * @returns {Promise<object|null>}
- */
-export const updateUserPublicKey = async (userId, publicKey) => {
-  return User.findByIdAndUpdate(
+export const updateUserPublicKey = async (userId, publicKey, options = {}) => {
+  const query = User.findByIdAndUpdate(
     toObjectId(userId),
-    { $set: { publicKey, publicKeyUpdatedAt: new Date() } },
-    { new: true },
-  )
-    .select("+publicKey")
-    .lean();
+    {
+      $set: {
+        publicKey,
+        publicKeyUpdatedAt: new Date(),
+      },
+    },
+    {
+      new: true,
+      runValidators: true,
+      ...options,
+    },
+  ).select("+publicKey");
+
+  if (options.session) query.session(options.session);
+
+  return options.lean === false ? query : query.lean();
 };
 
-/**
- * Finds user public key by target ID.
- * @param {string|import("mongoose").Types.ObjectId} targetId
- * @returns {Promise<object|null>}
- */
-export const findPublicKeyByUserId = async (targetId) => {
-  return User.findById(toObjectId(targetId))
-    .select("+publicKey publicKeyUpdatedAt")
-    .lean();
+export const updateByUserId = (userId, publicKey, options) =>
+  updateUserPublicKey(userId, publicKey, options);
+
+export const findPublicKeyByUserId = async (targetId, options = {}) => {
+  const query = User.findById(toObjectId(targetId)).select(
+    "+publicKey publicKeyUpdatedAt",
+  );
+
+  if (options.session) query.session(options.session);
+
+  return options.lean === false ? query : query.lean();
 };
 
-const userKeyRepository = {
+export const findByUserId = (targetId, options) =>
+  findPublicKeyByUserId(targetId, options);
+
+export const existsByUserId = async (userId, options = {}) => {
+  const query = User.exists({
+    _id: toObjectId(userId),
+    publicKey: { $ne: null },
+  });
+
+  if (options.session) query.session(options.session);
+
+  const found = await query;
+
+  return Boolean(found);
+};
+
+const userKeyRepository = Object.freeze({
   findUserWithPublicKey,
   updateUserPublicKey,
+  updateByUserId,
   findPublicKeyByUserId,
-};
+  findByUserId,
+  existsByUserId,
+});
 
 export default userKeyRepository;

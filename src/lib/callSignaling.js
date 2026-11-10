@@ -2,16 +2,16 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import User from "../models/users.model.js";
 import { assertCanMessage } from "../utils/chat-guard.js";
-import { CALL_RING_TIMEOUT_MS } from "../constants/constants.js";
 import { safeHandler } from "../utils/socket-safe.js";
 import { socketLimiter } from "../utils/socket-rate-limit.js";
-import { SOCKET_RATE_LIMITS } from "../constants/rate-limit.constants.js";
+import { SOCKET_RATE_LIMITS } from "../constants/shared/rate-limit.constants.js";
 import {
   CALL_STATUS,
   CALL_LIFECYCLE_STATE,
   CALL_SOCKET_EVENTS,
   CALL_LIMITS,
-} from "../constants/call.constants.js";
+  CALL_RING_TIMEOUT_MS,
+} from "../constants/calling/call.constants.js";
 import {
   validateSdp,
   validateIceCandidate,

@@ -5,7 +5,7 @@ import {
   EMAIL_REGEX,
   PASSWORD_MIN,
   PASSWORD_MAX,
-} from "../constants/auth.constants.js";
+} from "../constants/auth/auth.constants.js";
 import { isValidResetToken } from "../utils/token-hash.js";
 
 export const normalizeEmail = (value) =>

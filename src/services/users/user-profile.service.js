@@ -13,7 +13,7 @@ import {
 import ApiError from "../../utils/api-error.js";
 import formatUser from "../../utils/format-user.js";
 import { RULES } from "../../utils/profile-rules.js";
-import { EDITABLE_FIELDS } from "../../constants/constants.js";
+import { EDITABLE_FIELDS } from "../../constants/privacy/privacy.constants.js";
 import { io } from "../../lib/socket.js";
 
 const emitProfileUpdated = (userId) => {

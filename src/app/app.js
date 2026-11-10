@@ -2,13 +2,13 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import { app } from "../lib/socket.js";
-import router from "../router/index.js";
+import router from "../routes/index.js";
 import {
   errorHandler,
   notFoundHandler,
 } from "../middlewares/errorHandler.middleware.js";
 import { setupSwagger } from "../config/swagger.js";
-import { corsOriginValidator } from "../constants/constants.js";
+import { corsOriginValidator } from "../constants/shared/app.constants.js";
 
 app.use(express.json());
 

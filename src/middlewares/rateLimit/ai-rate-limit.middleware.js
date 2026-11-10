@@ -3,7 +3,7 @@ import {
   defaultIpKeyGenerator,
   defaultUserKeyGenerator,
 } from "./rate-limit.factory.js";
-import { RATE_LIMIT_CONFIG } from "../../constants/rate-limit.constants.js";
+import { RATE_LIMIT_CONFIG } from "../../constants/shared/rate-limit.constants.js";
 
 export const publicChatLimiter = createRateLimiter({
   windowMs: RATE_LIMIT_CONFIG.AI_CHAT.windowMs,

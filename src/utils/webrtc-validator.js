@@ -1,4 +1,4 @@
-import { CALL_LIMITS } from "../constants/call.constants.js";
+import { CALL_LIMITS } from "../constants/calling/call.constants.js";
 
 /**
  * Validates a WebRTC Session Description (offer or answer).

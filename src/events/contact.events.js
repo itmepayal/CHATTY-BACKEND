@@ -4,7 +4,7 @@ import {
   CONTACT_REMOVED,
   CONTACT_UPDATED,
   CONTACTS_BULK_ADDED,
-} from "../constants/socket-events.constants.js";
+} from "../constants/shared/socket-events.constants.js";
 
 export const syncPrivacy = async (userIds) => {
   const ids = Array.isArray(userIds) ? userIds : [userIds];

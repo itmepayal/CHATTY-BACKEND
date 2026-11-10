@@ -1,6 +1,6 @@
 import "./config/env.config.js";
 import connectDB from "./config/db.config.js";
-import { port, mongoUri, mongoDbName } from "./constants/constants.js";
+import { port, mongoUri, mongoDbName } from "./constants/shared/app.constants.js";
 import { server, io } from "./lib/socket.js";
 import "./app/app.js";
 import { startScheduler } from "./jobs/scheduler.js";

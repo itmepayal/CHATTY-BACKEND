@@ -7,10 +7,12 @@ import {
   RESET_TOKEN_BYTES,
   RESET_TOKEN_TTL_MS,
   AUTH_MESSAGES,
+} from "../../constants/auth/auth.constants.js";
+import {
   serverUrl,
   clientUrl,
   appSchemeUrl,
-} from "../../constants/constants.js";
+} from "../../constants/shared/app.constants.js";
 import { hashToken, isValidResetToken } from "../../utils/token-hash.js";
 import {
   sendPasswordResetEmail,

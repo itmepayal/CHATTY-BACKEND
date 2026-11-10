@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { CALL_STATUS } from "../constants/call.constants.js";
+import { CALL_STATUS } from "../constants/calling/call.constants.js";
 
 const CallSchema = mongoose.Schema(
   {

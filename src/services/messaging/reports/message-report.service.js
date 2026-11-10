@@ -10,7 +10,7 @@ import * as reportRepository from "../../../repositories/messaging/report.reposi
 import ApiError from "../../../utils/api-error.js";
 import { assertValidId } from "../../../utils/validators.js";
 import { isBetween } from "../../../utils/message-helpers.js";
-import { REPORT_REASONS } from "../../../constants/messages.constants.js";
+import { REPORT_REASONS } from "../../../constants/messaging/messages.constants.js";
 
 export const reportUser = async (
   reporterId,

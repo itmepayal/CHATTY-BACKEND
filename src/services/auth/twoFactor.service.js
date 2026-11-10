@@ -21,7 +21,7 @@ import {
   validate2FAVerifyLoginInput,
   validateTotpCodeInput,
 } from "../../validations/auth.validation.js";
-import { AUTH_MESSAGES } from "../../constants/auth.constants.js";
+import { AUTH_MESSAGES } from "../../constants/auth/auth.constants.js";
 
 export const setup2FA = async (userId) => {
   const user = await userRepository.findById(userId).select(

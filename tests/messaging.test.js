@@ -2744,7 +2744,7 @@ async function runAllTests() {
 
     // 26. Route-Table Snapshot (assert all 22 registered routes and method/path in order)
     {
-      const { default: router } = await import("../src/router/message/message.routes.js");
+      const { default: router } = await import("../src/routes/message.routes.js");
       const routes = [];
       router.stack.forEach((layer) => {
         if (layer.route) {

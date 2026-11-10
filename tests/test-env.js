@@ -101,7 +101,7 @@ export async function startEphemeralMongo() {
     // Fallback polling after 300ms
     setTimeout(async () => {
       if (started) return;
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 150; i++) {
         try {
           await new Promise((res, rej) => {
             const socket = net.createConnection(mongoPort, "127.0.0.1");

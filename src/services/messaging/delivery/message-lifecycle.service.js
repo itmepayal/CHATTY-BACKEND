@@ -14,7 +14,7 @@ import {
   EDIT_WINDOW_MS,
   MAX_PINS,
   MAX_TEXT_LENGTH,
-} from "../../../constants/messages.constants.js";
+} from "../../../constants/messaging/messages.constants.js";
 import { wipeMessage } from "../../../utils/message-cleanup.js";
 import { attachLinkPreview } from "../../../utils/link-preview.js";
 import {
