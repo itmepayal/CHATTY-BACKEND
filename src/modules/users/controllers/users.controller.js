@@ -44,7 +44,6 @@ export const deleteAvatar = asyncHandler(async (req, res) => {
 
 export const getCurrentUser = asyncHandler(async (req, res) => {
   const data = await userProfileService.fetchCurrentUser(req.user._id);
-
   return new ApiResponse(
     StatusCodes.OK,
     data,
@@ -96,9 +95,7 @@ export const addFavorite = asyncHandler(async (req, res) => {
     "Added to favorites.",
   );
 
-  return new ApiResponse(StatusCodes.OK, data, "Added to favorites.").send(
-    res,
-  );
+  return new ApiResponse(StatusCodes.OK, data, "Added to favorites.").send(res);
 });
 
 export const removeFavorite = asyncHandler(async (req, res) => {
@@ -110,11 +107,9 @@ export const removeFavorite = asyncHandler(async (req, res) => {
     "Removed from favorites.",
   );
 
-  return new ApiResponse(
-    StatusCodes.OK,
-    data,
-    "Removed from favorites.",
-  ).send(res);
+  return new ApiResponse(StatusCodes.OK, data, "Removed from favorites.").send(
+    res,
+  );
 });
 
 export const getPrivacySettings = asyncHandler(async (req, res) => {
@@ -199,9 +194,7 @@ export const setMyPublicKey = asyncHandler(async (req, res) => {
 export const getUserPublicKey = asyncHandler(async (req, res) => {
   const data = await userKeyService.fetchUserPublicKey(req.params.id);
 
-  return new ApiResponse(StatusCodes.OK, data, "Public key fetched.").send(
-    res,
-  );
+  return new ApiResponse(StatusCodes.OK, data, "Public key fetched.").send(res);
 });
 
 const usersController = {

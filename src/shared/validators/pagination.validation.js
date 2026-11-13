@@ -1,8 +1,5 @@
 import { z } from "zod";
 
-/**
- * Reusable schema for standard pagination query parameters.
- */
 export const paginationQuerySchema = z.object({
   page: z.coerce
     .number()

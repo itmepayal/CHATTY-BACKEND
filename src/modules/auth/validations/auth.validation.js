@@ -21,6 +21,9 @@ export {
 export const normalizeEmail = (value) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
+export const normalizeUsername = (value) =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
 export const isValidPasswordLength = (value) =>
   typeof value === "string" &&
   value.length >= PASSWORD_MIN &&

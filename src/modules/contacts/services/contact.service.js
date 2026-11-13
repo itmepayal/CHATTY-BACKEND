@@ -103,18 +103,21 @@ export const getContacts = async (ownerId, query = {}) => {
     search,
   });
 
-  const rawUsers = rows.map((r) => r.user);
-  const safeUsers = await filterUsersForViewer(rawUsers, ownerId);
+  const validRows = rows.filter((r) => r?.contactDetails?._id);
+
+  const safeUsers = await filterUsersForViewer(
+    validRows.map((r) => r.contactDetails),
+    ownerId,
+  );
   const safeMap = new Map(safeUsers.map((u) => [String(u._id || u.id), u]));
 
   const contacts = [];
-  for (const r of rows) {
-    const uId = String(r.user._id);
-    const safe = safeMap.get(uId);
+  for (const r of validRows) {
+    const safe = safeMap.get(String(r.contactDetails._id));
     if (!safe) continue;
     contacts.push({
       ...safe,
-      nickname: r.nickname,
+      nickname: r.nickname ?? null,
       createdAt: r.createdAt,
     });
   }
@@ -471,4 +474,3 @@ const contactService = {
 };
 
 export default contactService;
-

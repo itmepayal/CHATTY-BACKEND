@@ -20,9 +20,7 @@ router.post(
   validateChatbotBody,
   aiController.chatbot,
 );
-
 router.use(authMiddleware, toolsLimiter);
-
 router.post("/correct", validateCorrectBody, aiController.correctEnglish);
 router.post("/rewrite", validateRewriteBody, aiController.rewriteText);
 router.post("/hinglish", validateHinglishBody, aiController.hinglishToEnglish);

@@ -35,6 +35,16 @@ const formatUser = (user) => {
     appearanceDensity: u.appearanceDensity ?? "comfortable",
     appearanceTimestamps: u.appearanceTimestamps !== false,
     appearanceTimeFormat: u.appearanceTimeFormat ?? "12h",
+    ...(u.status ? { status: u.status } : {}),
+    ...(typeof u.twoFactorEnabled === "boolean"
+      ? {
+          twoFactorEnabled: u.twoFactorEnabled,
+          twoFactor: { enabled: u.twoFactorEnabled },
+        }
+      : {}),
+    ...(typeof u.loginAlerts === "boolean"
+      ? { loginAlerts: u.loginAlerts }
+      : {}),
   };
 };
 

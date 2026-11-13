@@ -91,6 +91,7 @@ export const EDITABLE_FIELDS = Object.freeze([
   "location",
   "dateOfBirth",
   "gender",
+  "dob",
 ]);
 
 export const PRIVACY_PROJECTION_FIELDS =

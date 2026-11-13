@@ -1,9 +1,3 @@
-/**
- * AI Module Constants
- * Centralizes allowed tones, model generation parameters, payload limits,
- * success messages, error messages, and feature identifiers.
- */
-
 export const ALLOWED_TONES = Object.freeze([
   "formal",
   "casual",
@@ -66,7 +60,8 @@ export const AI_ERROR_MESSAGES = Object.freeze({
   MESSAGE_EMPTY: "Message content cannot be empty.",
   MESSAGE_TOO_LONG: `Message content must be at most ${AI_LIMITS.MAX_MESSAGE_LENGTH} characters.`,
   MAX_MESSAGES_EXCEEDED: `Chat history can contain at most ${AI_LIMITS.MAX_CHAT_MESSAGES} messages.`,
-  SERVICE_UNCONFIGURED: "AI service is not configured. Please set GEMINI_API_KEY in your environment.",
+  SERVICE_UNCONFIGURED:
+    "AI service is not configured. Please set GEMINI_API_KEY in your environment.",
   QUOTA_REACHED: "AI quota reached. Please try again in a minute.",
   BUSY: "AI is busy right now. Please try again in a few seconds.",
   BAD_GATEWAY: "AI service error, please try again.",
@@ -76,4 +71,6 @@ export const AI_ERROR_MESSAGES = Object.freeze({
 export const AI_ATTEMPTS_PER_MODEL = 2;
 export const AI_REQUEST_TIMEOUT_MS = 15_000;
 export const AI_REQUEST_DEADLINE_MS = 30_000;
-export const AI_RETRYABLE_STATUS = Object.freeze(new Set([408, 429, 500, 502, 503, 504]));
+export const AI_RETRYABLE_STATUS = Object.freeze(
+  new Set([408, 429, 500, 502, 503, 504]),
+);
