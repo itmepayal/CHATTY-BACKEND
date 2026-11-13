@@ -7,11 +7,14 @@ import aiRoutes from "../modules/ai/routes/ai.routes.js";
 import callRoutes from "../modules/calling/routes/call.routes.js";
 import groupCallRoutes from "../modules/calling/routes/group-call.routes.js";
 import contactRoutes from "../modules/contacts/routes/contact.routes.js";
+import { e2eeRoutes, e2eeMessageRoutes } from "../modules/e2ee/index.js";
 
 const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/users", userRoutes);
+router.use("/e2ee", e2eeRoutes);
+router.use("/messages/e2ee", e2eeMessageRoutes);
 router.use("/messages", messageRoutes);
 router.use("/groups", groupRoutes);
 router.use("/ai", aiRoutes);

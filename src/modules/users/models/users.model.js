@@ -121,8 +121,27 @@ const UserSchema = new mongoose.Schema(
       select: false,
     },
 
+    encryptedPrivateKey: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
     publicKeyUpdatedAt: {
       type: Date,
+      default: null,
+    },
+
+    e2eeBackupVersion: {
+      type: Number,
+      default: null,
+      select: false,
+    },
+
+    e2eeBackupUpdatedAt: {
+      type: Date,
+      default: null,
+      select: false,
     },
 
     passwordResetToken: {
@@ -284,6 +303,9 @@ const UserSchema = new mongoose.Schema(
         delete ret.passwordResetToken;
         delete ret.passwordResetExpires;
         delete ret.publicKey;
+        delete ret.encryptedPrivateKey;
+        delete ret.e2eeBackupVersion;
+        delete ret.e2eeBackupUpdatedAt;
         return ret;
       },
     },
@@ -300,6 +322,9 @@ const UserSchema = new mongoose.Schema(
         delete ret.passwordResetToken;
         delete ret.passwordResetExpires;
         delete ret.publicKey;
+        delete ret.encryptedPrivateKey;
+        delete ret.e2eeBackupVersion;
+        delete ret.e2eeBackupUpdatedAt;
         return ret;
       },
     },

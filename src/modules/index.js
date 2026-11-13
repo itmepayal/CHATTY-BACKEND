@@ -7,3 +7,4 @@ export * from "./calling/index.js";
 export * from "./privacy/index.js";
 export * from "./ai/index.js";
 export * from "./notifications/index.js";
+export * from "./e2ee/index.js";

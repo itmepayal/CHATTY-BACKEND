@@ -97,6 +97,15 @@ const MessageSchema = mongoose.Schema(
 
     e2ee: { type: Boolean, default: false },
     iv: { type: String },
+    keyEnvelopes: [
+      {
+        _id: false,
+        deviceId: { type: String, required: true },
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+        wrappedKey: { type: String, required: true },
+        iv: { type: String, required: true },
+      },
+    ],
 
     receiverReadAt: { type: Date, default: null },
     expiresAt: { type: Date, default: null },

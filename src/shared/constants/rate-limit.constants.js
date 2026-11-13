@@ -67,6 +67,26 @@ export const RATE_LIMIT_CONFIG = Object.freeze({
     max: 20,
     message: "Too many changes. Try again shortly.",
   }),
+  E2EE_REGISTER: Object.freeze({
+    windowMs: 15 * 60_000,
+    max: 10,
+    message: "Too many key registration attempts. Please try again later.",
+  }),
+  E2EE_BACKUP: Object.freeze({
+    windowMs: 15 * 60_000,
+    max: 30,
+    message: "Too many key backup requests. Please try again later.",
+  }),
+  E2EE_RESET: Object.freeze({
+    windowMs: 60 * 60_000,
+    max: 5,
+    message: "Too many key reset attempts. Please try again after an hour.",
+  }),
+  E2EE_PUBLIC_KEYS: Object.freeze({
+    windowMs: 60_000,
+    max: 60,
+    message: "Too many public key requests. Please slow down.",
+  }),
 });
 
 export const SOCKET_RATE_LIMITS = Object.freeze({

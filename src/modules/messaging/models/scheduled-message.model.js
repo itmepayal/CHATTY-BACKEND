@@ -16,6 +16,15 @@ const ScheduledMessageSchema = new mongoose.Schema(
     text: { type: String, required: true, maxlength: MAX_CIPHERTEXT_LENGTH },
     e2ee: { type: Boolean, default: false },
     iv: { type: String, default: null },
+    keyEnvelopes: [
+      {
+        _id: false,
+        deviceId: { type: String, required: true },
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+        wrappedKey: { type: String, required: true },
+        iv: { type: String, required: true },
+      },
+    ],
     scheduledFor: { type: Date, required: true },
     status: {
       type: String,

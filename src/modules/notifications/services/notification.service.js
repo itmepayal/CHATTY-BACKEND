@@ -3,8 +3,13 @@
  * Domain service for managing push/in-app notifications, preferences, and delivery.
  */
 
-export const sendNotification = async ({ userId, type, title, body, data = {} }) => {
-  // Foundation for multi-channel notifications (socket, push, web-push)
+export const sendNotification = async ({
+  userId,
+  type,
+  title,
+  body,
+  data = {},
+}) => {
   return {
     delivered: true,
     userId,

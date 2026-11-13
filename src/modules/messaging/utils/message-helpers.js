@@ -5,7 +5,7 @@ import { io } from "../../../infrastructure/socket/socket.js";
 export const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
 export const REPLY_SELECT =
-  "senderId text image file audio video location isDeleted e2ee iv";
+  "senderId text image file audio video location isDeleted e2ee iv keyEnvelopes";
 
 const formatFile = (file) =>
   file?.url
@@ -90,6 +90,15 @@ export const formatMessage = (msg) => {
     text: deleted ? "" : msg.text,
     encrypted: isEncrypted,
     iv: isEncrypted ? msg.iv || null : null,
+    keyEnvelopes:
+      isEncrypted && Array.isArray(msg.keyEnvelopes)
+        ? msg.keyEnvelopes.map((env) => ({
+            deviceId: env.deviceId,
+            userId: env.userId,
+            wrappedKey: env.wrappedKey,
+            iv: env.iv,
+          }))
+        : [],
     image:
       !deleted && msg.image?.url
         ? { url: msg.image.url, public_id: msg.image.public_id }

@@ -31,6 +31,7 @@ app.use(cookieParser());
 setupSwagger(app);
 
 app.use("/api/v1", router);
+app.use("/api", router);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
