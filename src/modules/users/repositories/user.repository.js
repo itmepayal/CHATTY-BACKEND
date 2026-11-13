@@ -235,6 +235,13 @@ export const generateUserTokens = (userId, sessionId) =>
 
 export const startSession = () => User.startSession();
 
+export const findByUsername = async (username, options = {}) => {
+  if (!username) return null;
+  const query = User.findOne({ username: String(username).toLowerCase() });
+  if (options.session) query.session(options.session);
+  return query.lean();
+};
+
 const userRepository = Object.freeze({
   create,
   createUser,
@@ -265,6 +272,9 @@ const userRepository = Object.freeze({
   findUsersMatching,
   generateUserTokens,
   startSession,
+  findByUsername,
+  findByIdAndUpdate,
+  findByEmailWithLoginSecrets,
 });
 
 export default userRepository;

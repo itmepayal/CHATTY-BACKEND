@@ -34,7 +34,7 @@ const getAiClient = () => {
   if (!aiClient) {
     aiClient = new GoogleGenAI({ apiKey: geminiApiKey });
   }
-  
+
   return aiClient;
 };
 
@@ -300,4 +300,3 @@ const aiService = {
 };
 
 export default aiService;
-

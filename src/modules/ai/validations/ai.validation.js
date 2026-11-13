@@ -72,11 +72,6 @@ export const chatbotBodySchema = z
     },
   );
 
-// --- Standard Middleware Handlers ---
-
-/**
- * Validates request body for the /correct endpoint.
- */
 export const validateCorrectBody = (req, _res, next) => {
   const text = req.body?.text;
   if (typeof text !== "string" || !text.trim()) {
@@ -95,9 +90,6 @@ export const validateCorrectBody = (req, _res, next) => {
   next();
 };
 
-/**
- * Validates request body for the /rewrite endpoint.
- */
 export const validateRewriteBody = (req, _res, next) => {
   const text = req.body?.text;
   if (typeof text !== "string" || !text.trim()) {
@@ -127,9 +119,6 @@ export const validateRewriteBody = (req, _res, next) => {
   next();
 };
 
-/**
- * Validates request body for the /hinglish endpoint.
- */
 export const validateHinglishBody = (req, _res, next) => {
   const text = req.body?.text;
   if (typeof text !== "string" || !text.trim()) {
@@ -148,9 +137,6 @@ export const validateHinglishBody = (req, _res, next) => {
   next();
 };
 
-/**
- * Validates request body for the /chatbot endpoint.
- */
 export const validateChatbotBody = (req, _res, next) => {
   const messages = req.body?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {

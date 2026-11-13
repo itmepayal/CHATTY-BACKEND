@@ -1,8 +1,3 @@
-/**
- * User Profile Service
- * Manages user profile data, avatars, and profile retrieval.
- */
-
 import { StatusCodes } from "http-status-codes";
 import * as userRepository from "../repositories/user.repository.js";
 import { getVisibleUserProfile } from "../../privacy/services/privacy-visibility.service.js";
@@ -21,6 +16,8 @@ const emitProfileUpdated = (userId) => {
 };
 
 export const updateProfileData = async (userId, body) => {
+  console.log("Updating profile data for userId:", userId, "with body:", body);
+
   const $set = {};
   const $unset = {};
 

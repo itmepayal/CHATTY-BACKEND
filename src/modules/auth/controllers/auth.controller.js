@@ -22,6 +22,7 @@ export const registerUser = asyncHandler(async (req, res) => {
     email: req.body.email,
     password: req.body.password,
     file: req.file,
+    username: req.body.username,
     ...sessionContext(req),
   });
 
@@ -93,15 +94,10 @@ export const logoutUser = asyncHandler(async (req, res) => {
 });
 
 export const checkAuth = asyncHandler(async (req, res) => {
-  const safeUser = authService.getAuthenticatedUser(req.user);
-
+  const { user, extras } = await authService.getAuthSession(req.user);
   return new ApiResponse(
     StatusCodes.OK,
-    buildAuthUserPayload(safeUser, null, {
-      status: safeUser.status || "active",
-      twoFactorEnabled: safeUser.twoFactorEnabled ?? false,
-      loginAlerts: safeUser.loginAlerts ?? true,
-    }),
+    buildAuthUserPayload(user, null, extras),
     "Authenticated user fetched successfully",
   ).send(res);
 });

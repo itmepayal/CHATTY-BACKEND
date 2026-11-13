@@ -16,14 +16,20 @@ import {
 } from "../constants/auth.constants.js";
 import {
   normalizeEmail,
+  normalizeUsername,
   validateRegisterInput,
   validateLoginInput,
   validateLoginAlertsInput,
 } from "../validations/auth.validation.js";
-import { io, disconnectUser, disconnectUserSession } from "../../../infrastructure/socket/socket.js";
+import {
+  io,
+  disconnectUser,
+  disconnectUserSession,
+} from "../../../infrastructure/socket/socket.js";
 
 export const register = async ({
   fullName,
+  username,
   email,
   password,
   file,
@@ -31,8 +37,11 @@ export const register = async ({
   ip,
 }) => {
   const normalisedEmail = normalizeEmail(email);
+  const normalisedUsername = normalizeUsername(username);
+
   validateRegisterInput({
     fullName,
+    username: normalisedUsername,
     email: normalisedEmail,
     password,
     file,
@@ -41,6 +50,11 @@ export const register = async ({
   const userExists = await userRepository.findByEmail(normalisedEmail);
   if (userExists) {
     throw new ApiError(StatusCodes.CONFLICT, "Email already registered.");
+  }
+
+  const usernameTaken = await userRepository.findByUsername(normalisedUsername);
+  if (usernameTaken) {
+    throw new ApiError(StatusCodes.CONFLICT, "Username already taken.");
   }
 
   const avatar = await uploadFileToCloudinary(file.path);
@@ -54,6 +68,7 @@ export const register = async ({
   try {
     user = await userRepository.createUser({
       fullName: fullName.trim(),
+      username: normalisedUsername,
       email: normalisedEmail,
       password,
       avatar: {
@@ -69,7 +84,13 @@ export const register = async ({
     }
 
     if (err?.code === 11000) {
-      throw new ApiError(StatusCodes.CONFLICT, "Email already registered.");
+      const field = Object.keys(err.keyPattern || err.keyValue || {})[0];
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        field === "username"
+          ? "Username already taken."
+          : "Email already registered.",
+      );
     }
     throw err;
   }
@@ -188,6 +209,25 @@ export const getAuthenticatedUser = (user) => {
   return user;
 };
 
+export const getAuthSession = async (user) => {
+  const safeUser = getAuthenticatedUser(user);
+
+  const tf = await userRepository.findByEmailWithLoginSecrets(safeUser._id);
+
+  const extras = {
+    status: safeUser.status || "active",
+    twoFactorEnabled: tf?.twoFactorEnabled ?? false,
+    loginAlerts: tf?.loginAlerts ?? true,
+    twoFactor: {
+      enabled: tf?.twoFactorEnabled ?? false,
+      setupPending: tf?.twoFactorSetupPending ?? false,
+      recoveryCodesRemaining: tf?.recoveryCodesRemaining ?? 0,
+    },
+  };
+
+  return { user: safeUser, extras };
+};
+
 export const updateLoginAlerts = async ({ userId, enabled }) => {
   validateLoginAlertsInput(enabled);
 
@@ -202,6 +242,7 @@ const authService = {
   logout,
   getAuthenticatedUser,
   updateLoginAlerts,
+  getAuthSession,
 };
 
 export default authService;

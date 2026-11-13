@@ -1,6 +1,9 @@
 import swaggerJSDoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
-import { swaggerEnabled, swaggerServerUrl } from "../shared/constants/app.constants.js";
+import {
+  swaggerEnabled,
+  swaggerServerUrl,
+} from "../shared/constants/app.constants.js";
 
 const objectId = (example = "665f1c2e9b1e8a0012a4b123") => ({
   type: "string",

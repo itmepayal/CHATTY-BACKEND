@@ -1,8 +1,3 @@
-/**
- * AI System Prompts Constants
- * Centralizes prompt engineering templates and role directions for Gemini LLM.
- */
-
 export const SYSTEM_PROMPTS = Object.freeze({
   correct:
     "You are an English grammar corrector. Fix grammar, spelling and punctuation. " +

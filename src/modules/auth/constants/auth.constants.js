@@ -1,12 +1,5 @@
-/**
- * Authentication Module Constants
- * Contains password policy, regex, token expiration/secrets, cookie configurations,
- * recovery/2FA settings, account statuses, and localized auth feedback messages.
- */
-
 const isProd = process.env.NODE_ENV === "production";
 
-// Password constraints
 export const PASSWORD_SALT_ROUNDS = 10;
 export const salt = PASSWORD_SALT_ROUNDS;
 
@@ -15,10 +8,8 @@ export const PASSWORD_MAX_LENGTH = 128;
 export const PASSWORD_MIN = PASSWORD_MIN_LENGTH;
 export const PASSWORD_MAX = PASSWORD_MAX_LENGTH;
 
-// Email regex
 export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Tokens
 export const accessToken = process.env.ACCESS_TOKEN_SECRET;
 export const accessTokenExpiresIn = process.env.ACCESS_TOKEN_EXPIRES_IN;
 
@@ -26,12 +17,11 @@ export const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET;
 export const refreshTokenScret = refreshTokenSecret;
 export const refreshTokenExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN;
 
-// Cookies
 export const options = Object.freeze({
   httpOnly: true,
   secure: isProd,
   sameSite: isProd ? "none" : "lax",
-  maxAge: 24 * 60 * 60 * 1000, // 24 hours
+  maxAge: 24 * 60 * 60 * 1000,
 });
 
 export const accessCookieOptions = options;
@@ -39,30 +29,25 @@ export const cookieOptions = options;
 
 export const refreshCookieOptions = Object.freeze({
   ...options,
-  maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  maxAge: 30 * 24 * 60 * 60 * 1000,
 });
 
-// Reset Token
 export const RESET_TOKEN_BYTES = 32;
-export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes
+export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
-// 2FA / Security
 export const CHALLENGE_TTL = "5m";
 export const RECOVERY_CODE_COUNT = 8;
 export const RECOVERY_CODE_BYTES = 5;
 export const BCRYPT_ROUNDS_RECOVERY = 10;
 
-// Account Deletion
 export const CONFIRM_WORD = "DELETE";
 
-// Account Status
 export const ACCOUNT_STATUS = Object.freeze({
   ACTIVE: "active",
   SUSPENDED: "suspended",
   DEACTIVATED: "deactivated",
 });
 
-// Auth Exact Messages
 export const AUTH_MESSAGES = Object.freeze({
   INVALID_CREDENTIALS: "Invalid email or password",
   ACCOUNT_SUSPENDED: "Your account has been suspended. Please contact support.",
