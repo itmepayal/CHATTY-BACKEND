@@ -13,6 +13,28 @@ export const scheduleIdParamSchema = z.object({
   scheduleId: objectIdSchema,
 });
 
+export const keyEnvelopeSchema = z.object({
+  deviceId: z.string(),
+  userId: z.string(),
+  wrappedKey: z.string(),
+  iv: z.string(),
+});
+
+export const keyEnvelopesFieldSchema = z
+  .union([z.array(keyEnvelopeSchema), z.string()])
+  .optional()
+  .transform((val) => {
+    if (typeof val === "string") {
+      try {
+        const parsed = JSON.parse(val);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return val;
+  });
+
 export const sendMessageSchema = z
   .object({
     text: z.string().optional(),
@@ -24,6 +46,7 @@ export const sendMessageSchema = z
     replyTo: z.string().optional(),
     encrypted: z.union([z.boolean(), z.string()]).optional(),
     e2ee: z.union([z.boolean(), z.string()]).optional(),
+    keyEnvelopes: keyEnvelopesFieldSchema,
   })
   .passthrough();
 
@@ -39,6 +62,10 @@ export const editMessageSchema = z
     text: z
       .string({ required_error: "Text is required." })
       .min(1, "Text is required."),
+    iv: z.string().optional(),
+    encrypted: z.union([z.boolean(), z.string()]).optional(),
+    e2ee: z.union([z.boolean(), z.string()]).optional(),
+    keyEnvelopes: keyEnvelopesFieldSchema,
   })
   .passthrough();
 

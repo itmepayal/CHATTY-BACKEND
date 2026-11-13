@@ -1,8 +1,3 @@
-/**
- * Message E2EE Service
- * Validates cryptographic readiness for end-to-end encrypted chats.
- */
-
 import { StatusCodes } from "http-status-codes";
 import * as userRepository from "../../../users/repositories/user.repository.js";
 import ApiError from "../../../../shared/errors/api-error.js";

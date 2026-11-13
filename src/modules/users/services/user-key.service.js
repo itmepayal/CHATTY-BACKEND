@@ -35,6 +35,12 @@ export const savePublicKey = async (userId, body) => {
     existing.publicKey.y === publicKey.y;
 
   if (same) {
+    if (!existing.encryptedPrivateKey && body.encryptedPrivateKey) {
+      await userKeyRepository.updateEncryptedBackup(userId, {
+        encryptedPrivateKey: String(body.encryptedPrivateKey),
+        backupVersion: body.backupVersion || 1,
+      });
+    }
     return {
       duplicate: true,
       publicKey: existing.publicKey,
@@ -62,6 +68,13 @@ export const savePublicKey = async (userId, body) => {
   );
 
   if (!updated) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+
+  if (body.encryptedPrivateKey) {
+    await userKeyRepository.updateEncryptedBackup(userId, {
+      encryptedPrivateKey: String(body.encryptedPrivateKey),
+      backupVersion: body.backupVersion || 1,
+    });
+  }
 
   if (isReplacing) {
     await groupKeyRepository.deleteForUser(userId);

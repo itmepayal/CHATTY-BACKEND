@@ -36,6 +36,7 @@ export const sendMessage = async (
     replyTo: replyToId,
     encrypted,
     e2ee,
+    keyEnvelopes,
   } = {},
   file,
 ) => {
@@ -129,6 +130,15 @@ export const sendMessage = async (
     video: uploadedVideo,
   } = attachment;
 
+  let parsedEnvelopes = keyEnvelopes;
+  if (typeof keyEnvelopes === "string") {
+    try {
+      parsedEnvelopes = JSON.parse(keyEnvelopes);
+    } catch {
+      parsedEnvelopes = [];
+    }
+  }
+
   let result;
   try {
     result = await deliverMessage({
@@ -142,7 +152,15 @@ export const sendMessage = async (
         audio: uploadedAudio || undefined,
         video: uploadedVideo || undefined,
         replyTo,
-        ...(wantsE2EE ? { e2ee: true, iv } : {}),
+        ...(wantsE2EE
+          ? {
+              e2ee: true,
+              iv,
+              ...(Array.isArray(parsedEnvelopes) && parsedEnvelopes.length > 0
+                ? { keyEnvelopes: parsedEnvelopes }
+                : {}),
+            }
+          : {}),
       },
     });
   } catch (error) {

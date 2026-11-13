@@ -28,7 +28,7 @@ import {
 export const editMessage = async (
   userId,
   messageId,
-  { text: rawText, encrypted, e2ee, iv } = {},
+  { text: rawText, encrypted, e2ee, iv, keyEnvelopes } = {},
 ) => {
   const text = rawText?.trim();
   const wantsE2EE = parseBool(encrypted ?? e2ee);
@@ -82,7 +82,12 @@ export const editMessage = async (
   }
 
   message.text = text;
-  if (wantsE2EE) message.iv = iv;
+  if (wantsE2EE) {
+    message.iv = iv;
+    if (Array.isArray(keyEnvelopes) && keyEnvelopes.length > 0) {
+      message.keyEnvelopes = keyEnvelopes;
+    }
+  }
   message.isEdited = true;
   message.editedAt = new Date();
   message.linkPreview = undefined;
@@ -93,7 +98,13 @@ export const editMessage = async (
     text,
     isEdited: true,
     editedAt: message.editedAt,
-    ...(wantsE2EE ? { encrypted: true, iv } : {}),
+    ...(wantsE2EE
+      ? {
+          encrypted: true,
+          iv,
+          keyEnvelopes: message.keyEnvelopes || [],
+        }
+      : {}),
   };
 
   emitToPair(message.receiverId, message.senderId, "messageEdited", payload);
@@ -296,4 +307,3 @@ const messageLifecycleService = {
 };
 
 export default messageLifecycleService;
-

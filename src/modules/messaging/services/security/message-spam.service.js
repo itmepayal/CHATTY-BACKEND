@@ -1,8 +1,3 @@
-/**
- * Message Spam Protection Service
- * Guards against message duplication floods and high-velocity new conversation spam.
- */
-
 import { StatusCodes } from "http-status-codes";
 import * as messageRepository from "../../repositories/message.repository.js";
 import ApiError from "../../../../shared/errors/api-error.js";
