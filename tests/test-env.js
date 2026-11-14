@@ -168,6 +168,9 @@ export async function setupTestEnvironment() {
 // Cleanup and shutdown
 export async function teardownTestEnvironment() {
   try {
+    if (ioInstance) {
+      ioInstance.close();
+    }
     if (serverInstance && serverInstance.listening) {
       await new Promise((resolve) => serverInstance.close(resolve));
     }

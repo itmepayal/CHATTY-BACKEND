@@ -33,6 +33,18 @@ export const getMessage = asyncHandler(async (req, res) => {
 });
 
 export const sendMessage = asyncHandler(async (req, res) => {
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[send] controller hit:", {
+      senderId: req.user?._id?.toString(),
+      receiverId: req.params?.id,
+      hasFile: Boolean(req.file),
+      encrypted: req.body?.encrypted,
+      e2ee: req.body?.e2ee,
+      hasIv: Boolean(req.body?.iv),
+      hasEnvelopes: Boolean(req.body?.keyEnvelopes),
+    });
+  }
+
   const { status, payload, message } = await sendService.sendMessage(
     req.user._id,
     req.params.id,

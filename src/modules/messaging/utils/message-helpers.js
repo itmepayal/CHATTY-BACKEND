@@ -51,12 +51,15 @@ const formatLocation = (loc) =>
 
 const formatReply = (r) => {
   if (!r || typeof r !== "object" || !r.senderId) return null;
-  if (r.isDeleted) return { id: r._id, isDeleted: true };
+  if (r.isDeleted) return { id: String(r._id), isDeleted: true };
 
+  const isEncrypted = Boolean(r.e2ee);
   return {
-    id: r._id,
-    senderId: r.senderId,
-    text: (r.text || "").slice(0, 120),
+    id: String(r._id),
+    senderId: String(r.senderId),
+    text: isEncrypted ? "" : (r.text || "").slice(0, 120),
+    encrypted: isEncrypted,
+    e2ee: isEncrypted,
     type: r.image?.url
       ? "image"
       : r.video?.url
@@ -84,17 +87,17 @@ export const formatMessage = (msg) => {
   const isEncrypted = !deleted && Boolean(msg.e2ee);
 
   return {
-    id: msg._id,
-    senderId: msg.senderId,
-    receiverId: msg.receiverId,
+    id: String(msg._id),
+    senderId: String(msg.senderId),
+    receiverId: String(msg.receiverId),
     text: deleted ? "" : msg.text,
     encrypted: isEncrypted,
     iv: isEncrypted ? msg.iv || null : null,
     keyEnvelopes:
       isEncrypted && Array.isArray(msg.keyEnvelopes)
         ? msg.keyEnvelopes.map((env) => ({
-            deviceId: env.deviceId,
-            userId: env.userId,
+            deviceId: String(env.deviceId),
+            userId: String(env.userId),
             wrappedKey: env.wrappedKey,
             iv: env.iv,
           }))
@@ -111,7 +114,7 @@ export const formatMessage = (msg) => {
     reactions: deleted
       ? []
       : (msg.reactions || []).map((r) => ({
-          userId: r.userId,
+          userId: String(r.userId),
           emoji: r.emoji,
         })),
     replyTo: deleted ? null : formatReply(msg.replyTo),
@@ -162,6 +165,17 @@ const unreadFilter = (receiverId, senderId) => ({
   receiverReadAt: null,
   isDeleted: { $ne: true },
   deletedFor: { $ne: toObjectId(receiverId) },
+  $and: [
+    {
+      receiverId: toObjectId(receiverId),
+      senderId: toObjectId(senderId),
+      status: { $ne: "seen" },
+      receiverReadAt: null,
+      isDeleted: { $ne: true },
+      deletedFor: { $ne: toObjectId(receiverId) },
+    },
+    notExpired(),
+  ],
 });
 
 const getUnreadCount = (receiverId, senderId) =>

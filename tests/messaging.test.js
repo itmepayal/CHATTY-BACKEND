@@ -18,7 +18,10 @@ import ChatSetting from "../src/modules/messaging/models/chat-setting.model.js";
 import ChatArchive from "../src/modules/messaging/models/chat-archive.model.js";
 import Report from "../src/modules/messaging/models/report.model.js";
 import User from "../src/modules/users/models/users.model.js";
-import { privacyByUser, loadPrivacy } from "../src/infrastructure/socket/socket.js";
+import {
+  privacyByUser,
+  loadPrivacy,
+} from "../src/infrastructure/socket/socket.js";
 import { isPrivateIp, safeFetch } from "../src/shared/utils/link-preview.js";
 import { recoverStrandedJobs } from "../src/modules/messaging/jobs/scheduler.js";
 import { sweepDisappearingMessages } from "../src/modules/messaging/jobs/disappearing.js";
@@ -1985,7 +1988,8 @@ async function runAllTests() {
         .get("/api/v1/messages/")
         .set("Cookie", bob.cookies);
       const aliceEntry = (res.body?.data || []).find((u) => u.id === aliceId);
-      const pass = res.status === 200 && aliceEntry && aliceEntry.unreadCount >= 1;
+      const pass =
+        res.status === 200 && aliceEntry && aliceEntry.unreadCount >= 1;
       recordResult(
         "Sidebar",
         "getUsersForSidebar accurately aggregates unreadCount",
@@ -2028,8 +2032,12 @@ async function runAllTests() {
       const list = res.body?.data || [];
       const isSorted = list.every((item, i, arr) => {
         if (i === 0) return true;
-        const prev = arr[i - 1].lastMessageAt ? new Date(arr[i - 1].lastMessageAt).getTime() : 0;
-        const curr = item.lastMessageAt ? new Date(item.lastMessageAt).getTime() : 0;
+        const prev = arr[i - 1].lastMessageAt
+          ? new Date(arr[i - 1].lastMessageAt).getTime()
+          : 0;
+        const curr = item.lastMessageAt
+          ? new Date(item.lastMessageAt).getTime()
+          : 0;
         return prev >= curr;
       });
       const pass = res.status === 200 && list.length > 0 && isSorted;
@@ -2047,13 +2055,18 @@ async function runAllTests() {
       const resAlice = await request(app)
         .get("/api/v1/messages/")
         .set("Cookie", alice.cookies);
-      const davidInAlice = (resAlice.body?.data || []).find((u) => u.id === davidId);
-      const isMarkedBlocked = davidInAlice ? davidInAlice.isBlocked === true : true;
+      const davidInAlice = (resAlice.body?.data || []).find(
+        (u) => u.id === davidId,
+      );
+      const isMarkedBlocked = davidInAlice
+        ? davidInAlice.isBlocked === true
+        : true;
 
       const resDavid = await request(app)
         .get("/api/v1/messages/")
         .set("Cookie", david.cookies);
-      const pass = resAlice.status === 200 && resDavid.status === 200 && isMarkedBlocked;
+      const pass =
+        resAlice.status === 200 && resDavid.status === 200 && isMarkedBlocked;
       recordResult(
         "Sidebar",
         "getUsersForSidebar respects blocked status in response",
@@ -2077,7 +2090,9 @@ async function runAllTests() {
       const resAlice = await request(app)
         .get("/api/v1/messages/")
         .set("Cookie", alice.cookies);
-      const charlieEntry = (resAlice.body?.data || []).find((u) => u.id === charlieId);
+      const charlieEntry = (resAlice.body?.data || []).find(
+        (u) => u.id === charlieId,
+      );
       const pass =
         resAlice.status === 200 &&
         charlieEntry?.lastMessage?.text !== "Self-deleted sidebar message";
@@ -2094,7 +2109,9 @@ async function runAllTests() {
     {
       await User.updateOne(
         { _id: bobId },
-        { $set: { profilePhotoVisibility: "nobody", aboutVisibility: "nobody" } },
+        {
+          $set: { profilePhotoVisibility: "nobody", aboutVisibility: "nobody" },
+        },
       );
       const res = await request(app)
         .get("/api/v1/messages/")
@@ -2114,7 +2131,12 @@ async function runAllTests() {
       );
       await User.updateOne(
         { _id: bobId },
-        { $set: { profilePhotoVisibility: "everyone", aboutVisibility: "contacts" } },
+        {
+          $set: {
+            profilePhotoVisibility: "everyone",
+            aboutVisibility: "contacts",
+          },
+        },
       );
     }
 
@@ -2130,7 +2152,10 @@ async function runAllTests() {
         .patch(`/api/v1/messages/archive/${bobId}`)
         .set("Cookie", alice.cookies)
         .send({ archived: true });
-      const archiveDoc = await ChatArchive.findOne({ ownerId: aliceId, otherId: bobId });
+      const archiveDoc = await ChatArchive.findOne({
+        ownerId: aliceId,
+        otherId: bobId,
+      });
       const pass =
         res.status === 200 &&
         res.body?.message === "Chat archived." &&
@@ -2151,7 +2176,10 @@ async function runAllTests() {
         .patch(`/api/v1/messages/archive/${bobId}`)
         .set("Cookie", alice.cookies)
         .send({ archived: false });
-      const archiveDoc = await ChatArchive.findOne({ ownerId: aliceId, otherId: bobId });
+      const archiveDoc = await ChatArchive.findOne({
+        ownerId: aliceId,
+        otherId: bobId,
+      });
       const pass =
         res.status === 200 &&
         res.body?.message === "Chat unarchived." &&
@@ -2252,7 +2280,9 @@ async function runAllTests() {
       const res = await request(app)
         .get("/api/v1/messages/scheduled")
         .set("Cookie", alice.cookies);
-      const found = (res.body?.data || []).some((item) => String(item._id) === String(s._id));
+      const found = (res.body?.data || []).some(
+        (item) => String(item._id) === String(s._id),
+      );
       const pass =
         res.status === 200 &&
         res.body?.message === "Scheduled messages." &&
@@ -2287,7 +2317,9 @@ async function runAllTests() {
     // ==========================================
     // Category 26: Location Active Shares & Seen Privacy
     // ==========================================
-    console.log("\n--- Testing Category 26: Location Active Shares & Seen Privacy ---");
+    console.log(
+      "\n--- Testing Category 26: Location Active Shares & Seen Privacy ---",
+    );
     await resetLimits();
 
     // 26.1 getActiveShares returns active shares for mine and forMe
@@ -2333,7 +2365,10 @@ async function runAllTests() {
     // 26.2 markMessagesSeen with readReceipts disabled
     {
       await User.updateOne({ _id: bobId }, { $set: { readReceipts: false } });
-      privacyByUser.set(bobId, { ...privacyByUser.get(bobId), readReceipts: false });
+      privacyByUser.set(bobId, {
+        ...privacyByUser.get(bobId),
+        readReceipts: false,
+      });
 
       const sentMsg = await Message.create({
         senderId: aliceId,
@@ -2372,7 +2407,10 @@ async function runAllTests() {
       );
 
       await User.updateOne({ _id: bobId }, { $set: { readReceipts: true } });
-      privacyByUser.set(bobId, { ...privacyByUser.get(bobId), readReceipts: true });
+      privacyByUser.set(bobId, {
+        ...privacyByUser.get(bobId),
+        readReceipts: true,
+      });
     }
 
     // ==========================================
@@ -2469,12 +2507,20 @@ async function runAllTests() {
     console.log("\n--- Testing Category 28: Response-Shape Snapshots ---");
     await resetLimits();
 
-    function assertSnapshot(endpointName, res, expectedStatus, expectedMessage, expectedDataKeys = null) {
+    function assertSnapshot(
+      endpointName,
+      res,
+      expectedStatus,
+      expectedMessage,
+      expectedDataKeys = null,
+    ) {
       const topKeys = Object.keys(res.body || {}).sort();
       const hasStandardKeys =
         res.status < 400
-          ? topKeys.join(",") === "data,message,success" && res.body?.success === true
-          : topKeys.join(",") === "message,statusCode,success" && res.body?.success === false;
+          ? topKeys.join(",") === "data,message,success" &&
+            res.body?.success === true
+          : topKeys.join(",") === "message,statusCode,success" &&
+            res.body?.success === false;
 
       const statusMatches = res.status === expectedStatus;
       const messageMatches = res.body?.message === expectedMessage;
@@ -2483,14 +2529,20 @@ async function runAllTests() {
       if (expectedDataKeys && res.body?.data) {
         if (Array.isArray(res.body.data) && res.body.data.length > 0) {
           const firstItemKeys = Object.keys(res.body.data[0]);
-          dataKeysMatch = expectedDataKeys.every((k) => firstItemKeys.includes(k));
-        } else if (typeof res.body.data === "object" && !Array.isArray(res.body.data)) {
+          dataKeysMatch = expectedDataKeys.every((k) =>
+            firstItemKeys.includes(k),
+          );
+        } else if (
+          typeof res.body.data === "object" &&
+          !Array.isArray(res.body.data)
+        ) {
           const dKeys = Object.keys(res.body.data);
           dataKeysMatch = expectedDataKeys.every((k) => dKeys.includes(k));
         }
       }
 
-      const pass = statusMatches && messageMatches && hasStandardKeys && dataKeysMatch;
+      const pass =
+        statusMatches && messageMatches && hasStandardKeys && dataKeysMatch;
       recordResult(
         "Snapshot",
         `[REST Shape] ${endpointName}`,
@@ -2513,14 +2565,28 @@ async function runAllTests() {
 
     // 1. GET /
     {
-      const res = await request(app).get("/api/v1/messages/").set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/", res, 200, "Users fetched successfully.");
+      const res = await request(app)
+        .get("/api/v1/messages/")
+        .set("Cookie", alice.cookies);
+      assertSnapshot(
+        "GET /api/v1/messages/",
+        res,
+        200,
+        "Users fetched successfully.",
+      );
     }
 
     // 2. GET /:id
     {
-      const res = await request(app).get(`/api/v1/messages/${bobId}`).set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/:id", res, 200, "User messages fetched successfully.");
+      const res = await request(app)
+        .get(`/api/v1/messages/${bobId}`)
+        .set("Cookie", alice.cookies);
+      assertSnapshot(
+        "GET /api/v1/messages/:id",
+        res,
+        200,
+        "User messages fetched successfully.",
+      );
     }
 
     // 3. POST /send/:id
@@ -2530,7 +2596,13 @@ async function runAllTests() {
         .post(`/api/v1/messages/send/${bobId}`)
         .set("Cookie", alice.cookies)
         .send({ text: "Snapshot send test" });
-      assertSnapshot("POST /api/v1/messages/send/:id", res, 201, "Message sent successfully.", ["id", "status", "text"]);
+      assertSnapshot(
+        "POST /api/v1/messages/send/:id",
+        res,
+        201,
+        "Message sent successfully.",
+        ["id", "status", "text"],
+      );
     }
 
     // 4. POST /forward/:messageId
@@ -2540,7 +2612,12 @@ async function runAllTests() {
         .post(`/api/v1/messages/forward/${snapMsgId}`)
         .set("Cookie", alice.cookies)
         .send({ userIds: [charlieId] });
-      assertSnapshot("POST /api/v1/messages/forward/:messageId", res, 200, "Forwarded to 1 chat(s).");
+      assertSnapshot(
+        "POST /api/v1/messages/forward/:messageId",
+        res,
+        200,
+        "Forwarded to 1 chat(s).",
+      );
     }
 
     // 5. PATCH /edit/:messageId
@@ -2550,16 +2627,32 @@ async function runAllTests() {
         .patch(`/api/v1/messages/edit/${snapMsgId}`)
         .set("Cookie", alice.cookies)
         .send({ text: "Edited snapshot text" });
-      assertSnapshot("PATCH /api/v1/messages/edit/:messageId", res, 200, "Message edited.", ["messageId", "isEdited", "text"]);
+      assertSnapshot(
+        "PATCH /api/v1/messages/edit/:messageId",
+        res,
+        200,
+        "Message edited.",
+        ["messageId", "isEdited", "text"],
+      );
     }
 
     // 6. PATCH /pin/:messageId
     {
-      const mToPin = await Message.create({ senderId: aliceId, receiverId: charlieId, text: "Snapshot pin" });
+      const mToPin = await Message.create({
+        senderId: aliceId,
+        receiverId: charlieId,
+        text: "Snapshot pin",
+      });
       const res = await request(app)
         .patch(`/api/v1/messages/pin/${mToPin._id}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("PATCH /api/v1/messages/pin/:messageId", res, 200, "Pin updated.", ["isPinned", "messageId", "pinnedBy"]);
+      assertSnapshot(
+        "PATCH /api/v1/messages/pin/:messageId",
+        res,
+        200,
+        "Pin updated.",
+        ["isPinned", "messageId", "pinnedBy"],
+      );
     }
 
     // 7. GET /pinned/:id
@@ -2567,7 +2660,12 @@ async function runAllTests() {
       const res = await request(app)
         .get(`/api/v1/messages/pinned/${bobId}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/pinned/:id", res, 200, "Pinned messages.");
+      assertSnapshot(
+        "GET /api/v1/messages/pinned/:id",
+        res,
+        200,
+        "Pinned messages.",
+      );
     }
 
     // 8. GET /search/:id
@@ -2575,7 +2673,12 @@ async function runAllTests() {
       const res = await request(app)
         .get(`/api/v1/messages/search/${bobId}?q=Snapshot`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/search/:id", res, 200, "Search results.");
+      assertSnapshot(
+        "GET /api/v1/messages/search/:id",
+        res,
+        200,
+        "Search results.",
+      );
     }
 
     // 9. POST /schedule/:id
@@ -2585,9 +2688,18 @@ async function runAllTests() {
       const res = await request(app)
         .post(`/api/v1/messages/schedule/${bobId}`)
         .set("Cookie", alice.cookies)
-        .send({ text: "Snapshot sched", scheduledFor: new Date(Date.now() + 60_000) });
+        .send({
+          text: "Snapshot sched",
+          scheduledFor: new Date(Date.now() + 60_000),
+        });
       snapSchedId = res.body?.data?._id;
-      assertSnapshot("POST /api/v1/messages/schedule/:id", res, 201, "Message scheduled.", ["_id", "status", "text"]);
+      assertSnapshot(
+        "POST /api/v1/messages/schedule/:id",
+        res,
+        201,
+        "Message scheduled.",
+        ["_id", "status", "text"],
+      );
     }
 
     // 10. GET /scheduled
@@ -2595,7 +2707,12 @@ async function runAllTests() {
       const res = await request(app)
         .get("/api/v1/messages/scheduled")
         .set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/scheduled", res, 200, "Scheduled messages.");
+      assertSnapshot(
+        "GET /api/v1/messages/scheduled",
+        res,
+        200,
+        "Scheduled messages.",
+      );
     }
 
     // 11. DELETE /scheduled/:scheduleId
@@ -2603,7 +2720,13 @@ async function runAllTests() {
       const res = await request(app)
         .delete(`/api/v1/messages/scheduled/${snapSchedId}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("DELETE /api/v1/messages/scheduled/:scheduleId", res, 200, "Scheduled message cancelled.", ["id"]);
+      assertSnapshot(
+        "DELETE /api/v1/messages/scheduled/:scheduleId",
+        res,
+        200,
+        "Scheduled message cancelled.",
+        ["id"],
+      );
     }
 
     // 12. PATCH /seen/:id
@@ -2611,7 +2734,13 @@ async function runAllTests() {
       const res = await request(app)
         .patch(`/api/v1/messages/seen/${bobId}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("PATCH /api/v1/messages/seen/:id", res, 200, "Messages marked as seen.", ["count"]);
+      assertSnapshot(
+        "PATCH /api/v1/messages/seen/:id",
+        res,
+        200,
+        "Messages marked as seen.",
+        ["count"],
+      );
     }
 
     // 13. PATCH /react/:messageId
@@ -2621,29 +2750,55 @@ async function runAllTests() {
         .patch(`/api/v1/messages/react/${snapMsgId}`)
         .set("Cookie", alice.cookies)
         .send({ emoji: "🎉" });
-      assertSnapshot("PATCH /api/v1/messages/react/:messageId", res, 200, "Reaction updated successfully.", ["messageId", "reactions"]);
+      assertSnapshot(
+        "PATCH /api/v1/messages/react/:messageId",
+        res,
+        200,
+        "Reaction updated successfully.",
+        ["messageId", "reactions"],
+      );
     }
 
     // 14. DELETE /delete-for-me/:messageId
     let snapDelMeId;
     {
-      const m = await Message.create({ senderId: aliceId, receiverId: bobId, text: "Del me snap" });
+      const m = await Message.create({
+        senderId: aliceId,
+        receiverId: bobId,
+        text: "Del me snap",
+      });
       snapDelMeId = m._id;
       const res = await request(app)
         .delete(`/api/v1/messages/delete-for-me/${snapDelMeId}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("DELETE /api/v1/messages/delete-for-me/:messageId", res, 200, "Message deleted for you.", ["messageId"]);
+      assertSnapshot(
+        "DELETE /api/v1/messages/delete-for-me/:messageId",
+        res,
+        200,
+        "Message deleted for you.",
+        ["messageId"],
+      );
     }
 
     // 15. DELETE /delete-for-everyone/:messageId
     let snapDelEveryId;
     {
-      const m = await Message.create({ senderId: aliceId, receiverId: bobId, text: "Del every snap" });
+      const m = await Message.create({
+        senderId: aliceId,
+        receiverId: bobId,
+        text: "Del every snap",
+      });
       snapDelEveryId = m._id;
       const res = await request(app)
         .delete(`/api/v1/messages/delete-for-everyone/${snapDelEveryId}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("DELETE /api/v1/messages/delete-for-everyone/:messageId", res, 200, "Message deleted for everyone.", ["messageId"]);
+      assertSnapshot(
+        "DELETE /api/v1/messages/delete-for-everyone/:messageId",
+        res,
+        200,
+        "Message deleted for everyone.",
+        ["messageId"],
+      );
     }
 
     // 16. POST /report/:id
@@ -2653,7 +2808,12 @@ async function runAllTests() {
         .post(`/api/v1/messages/report/${charlieId}`)
         .set("Cookie", alice.cookies)
         .send({ reason: "spam", details: "Snapshot report test" });
-      assertSnapshot("POST /api/v1/messages/report/:id", res, 201, "Report submitted. Thank you.");
+      assertSnapshot(
+        "POST /api/v1/messages/report/:id",
+        res,
+        201,
+        "Report submitted. Thank you.",
+      );
     }
 
     // 17. GET /disappearing/:id
@@ -2661,7 +2821,13 @@ async function runAllTests() {
       const res = await request(app)
         .get(`/api/v1/messages/disappearing/${bobId}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/disappearing/:id", res, 200, "Disappearing setting.", ["seconds"]);
+      assertSnapshot(
+        "GET /api/v1/messages/disappearing/:id",
+        res,
+        200,
+        "Disappearing setting.",
+        ["seconds"],
+      );
     }
 
     // 18. PUT /disappearing/:id
@@ -2671,7 +2837,13 @@ async function runAllTests() {
         .put(`/api/v1/messages/disappearing/${bobId}`)
         .set("Cookie", alice.cookies)
         .send({ seconds: 0 });
-      assertSnapshot("PUT /api/v1/messages/disappearing/:id", res, 200, "Disappearing messages turned off.", ["seconds"]);
+      assertSnapshot(
+        "PUT /api/v1/messages/disappearing/:id",
+        res,
+        200,
+        "Disappearing messages turned off.",
+        ["seconds"],
+      );
     }
 
     // 19. PATCH /archive/:id
@@ -2681,7 +2853,13 @@ async function runAllTests() {
         .patch(`/api/v1/messages/archive/${bobId}`)
         .set("Cookie", alice.cookies)
         .send({ archived: true });
-      assertSnapshot("PATCH /api/v1/messages/archive/:id", res, 200, "Chat archived.", ["archived", "userId"]);
+      assertSnapshot(
+        "PATCH /api/v1/messages/archive/:id",
+        res,
+        200,
+        "Chat archived.",
+        ["archived", "userId"],
+      );
     }
 
     // 20. POST /location/share
@@ -2691,7 +2869,12 @@ async function runAllTests() {
         .post("/api/v1/messages/location/share")
         .set("Cookie", alice.cookies)
         .send({ receiverId: bobId, lat: 15.0, lng: 75.0, mode: "current" });
-      assertSnapshot("POST /api/v1/messages/location/share", res, 201, "Location sent.");
+      assertSnapshot(
+        "POST /api/v1/messages/location/share",
+        res,
+        201,
+        "Location sent.",
+      );
     }
 
     // 21. PATCH /location/stop/:id
@@ -2706,7 +2889,13 @@ async function runAllTests() {
       const res = await request(app)
         .patch(`/api/v1/messages/location/stop/${share._id}`)
         .set("Cookie", alice.cookies);
-      assertSnapshot("PATCH /api/v1/messages/location/stop/:id", res, 200, "Live location stopped.", ["shareId"]);
+      assertSnapshot(
+        "PATCH /api/v1/messages/location/stop/:id",
+        res,
+        200,
+        "Live location stopped.",
+        ["shareId"],
+      );
     }
 
     // 22. GET /location/active
@@ -2714,7 +2903,13 @@ async function runAllTests() {
       const res = await request(app)
         .get("/api/v1/messages/location/active")
         .set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/location/active", res, 200, "Active location shares.", ["forMe", "mine"]);
+      assertSnapshot(
+        "GET /api/v1/messages/location/active",
+        res,
+        200,
+        "Active location shares.",
+        ["forMe", "mine"],
+      );
     }
 
     // Main Error Path Snapshots
@@ -2723,7 +2918,12 @@ async function runAllTests() {
       const res = await request(app)
         .get("/api/v1/messages/invalid-object-id")
         .set("Cookie", alice.cookies);
-      assertSnapshot("GET /api/v1/messages/:id with invalid ID (400)", res, 400, "Invalid User ID.");
+      assertSnapshot(
+        "GET /api/v1/messages/:id with invalid ID (400)",
+        res,
+        400,
+        "Invalid User ID.",
+      );
     }
 
     // 24. Nonexistent user (404)
@@ -2733,18 +2933,29 @@ async function runAllTests() {
         .post(`/api/v1/messages/send/${nonExistentId}`)
         .set("Cookie", alice.cookies)
         .send({ text: "Hello" });
-      assertSnapshot("POST /api/v1/messages/send/:id with nonexistent user (404)", res, 404, "User not found.");
+      assertSnapshot(
+        "POST /api/v1/messages/send/:id with nonexistent user (404)",
+        res,
+        404,
+        "User not found.",
+      );
     }
 
     // 25. Unauthenticated request (401)
     {
       const res = await request(app).get("/api/v1/messages/");
-      assertSnapshot("GET /api/v1/messages/ unauthenticated (401)", res, 401, "Authentication required");
+      assertSnapshot(
+        "GET /api/v1/messages/ unauthenticated (401)",
+        res,
+        401,
+        "Authentication required",
+      );
     }
 
     // 26. Route-Table Snapshot (assert all 22 registered routes and method/path in order)
     {
-      const { default: router } = await import("../src/modules/messaging/routes/message.routes.js");
+      const { default: router } =
+        await import("../src/modules/messaging/routes/message.routes.js");
       const routes = [];
       router.stack.forEach((layer) => {
         if (layer.route) {
@@ -2827,7 +3038,8 @@ async function runAllTests() {
         "location:update",
         "location:ended",
       ].sort();
-      const pass = expectedInbound.length === 10 && expectedOutbound.length === 19;
+      const pass =
+        expectedInbound.length === 10 && expectedOutbound.length === 19;
       recordResult(
         "Snapshot",
         "[Socket Event Names Snapshot] Complete catalog of frozen socket events",

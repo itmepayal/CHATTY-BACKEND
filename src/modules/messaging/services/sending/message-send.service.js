@@ -1,8 +1,3 @@
-/**
- * Message Send Service
- * Orchestrates sending direct 1:1 messages, handling validation, attachments, E2EE, spam prevention, and delivery.
- */
-
 import fs from "fs";
 import { StatusCodes } from "http-status-codes";
 import * as messageRepository from "../../repositories/message.repository.js";
@@ -13,6 +8,10 @@ import { processAttachment } from "../attachments/message-attachment.service.js"
 import { deliverMessage } from "../delivery/message-delivery.service.js";
 import ApiError from "../../../../shared/errors/api-error.js";
 import { assertValidId } from "../../../../shared/utils/validators.js";
+import {
+  isValidObjectId,
+  toObjectId,
+} from "../../../../shared/utils/object-id.util.js";
 import { isBetween, formatMessage } from "../../utils/message-helpers.js";
 import { attachLinkPreview } from "../../../../shared/utils/link-preview.js";
 import { deleteAttachmentMedia } from "../../utils/message-cleanup.js";
@@ -76,8 +75,10 @@ export const sendMessage = async (
         : `Message is too long (max ${MAX_TEXT_LENGTH} characters).`,
     );
   }
+  const cleanIv = iv ? String(iv).trim() : iv;
+
   if (wantsE2EE) {
-    assertValidCipher(trimmedText, iv);
+    assertValidCipher(trimmedText, cleanIv);
   }
 
   if (clientId) {
@@ -91,6 +92,17 @@ export const sendMessage = async (
     }
   }
 
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      "[send] running guards for sender:",
+      senderId.toString(),
+      "receiver:",
+      receiverId.toString(),
+      "wantsE2EE:",
+      wantsE2EE,
+    );
+  }
+
   await assertCanMessage(senderId, receiverId);
   if (wantsE2EE) await assertE2EEReady(senderId, receiverId);
   await assertNotSpamming(
@@ -98,6 +110,10 @@ export const sendMessage = async (
     receiverId,
     wantsE2EE ? undefined : trimmedText,
   );
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[send] all guards passed for message send");
+  }
 
   let replyTo;
   if (replyToId) {
@@ -139,6 +155,26 @@ export const sendMessage = async (
     }
   }
 
+  const sanitizedEnvelopes = [];
+  if (Array.isArray(parsedEnvelopes)) {
+    for (const env of parsedEnvelopes) {
+      if (
+        env &&
+        env.deviceId &&
+        env.wrappedKey &&
+        env.iv &&
+        isValidObjectId(env.userId)
+      ) {
+        sanitizedEnvelopes.push({
+          deviceId: String(env.deviceId),
+          userId: toObjectId(env.userId),
+          wrappedKey: String(env.wrappedKey),
+          iv: String(env.iv),
+        });
+      }
+    }
+  }
+
   let result;
   try {
     result = await deliverMessage({
@@ -155,9 +191,9 @@ export const sendMessage = async (
         ...(wantsE2EE
           ? {
               e2ee: true,
-              iv,
-              ...(Array.isArray(parsedEnvelopes) && parsedEnvelopes.length > 0
-                ? { keyEnvelopes: parsedEnvelopes }
+              iv: cleanIv,
+              ...(sanitizedEnvelopes.length > 0
+                ? { keyEnvelopes: sanitizedEnvelopes }
                 : {}),
             }
           : {}),

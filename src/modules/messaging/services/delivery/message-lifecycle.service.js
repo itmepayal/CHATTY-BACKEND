@@ -3,6 +3,10 @@ import ApiError from "../../../../shared/errors/api-error.js";
 import * as messageRepository from "../../repositories/message.repository.js";
 import { io } from "../../../../infrastructure/socket/socket.js";
 import { assertValidId } from "../../../../shared/utils/validators.js";
+import {
+  isValidObjectId,
+  toObjectId,
+} from "../../../../shared/utils/object-id.util.js";
 import { assertCanMessage } from "../../utils/chat-guard.js";
 import { assertE2EEReady } from "../core/message.service.js";
 import {
@@ -68,7 +72,15 @@ export const editMessage = async (
       "Encryption mode of a message can't be changed.",
     );
   }
-  if (wantsE2EE) assertValidCipher(text, iv);
+  if (wantsE2EE) {
+    assertValidCipher(text, iv);
+    if (!Array.isArray(keyEnvelopes) || keyEnvelopes.length === 0) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Key envelopes are required for encrypted message.",
+      );
+    }
+  }
 
   await assertCanMessage(userId, message.receiverId);
   if (wantsE2EE) await assertE2EEReady(userId, message.receiverId);
@@ -81,17 +93,50 @@ export const editMessage = async (
     };
   }
 
+  const sanitizedEnvelopes = [];
+  if (wantsE2EE && Array.isArray(keyEnvelopes)) {
+    for (const env of keyEnvelopes) {
+      if (
+        env &&
+        env.deviceId &&
+        env.wrappedKey &&
+        env.iv &&
+        isValidObjectId(env.userId)
+      ) {
+        sanitizedEnvelopes.push({
+          deviceId: String(env.deviceId),
+          userId: toObjectId(env.userId),
+          wrappedKey: String(env.wrappedKey),
+          iv: String(env.iv),
+        });
+      }
+    }
+    if (sanitizedEnvelopes.length === 0) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Key envelopes are required for encrypted message.",
+      );
+    }
+  }
+
   message.text = text;
   if (wantsE2EE) {
     message.iv = iv;
-    if (Array.isArray(keyEnvelopes) && keyEnvelopes.length > 0) {
-      message.keyEnvelopes = keyEnvelopes;
-    }
+    message.keyEnvelopes = sanitizedEnvelopes;
   }
   message.isEdited = true;
   message.editedAt = new Date();
   message.linkPreview = undefined;
   await message.save();
+
+  const formattedEnvelopes = wantsE2EE
+    ? (message.keyEnvelopes || []).map((env) => ({
+        deviceId: String(env.deviceId),
+        userId: String(env.userId),
+        wrappedKey: env.wrappedKey,
+        iv: env.iv,
+      }))
+    : [];
 
   const payload = {
     messageId: message._id,
@@ -101,10 +146,12 @@ export const editMessage = async (
     ...(wantsE2EE
       ? {
           encrypted: true,
-          iv,
-          keyEnvelopes: message.keyEnvelopes || [],
+          iv: message.iv,
+          keyEnvelopes: formattedEnvelopes,
         }
-      : {}),
+      : {
+          encrypted: false,
+        }),
   };
 
   emitToPair(message.receiverId, message.senderId, "messageEdited", payload);

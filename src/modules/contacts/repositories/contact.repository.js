@@ -4,6 +4,10 @@ import Message from "../../messaging/models/message.model.js";
 import { toObjectId } from "../../../shared/utils/object-id.util.js";
 import { escapeRegex } from "../../../shared/utils/sanitize.util.js";
 import {
+  notExpired,
+  formatMessage,
+} from "../../messaging/utils/message-helpers.js";
+import {
   USER_STATUS,
   SEARCH_RESULT_LIMIT,
 } from "../constants/contact.constants.js";
@@ -356,12 +360,29 @@ export const aggregateChatListMessages = async (
   const pipeline = [
     {
       $match: {
-        $or: [
-          { senderId: uid, receiverId: { $in: cids } },
-          { receiverId: uid, senderId: { $in: cids } },
+        $and: [
+          {
+            $or: [
+              { senderId: uid, receiverId: { $in: cids } },
+              { receiverId: uid, senderId: { $in: cids } },
+            ],
+          },
+          notExpired(),
         ],
         deletedFor: { $ne: uid },
         deletedForEveryone: { $ne: true },
+      },
+    },
+    {
+      $addFields: {
+        isUnread: {
+          $and: [
+            { $eq: ["$receiverId", uid] },
+            { $ne: ["$status", "seen"] },
+            { $eq: [{ $ifNull: ["$receiverReadAt", null] }, null] },
+            { $ne: ["$isDeleted", true] },
+          ],
+        },
       },
     },
     { $sort: { createdAt: -1 } },
@@ -371,6 +392,7 @@ export const aggregateChatListMessages = async (
           $cond: [{ $eq: ["$senderId", uid] }, "$receiverId", "$senderId"],
         },
         lastMessage: { $first: "$$ROOT" },
+        unread: { $sum: { $cond: ["$isUnread", 1, 0] } },
       },
     },
   ];
@@ -379,6 +401,10 @@ export const aggregateChatListMessages = async (
   const map = new Map();
   for (const row of results) {
     map.set(String(row._id), row.lastMessage);
+    map.set(String(row._id), {
+      lastMessage: row.lastMessage ? formatMessage(row.lastMessage) : null,
+      unread: row.unread || 0,
+    });
   }
   return map;
 };

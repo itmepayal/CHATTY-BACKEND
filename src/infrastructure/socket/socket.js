@@ -502,6 +502,7 @@ io.on("connection", (socket) => {
   console.log("[socket] connected:", userId, socket.id);
 
   socket.join(userId);
+  console.log(`[socket] socket ${socket.id} joined user room ${userId}`);
 
   const isFirstConnection =
     !onlineUsers.has(userId) || onlineUsers.get(userId).size === 0;
@@ -529,12 +530,14 @@ io.on("connection", (socket) => {
     "chat:open",
     safeHandler("chat:open", (otherUserId) => {
       socket.data.activeChatId = isObjectId(otherUserId) ? otherUserId : null;
+      console.log(`[socket] user ${userId} opened chat with ${otherUserId}`);
     }),
   );
 
   socket.on(
     "chat:close",
     safeHandler("chat:close", () => {
+      console.log(`[socket] user ${userId} closed active chat`);
       socket.data.activeChatId = null;
     }),
   );
@@ -656,6 +659,7 @@ io.on("connection", (socket) => {
   socket.on(
     "disconnect",
     safeHandler("disconnect", async () => {
+      console.log(`[socket] disconnected: user ${userId}, socket ${socket.id}`);
       socket.data.typingTo?.forEach((to) =>
         io.to(to).emit("typing", {
           from: userId,
@@ -736,7 +740,12 @@ io.on("connection", (socket) => {
           .select("_id")
           .lean();
 
-        groups.forEach((g) => socket.join(groupRoom(g._id)));
+        groups.forEach((g) => {
+          socket.join(groupRoom(g._id));
+          console.log(
+            `[socket] socket ${socket.id} joined group room ${groupRoom(g._id)}`,
+          );
+        });
       } catch (e) {
         console.error("join group rooms failed:", e?.message || e);
       }

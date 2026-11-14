@@ -60,6 +60,9 @@ export const startScheduler = () => {
               text: s.text,
               e2ee: Boolean(s.e2ee),
               ...(s.iv ? { iv: s.iv } : {}),
+              ...(s.e2ee && Array.isArray(s.keyEnvelopes) && s.keyEnvelopes.length > 0
+                ? { keyEnvelopes: s.keyEnvelopes }
+                : {}),
             },
           });
           if (!s.e2ee) attachLinkPreview(message);

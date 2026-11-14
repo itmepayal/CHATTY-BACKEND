@@ -102,7 +102,7 @@ const MessageSchema = mongoose.Schema(
         _id: false,
         deviceId: { type: String, required: true },
         userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-        wrappedKey: { type: String, required: true },
+        wrappedKey: { type: String, required: true, maxlength: 2048 },
         iv: { type: String, required: true },
       },
     ],

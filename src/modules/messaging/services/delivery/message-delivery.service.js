@@ -42,6 +42,10 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
   await message.populate("replyTo", REPLY_SELECT);
   const payload = formatMessage(message);
 
+  console.log(
+    `[delivery] message ${message._id} saved (status: ${message.status}). Broadcasting to receiver ${receiverId} and sender ${senderId}`,
+  );
+
   io.to(receiverId.toString()).emit("newMessage", payload);
   io.to(senderId.toString()).emit("newMessage", payload);
 
@@ -84,6 +88,9 @@ export const markMessagesSeen = async (userId, otherUserId) => {
 
   if (ids.length) {
     const now = new Date();
+    console.log(
+      `[delivery] markMessagesSeen: user ${userId} marked ${ids.length} messages from ${otherUserId} as seen`,
+    );
 
     if (canReceipt) {
       await messageRepository.updateMany({ _id: { $in: ids } }, [
