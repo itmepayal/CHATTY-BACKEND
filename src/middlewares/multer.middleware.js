@@ -38,7 +38,9 @@ export const enforceTypeSizeLimit = (req, res, next) => {
   if (!file) return next();
 
   const isMedia =
-    file.mimetype?.startsWith("video/") || file.mimetype?.startsWith("audio/");
+    file.mimetype?.startsWith("video/") ||
+    file.mimetype?.startsWith("audio/") ||
+    /\.(m4a|aac|mp3|wav|ogg|opus|weba|mp4|webm)$/i.test(file.originalname || "");
   const limit = isMedia ? MAX_MEDIA_FILE_SIZE : MAX_NORMAL_FILE_SIZE;
 
   if (file.size > limit) {

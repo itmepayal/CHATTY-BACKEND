@@ -46,7 +46,10 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
       `Message can be at most ${MAX_GROUP_TEXT} characters.`,
     );
   }
-  if (isVoice && file && !file.mimetype?.startsWith("audio/")) {
+  const isLikelyAudio =
+    file?.mimetype?.startsWith("audio/") ||
+    /\.(m4a|aac|mp3|wav|ogg|opus|weba)$/i.test(file?.originalname || "");
+  if (isVoice && file && !isLikelyAudio) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       "Voice message must be an audio file.",

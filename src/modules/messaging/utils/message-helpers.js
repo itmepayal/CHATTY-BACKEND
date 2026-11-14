@@ -73,8 +73,8 @@ const formatReply = (r) => {
               : "text",
     image: r.image?.url ? { url: r.image.url } : null,
     file: r.file?.url ? { name: r.file.name } : null,
-    audio: r.audio?.url ? { url: r.audio.url } : null,
-    video: r.video?.url ? { url: r.video.url } : null,
+    audio: formatAudio(r.audio),
+    video: formatVideo(r.video),
     location: hasLatLng(r.location)
       ? { lat: r.location.lat, lng: r.location.lng }
       : null,
