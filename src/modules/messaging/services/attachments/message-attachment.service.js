@@ -80,7 +80,11 @@ export const detectVoiceMedia = async (file) => {
       header[4] === 0x66 && header[5] === 0x74 && header[6] === 0x79 && header[7] === 0x70
     ) {
       const brand = header.subarray(8, 12).toString("ascii").trim();
-      const isM4aBrand = brand === "M4A" || brand === "M4B" || brand === "M4P" || brand === "F4A";
+      const isM4aBrand =
+        brand === "M4A" ||
+        brand === "M4B" ||
+        brand === "M4P" ||
+        brand === "F4A";
       if (isM4aBrand || ext === ".m4a" || ext === ".aac") {
         return { isAudio: true, mimeType: "audio/mp4" };
       }

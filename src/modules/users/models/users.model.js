@@ -254,6 +254,40 @@ const UserSchema = new mongoose.Schema(
       default: true,
     },
 
+    theme: {
+      type: String,
+      default: "light",
+    },
+
+    fontSize: {
+      type: String,
+      enum: ["sm", "md", "lg"],
+      default: "md",
+    },
+
+    bubbleStyle: {
+      type: String,
+      enum: ["rounded", "soft", "sharp"],
+      default: "rounded",
+    },
+
+    density: {
+      type: String,
+      enum: ["comfortable", "compact"],
+      default: "comfortable",
+    },
+
+    showTimestamps: {
+      type: Boolean,
+      default: true,
+    },
+
+    timeFormat: {
+      type: String,
+      enum: ["12h", "24h"],
+      default: "12h",
+    },
+
     appearanceTheme: {
       type: String,
       default: "light",
@@ -261,19 +295,19 @@ const UserSchema = new mongoose.Schema(
 
     appearanceFontSize: {
       type: String,
-      enum: ["sm", "md", "lg"],
+      enum: ["sm", "md", "lg", "small", "medium", "large"],
       default: "md",
     },
 
     appearanceBubbleStyle: {
       type: String,
-      enum: ["rounded", "soft", "sharp"],
+      enum: ["rounded", "soft", "sharp", "round"],
       default: "rounded",
     },
 
     appearanceDensity: {
       type: String,
-      enum: ["comfortable", "compact"],
+      enum: ["comfortable", "compact", "cozy"],
       default: "comfortable",
     },
 
@@ -284,7 +318,7 @@ const UserSchema = new mongoose.Schema(
 
     appearanceTimeFormat: {
       type: String,
-      enum: ["12h", "24h"],
+      enum: ["12h", "24h", "12-hour", "24-hour"],
       default: "12h",
     },
   },

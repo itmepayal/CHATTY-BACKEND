@@ -9,10 +9,12 @@ import ApiError from "../../../shared/errors/api-error.js";
 import { assertBooleanFields } from "../../../shared/utils/validators.js";
 import {
   PRIVACY_FIELDS,
+  PRIVACY_BOOL_FIELDS,
   PRIVACY_VIS_FIELDS,
   CHAT_PREF_FIELDS,
   APPEARANCE_ENUMS,
   APPEARANCE_BOOL_FIELDS,
+  CANONICAL_APPEARANCE_KEYS,
   APPEARANCE_DB_KEY,
   VIS,
 } from "../../privacy/constants/privacy.constants.js";
@@ -50,10 +52,16 @@ export const setPrivacy = async (userId, body = {}) => {
   const visBody = {};
   const unknown = [];
 
-  for (const key of Object.keys(body)) {
-    if (PRIVACY_FIELDS.includes(key)) boolBody[key] = body[key];
-    else if (PRIVACY_VIS_FIELDS.includes(key)) visBody[key] = body[key];
-    else unknown.push(key);
+  for (const [rawKey, val] of Object.entries(body)) {
+    const key =
+      rawKey === "whoCanAddMeToGroups" ? "groupAddPermission" : rawKey;
+    if (PRIVACY_BOOL_FIELDS.includes(key)) {
+      boolBody[key] = val;
+    } else if (PRIVACY_VIS_FIELDS.includes(key)) {
+      visBody[key] = val;
+    } else {
+      unknown.push(rawKey);
+    }
   }
 
   if (unknown.length) {
@@ -68,7 +76,7 @@ export const setPrivacy = async (userId, body = {}) => {
   if (Object.keys(boolBody).length) {
     Object.assign(
       $set,
-      assertBooleanFields(boolBody, PRIVACY_FIELDS, "privacy"),
+      assertBooleanFields(boolBody, PRIVACY_BOOL_FIELDS, "privacy"),
     );
   }
 
@@ -82,7 +90,6 @@ export const setPrivacy = async (userId, body = {}) => {
     $set[key] = value;
   }
 
-  // Bidirectional synchronization between onlineStatusVisibility and legacy showOnlineStatus
   if (visBody.onlineStatusVisibility) {
     $set.showOnlineStatus = visBody.onlineStatusVisibility !== "nobody";
   } else if (boolBody.showOnlineStatus !== undefined) {
@@ -122,7 +129,17 @@ export const getChatPreferences = async (userId) => {
 };
 
 export const setChatPreferences = async (userId, body) => {
-  const $set = assertBooleanFields(body, CHAT_PREF_FIELDS, "chat-pref");
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid request body.");
+  }
+
+  const normalized = { ...body };
+  if ("enterIsSend" in normalized && !("enterToSend" in normalized)) {
+    normalized.enterToSend = normalized.enterIsSend;
+    delete normalized.enterIsSend;
+  }
+
+  const $set = assertBooleanFields(normalized, CHAT_PREF_FIELDS, "chat-pref");
 
   const updated = await userRepository
     .findByIdAndUpdate(userId, { $set }, { new: true, runValidators: true })
@@ -141,21 +158,60 @@ export const getAppearanceSettings = async (userId) => {
   const user = await userRepository
     .findById(userId)
     .select(
-      "appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
+      "theme fontSize bubbleStyle density showTimestamps timeFormat appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
     );
   if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
+  const appearance = {
+    theme: user.theme ?? user.appearanceTheme ?? "light",
+    fontSize: user.fontSize ?? user.appearanceFontSize ?? "md",
+    bubbleStyle: user.bubbleStyle ?? user.appearanceBubbleStyle ?? "rounded",
+    density: user.density ?? user.appearanceDensity ?? "comfortable",
+    showTimestamps:
+      (user.showTimestamps ?? user.appearanceTimestamps) !== false,
+    timeFormat: user.timeFormat ?? user.appearanceTimeFormat ?? "12h",
+  };
+
   return {
-    theme: user.appearanceTheme ?? "light",
-    fontSize: user.appearanceFontSize ?? "md",
-    bubbleStyle: user.appearanceBubbleStyle ?? "rounded",
-    density: user.appearanceDensity ?? "comfortable",
-    showTimestamps: user.appearanceTimestamps !== false,
-    timeFormat: user.appearanceTimeFormat ?? "12h",
+    appearance,
+    ...appearance,
   };
 };
 
+const normalizeAppearanceValue = (key, val) => {
+  if (key === "fontSize") {
+    const map = { small: "sm", medium: "md", large: "lg" };
+    return map[val] || val;
+  }
+  if (
+    key === "bubbleStyle" ||
+    key === "messageBubbleStyle" ||
+    key === "bubble"
+  ) {
+    const map = {
+      round: "rounded",
+      modern: "rounded",
+      classic: "soft",
+      minimal: "sharp",
+    };
+    return map[val] || val;
+  }
+  if (key === "density" || key === "spacing" || key === "messageSpacing") {
+    const map = { cozy: "comfortable" };
+    return map[val] || val;
+  }
+  if (key === "timeFormat") {
+    const map = { "12-hour": "12h", "24-hour": "24h" };
+    return map[val] || val;
+  }
+  return val;
+};
+
 export const setAppearanceSettings = async (userId, body) => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid request body.");
+  }
+
   const ALL_ALLOWED = [
     ...Object.keys(APPEARANCE_ENUMS),
     ...APPEARANCE_BOOL_FIELDS,
@@ -177,10 +233,13 @@ export const setAppearanceSettings = async (userId, body) => {
           StatusCodes.BAD_REQUEST,
           `Invalid value for "${key}": ${body[key]}`,
         );
+      const val = normalizeAppearanceValue(key, body[key]);
+      const canonicalKey = CANONICAL_APPEARANCE_KEYS?.[key] || key;
+      $set[canonicalKey] = val;
       const dbKey =
         APPEARANCE_DB_KEY[key] ??
         `appearance${key.charAt(0).toUpperCase()}${key.slice(1)}`;
-      $set[dbKey] = body[key];
+      $set[dbKey] = val;
     }
   }
 
@@ -191,10 +250,18 @@ export const setAppearanceSettings = async (userId, body) => {
           StatusCodes.BAD_REQUEST,
           `"${key}" must be a boolean.`,
         );
-      const dbKey =
-        APPEARANCE_DB_KEY[key] ??
-        `appearance${key.charAt(0).toUpperCase()}${key.slice(1)}`;
-      $set[dbKey] = body[key];
+      if (key === "compactMode") {
+        const val = body[key] ? "compact" : "comfortable";
+        $set["density"] = val;
+        $set["appearanceDensity"] = val;
+      } else {
+        const canonicalKey = CANONICAL_APPEARANCE_KEYS?.[key] || key;
+        $set[canonicalKey] = body[key];
+        const dbKey =
+          APPEARANCE_DB_KEY[key] ??
+          `appearance${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+        $set[dbKey] = body[key];
+      }
     }
   }
 
@@ -207,18 +274,25 @@ export const setAppearanceSettings = async (userId, body) => {
   const updated = await userRepository
     .findByIdAndUpdate(userId, { $set }, { new: true, runValidators: true })
     .select(
-      "appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
+      "theme fontSize bubbleStyle density showTimestamps timeFormat appearanceTheme appearanceFontSize appearanceBubbleStyle appearanceDensity appearanceTimestamps appearanceTimeFormat",
     );
 
   if (!updated) throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
 
+  const appearance = {
+    theme: updated.theme ?? updated.appearanceTheme ?? "light",
+    fontSize: updated.fontSize ?? updated.appearanceFontSize ?? "md",
+    bubbleStyle:
+      updated.bubbleStyle ?? updated.appearanceBubbleStyle ?? "rounded",
+    density: updated.density ?? updated.appearanceDensity ?? "comfortable",
+    showTimestamps:
+      (updated.showTimestamps ?? updated.appearanceTimestamps) !== false,
+    timeFormat: updated.timeFormat ?? updated.appearanceTimeFormat ?? "12h",
+  };
+
   return {
-    theme: updated.appearanceTheme ?? "light",
-    fontSize: updated.appearanceFontSize ?? "md",
-    bubbleStyle: updated.appearanceBubbleStyle ?? "rounded",
-    density: updated.appearanceDensity ?? "comfortable",
-    showTimestamps: updated.appearanceTimestamps !== false,
-    timeFormat: updated.appearanceTimeFormat ?? "12h",
+    appearance,
+    ...appearance,
   };
 };
 

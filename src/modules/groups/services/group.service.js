@@ -244,7 +244,7 @@ export const formatGroupMessage = (msg) => {
       ? {
           url: msg.audio.url,
           duration: msg.audio.duration || 0,
-          mimeType: msg.audio.mimeType,
+          mimeType: msg.audio.mimeType || "audio/mp4",
         }
       : null,
     video: msg.video?.url
@@ -265,6 +265,7 @@ export const formatGroupMessage = (msg) => {
       : null,
     clientId: msg.clientId,
     readBy: (msg.readBy || []).map(String),
+    silentReadBy: (msg.silentReadBy || []).map(String),
     isEdited: Boolean(msg.isEdited),
     editedAt: msg.editedAt || null,
     createdAt: msg.createdAt,

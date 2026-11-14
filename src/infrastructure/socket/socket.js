@@ -40,6 +40,7 @@ import {
   privacyByUser,
   cleanPrivacy,
   getPrivacy,
+  getOrFetchPrivacy,
   loadPrivacy,
   isUserOnline,
 } from "./socket-state.js";
@@ -51,6 +52,7 @@ export {
   privacyByUser,
   cleanPrivacy,
   getPrivacy,
+  getOrFetchPrivacy,
   loadPrivacy,
   isUserOnline,
 };
@@ -361,7 +363,7 @@ export const notifyUserPresenceChange = async (
   lastSeen = null,
 ) => {
   const uId = String(userId);
-  const priv = getPrivacy(uId);
+  const priv = await getOrFetchPrivacy(uId);
 
   io.to(uId).emit("presence:updated", {
     userId: uId,
@@ -374,35 +376,23 @@ export const notifyUserPresenceChange = async (
       ? "nobody"
       : (priv.onlineStatusVisibility ?? "everyone");
 
-  const targetVis = isOnline
-    ? onlineVis
-    : (priv.lastSeenVisibility ?? "contacts");
-  if (targetVis === "nobody") {
-    return;
-  }
+  const lastSeenVis = priv.lastSeenVisibility ?? "contacts";
 
   const activeViewerIds = Array.from(onlineUsers.keys()).filter(
     (id) => id !== uId,
   );
   if (!activeViewerIds.length) return;
 
-  let allowedViewerIds = [];
-  if (targetVis === "contacts") {
-    const contactsOfU = await Contact.find({
-      ownerId: uId,
-      contactId: { $in: activeViewerIds },
-    })
-      .select("contactId")
-      .lean();
-    allowedViewerIds = contactsOfU.map((c) => String(c.contactId));
-  } else if (targetVis === "everyone") {
-    allowedViewerIds = activeViewerIds;
-  }
-
-  if (!allowedViewerIds.length) return;
+  const contactsOfU = await Contact.find({
+    ownerId: uId,
+    contactId: { $in: activeViewerIds },
+  })
+    .select("contactId")
+    .lean();
+  const contactViewerIds = new Set(contactsOfU.map((c) => String(c.contactId)));
 
   const [blockers, uDoc] = await Promise.all([
-    User.find({ _id: { $in: allowedViewerIds }, blockedUsers: uId })
+    User.find({ _id: { $in: activeViewerIds }, blockedUsers: uId })
       .select("_id")
       .lean(),
     User.findById(uId).select("blockedUsers").lean(),
@@ -410,14 +400,37 @@ export const notifyUserPresenceChange = async (
   const blockerSet = new Set(blockers.map((b) => String(b._id)));
   const myBlockedSet = new Set((uDoc?.blockedUsers || []).map(String));
 
-  for (const viewerId of allowedViewerIds) {
+  for (const viewerId of activeViewerIds) {
     if (blockerSet.has(viewerId) || myBlockedSet.has(viewerId)) continue;
-    io.to(viewerId).emit("presence:updated", {
-      userId: uId,
-      isOnline,
-      lastSeen:
-        isOnline || priv.lastSeenVisibility === "nobody" ? null : lastSeen,
-    });
+
+    const isContact = contactViewerIds.has(viewerId);
+
+    const canSeeOnline =
+      onlineVis === "everyone" || (onlineVis === "contacts" && isContact);
+    const canSeeLastSeen =
+      lastSeenVis === "everyone" || (lastSeenVis === "contacts" && isContact);
+
+    if (isOnline) {
+      if (canSeeOnline) {
+        io.to(viewerId).emit("presence:updated", {
+          userId: uId,
+          isOnline: true,
+          lastSeen: null,
+        });
+      }
+    } else {
+      if (canSeeOnline || canSeeLastSeen) {
+        io.to(viewerId).emit("presence:updated", {
+          userId: uId,
+          isOnline: false,
+          lastSeen: canSeeLastSeen ? lastSeen : null,
+        });
+      }
+    }
+  }
+
+  for (const viewerId of activeViewerIds) {
+    sendAuthorizedOnlineList(viewerId);
   }
 };
 
@@ -717,7 +730,6 @@ io.on("connection", (socket) => {
 
         if (set.size === 0) {
           onlineUsers.delete(userId);
-          privacyByUser.delete(userId);
 
           const lastSeen = new Date();
           User.findByIdAndUpdate(userId, {

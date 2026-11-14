@@ -132,12 +132,20 @@ export const cancelScheduled = asyncHandler(async (req, res) => {
 });
 
 export const markMessagesSeen = asyncHandler(async (req, res) => {
-  const { count, message } = await deliveryService.markMessagesSeen(
+  const result = await deliveryService.markMessagesSeen(
     req.user._id,
     req.params.id,
   );
 
-  return new ApiResponse(StatusCodes.OK, { count }, message).send(res);
+  return new ApiResponse(
+    StatusCodes.OK,
+    {
+      count: result.count,
+      conversationId: req.params.id,
+      unreadCount: 0,
+    },
+    result.message,
+  ).send(res);
 });
 
 export const reactMessage = asyncHandler(async (req, res) => {

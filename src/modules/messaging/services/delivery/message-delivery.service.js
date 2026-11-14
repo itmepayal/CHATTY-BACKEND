@@ -78,8 +78,7 @@ export const markMessagesSeen = async (userId, otherUserId) => {
     .find({
       senderId: otherUserId,
       receiverId: userId,
-      status: { $ne: "seen" },
-      receiverReadAt: null,
+      $or: [{ status: { $ne: "seen" } }, { receiverReadAt: null }],
       isDeleted: { $ne: true },
     })
     .select("_id");
@@ -104,11 +103,14 @@ export const markMessagesSeen = async (userId, otherUserId) => {
         },
       ]);
 
-      io.to(otherUserId.toString()).emit("messagesSeen", {
+      const seenPayload = {
         messageIds: ids,
         seenBy: userId,
         seenAt: now,
-      });
+      };
+
+      io.to(otherUserId.toString()).emit("messagesSeen", seenPayload);
+      io.to(userId.toString()).emit("messagesSeen", seenPayload);
     } else {
       await messageRepository.updateMany(
         { _id: { $in: ids } },
@@ -117,10 +119,15 @@ export const markMessagesSeen = async (userId, otherUserId) => {
     }
   }
 
-  await emitConversationUpdate(userId, otherUserId);
+  await Promise.all([
+    emitConversationUpdate(userId, otherUserId),
+    emitConversationUpdate(otherUserId, userId),
+  ]);
 
   return {
     count: ids.length,
+    conversationId: otherUserId.toString(),
+    unreadCount: 0,
     message: "Messages marked as seen.",
   };
 };

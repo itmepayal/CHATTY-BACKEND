@@ -5,27 +5,39 @@ import {
   REPLY_SELECT,
   formatMessage,
 } from "../../utils/message-helpers.js";
+import { canSendReadReceipt } from "../../../privacy/services/privacy.service.js";
 
 export const getMessages = async (userId, otherId) => {
   assertValidId(otherId, "User ID");
 
-  const messages = await messageRepository.find({
-    $and: [
-      {
-        $or: [
-          { senderId: userId, receiverId: otherId },
-          { senderId: otherId, receiverId: userId },
+  const [messages, canReceipt] = await Promise.all([
+    messageRepository
+      .find({
+        $and: [
+          {
+            $or: [
+              { senderId: userId, receiverId: otherId },
+              { senderId: otherId, receiverId: userId },
+            ],
+          },
+          notExpired(),
         ],
-      },
-      notExpired(),
-    ],
-    deletedFor: { $ne: userId },
-  })
-    .sort({ createdAt: 1 })
-    .populate("replyTo", REPLY_SELECT);
+        deletedFor: { $ne: userId },
+      })
+      .sort({ createdAt: 1 })
+      .populate("replyTo", REPLY_SELECT),
+    canSendReadReceipt(userId, otherId),
+  ]);
 
   return {
-    messages: messages.map(formatMessage),
+    messages: messages.map((m) => {
+      const formatted = formatMessage(m);
+      if (!canReceipt && formatted.status === "seen") {
+        formatted.status = "delivered";
+        formatted.seenAt = null;
+      }
+      return formatted;
+    }),
     message: "User messages fetched successfully.",
   };
 };
@@ -33,25 +45,36 @@ export const getMessages = async (userId, otherId) => {
 export const getPinned = async (userId, otherId) => {
   assertValidId(otherId, "user ID");
 
-  const pinned = await messageRepository.find({
-    $and: [
-      {
-        $or: [
-          { senderId: userId, receiverId: otherId },
-          { senderId: otherId, receiverId: userId },
+  const [pinned, canReceipt] = await Promise.all([
+    messageRepository
+      .find({
+        $and: [
+          {
+            $or: [
+              { senderId: userId, receiverId: otherId },
+              { senderId: otherId, receiverId: userId },
+            ],
+          },
+          notExpired(),
         ],
-      },
-      notExpired(),
-    ],
-    isPinned: true,
-    isDeleted: { $ne: true },
-    deletedFor: { $ne: userId },
-  })
-    .sort({ pinnedAt: -1 })
-    .populate("replyTo", REPLY_SELECT);
+        isPinned: true,
+        isDeleted: { $ne: true },
+        deletedFor: { $ne: userId },
+      })
+      .sort({ pinnedAt: -1 })
+      .populate("replyTo", REPLY_SELECT),
+    canSendReadReceipt(userId, otherId),
+  ]);
 
   return {
-    pinned: pinned.map(formatMessage),
+    pinned: pinned.map((m) => {
+      const formatted = formatMessage(m);
+      if (!canReceipt && formatted.status === "seen") {
+        formatted.status = "delivered";
+        formatted.seenAt = null;
+      }
+      return formatted;
+    }),
     message: "Pinned messages.",
   };
 };

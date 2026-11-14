@@ -16,6 +16,7 @@ export function createRateLimiter({
   keyGenerator = defaultIpKeyGenerator,
   skipSuccessfulRequests = false,
   skipFailedRequests = false,
+  skip,
 }) {
   return rateLimit({
     windowMs,
@@ -26,6 +27,11 @@ export function createRateLimiter({
     keyGenerator,
     skipSuccessfulRequests,
     skipFailedRequests,
+    skip: (req, res) => {
+      if (process.env.NODE_ENV === "test") return true;
+      if (typeof skip === "function") return skip(req, res);
+      return false;
+    },
     handler: (req, res, _next, options) => {
       const msg =
         typeof options.message === "string"
