@@ -470,6 +470,10 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
     emitToUser(id, GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE, memberPayload);
   }
 
+  console.log(
+    `[group-delivery] message ${message._id} saved for group ${group._id}. Broadcasted to ${eligibleMemberIds.length} members`,
+  );
+
   emitGroupConversation(group);
 
   return basePayload;

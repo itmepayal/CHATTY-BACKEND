@@ -16,7 +16,7 @@ export const scheduleIdParamSchema = z.object({
 export const keyEnvelopeSchema = z.object({
   deviceId: z.string(),
   userId: z.string(),
-  wrappedKey: z.string(),
+  wrappedKey: z.string().max(2048),
   iv: z.string(),
 });
 
@@ -81,6 +81,10 @@ export const scheduleMessageSchema = z
   .object({
     scheduledFor: z.union([z.string(), z.number(), z.date()]),
     text: z.string().optional(),
+    iv: z.string().optional(),
+    encrypted: z.union([z.boolean(), z.string()]).optional(),
+    e2ee: z.union([z.boolean(), z.string()]).optional(),
+    keyEnvelopes: keyEnvelopesFieldSchema,
   })
   .passthrough();
 

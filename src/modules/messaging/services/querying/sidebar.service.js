@@ -2,7 +2,10 @@ import * as userRepository from "../../../users/repositories/user.repository.js"
 import * as messageRepository from "../../repositories/message.repository.js";
 import * as contactRepository from "../../../contacts/repositories/contact.repository.js";
 import { getArchivedSet } from "../../repositories/chat-setting.repository.js";
-import { assertValidId, escapeRegex } from "../../../../shared/utils/validators.js";
+import {
+  assertValidId,
+  escapeRegex,
+} from "../../../../shared/utils/validators.js";
 import {
   toObjectId,
   notExpired,
@@ -64,18 +67,20 @@ export const getUsersForSidebar = async (userId, query = {}) => {
 
   if (search) {
     const rx = new RegExp(escapeRegex(search), "i");
-    const matchedUsers = await userRepository.find({
-      _id: { $ne: userId, $nin: [...myBlockedSet] },
-      blockedUsers: { $ne: userId },
-      $or: [{ fullName: rx }, { username: rx }, { email: rx }],
-    })
+    const matchedUsers = await userRepository
+      .find({
+        _id: { $ne: userId, $nin: [...myBlockedSet] },
+        blockedUsers: { $ne: userId },
+        $or: [{ fullName: rx }, { username: rx }, { email: rx }],
+      })
       .select("_id")
       .limit(limit)
       .lean();
 
     targetUserIds = matchedUsers.map((u) => u._id.toString());
   } else {
-    const contacts = await contactRepository.find({ ownerId: userId })
+    const contacts = await contactRepository
+      .find({ ownerId: userId })
       .select("contactId")
       .lean();
     const contactUserIds = contacts.map((c) => c.contactId.toString());
@@ -83,10 +88,11 @@ export const getUsersForSidebar = async (userId, query = {}) => {
     const combinedSet = new Set([...convoUserIds, ...contactUserIds]);
 
     if (combinedSet.size === 0) {
-      const discoverUsers = await userRepository.find({
-        _id: { $ne: userId, $nin: [...myBlockedSet] },
-        blockedUsers: { $ne: userId },
-      })
+      const discoverUsers = await userRepository
+        .find({
+          _id: { $ne: userId, $nin: [...myBlockedSet] },
+          blockedUsers: { $ne: userId },
+        })
         .select("_id")
         .limit(limit)
         .lean();
@@ -106,15 +112,18 @@ export const getUsersForSidebar = async (userId, query = {}) => {
   }
 
   const [users, blockers, contactsWhoSavedMe] = await Promise.all([
-    userRepository.find({ _id: { $in: targetUserIds } })
+    userRepository
+      .find({ _id: { $in: targetUserIds } })
       .select(
         "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility +publicKey",
       )
       .lean(),
-    userRepository.find({ _id: { $in: targetUserIds }, blockedUsers: userId })
+    userRepository
+      .find({ _id: { $in: targetUserIds }, blockedUsers: userId })
       .select("_id")
       .lean(),
-    contactRepository.find({ ownerId: { $in: targetUserIds }, contactId: userId })
+    contactRepository
+      .find({ ownerId: { $in: targetUserIds }, contactId: userId })
       .select("ownerId")
       .lean(),
   ]);
@@ -184,4 +193,3 @@ const sidebarService = {
 };
 
 export default sidebarService;
-
