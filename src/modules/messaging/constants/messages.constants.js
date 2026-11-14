@@ -17,7 +17,7 @@ export const MAX_NORMAL_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 export const MAX_MEDIA_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 export const MAX_VOICE_SECONDS = 300; // 5 minutes
 export const MAX_VIDEO_SECONDS = 60; // 1 minute
-export const UPLOAD_DIR = "public/upload";
+export const UPLOAD_DIR = "server/public/upload";
 export const BLOCKED_EXTENSIONS = Object.freeze(
   new Set([
     ".exe",

@@ -22,7 +22,7 @@ const formatAudio = (audio) =>
     ? {
         url: audio.url,
         duration: audio.duration || 0,
-        mimeType: audio.mimeType,
+        mimeType: audio.mimeType || "audio/mp4",
       }
     : null;
 

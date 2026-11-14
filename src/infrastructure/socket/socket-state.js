@@ -36,6 +36,15 @@ export const cleanPrivacy = (p = {}) => {
 export const getPrivacy = (userId) =>
   privacyByUser.get(String(userId)) || DEFAULT_PRIVACY;
 
+export const getOrFetchPrivacy = async (userId) => {
+  const idStr = String(userId);
+  if (privacyByUser.has(idStr)) {
+    return privacyByUser.get(idStr);
+  }
+  await loadPrivacy(idStr);
+  return getPrivacy(idStr);
+};
+
 export const loadPrivacy = async (userId) => {
   try {
     const u = await User.findById(userId)

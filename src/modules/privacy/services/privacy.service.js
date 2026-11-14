@@ -7,8 +7,15 @@ import { StatusCodes } from "http-status-codes";
 import * as userRepository from "../../users/repositories/user.repository.js";
 import * as contactRepository from "../../contacts/repositories/contact.repository.js";
 import ApiError from "../../../shared/errors/api-error.js";
-import { isUserOnline, getPrivacy } from "../../../infrastructure/socket/socket-state.js";
-import { toObjectId, isValidObjectId } from "../../../shared/utils/object-id.util.js";
+import {
+  isUserOnline,
+  getPrivacy,
+  getOrFetchPrivacy,
+} from "../../../infrastructure/socket/socket-state.js";
+import {
+  toObjectId,
+  isValidObjectId,
+} from "../../../shared/utils/object-id.util.js";
 
 const SENSITIVE_KEYS = [
   "password",
@@ -250,8 +257,10 @@ export const canSendReadReceipt = async (viewerId, senderId) => {
   if (String(viewerId) === String(senderId)) return true;
   if (await isBlockedEitherWay(viewerId, senderId)) return false;
 
-  const viewerPriv = getPrivacy(viewerId);
-  const senderPriv = getPrivacy(senderId);
+  const [viewerPriv, senderPriv] = await Promise.all([
+    getOrFetchPrivacy(viewerId),
+    getOrFetchPrivacy(senderId),
+  ]);
 
   return Boolean(
     viewerPriv.readReceipts !== false && senderPriv.readReceipts !== false,
@@ -266,7 +275,7 @@ export const canSendTypingIndicator = async (senderId, receiverId) => {
   if (String(senderId) === String(receiverId)) return false;
   if (await isBlockedEitherWay(senderId, receiverId)) return false;
 
-  const senderPriv = getPrivacy(senderId);
+  const senderPriv = await getOrFetchPrivacy(senderId);
   return Boolean(senderPriv.typingIndicator !== false);
 };
 
