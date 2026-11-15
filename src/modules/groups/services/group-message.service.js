@@ -98,6 +98,8 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
     contactsWhoSavedMe.map((c) => String(c.ownerId)),
   );
 
+  const myReceipts = getPrivacy(String(me)).readReceipts !== false;
+
   return msgs.reverse().map((m) => {
     const formatted = formatGroupMessage(m);
     const sender = m.senderId;
@@ -111,6 +113,17 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
         }
       }
     }
+
+    // Mutual privacy: if viewer has read receipts OFF, hide readBy.
+    // Also filter out any readers who currently have read receipts OFF.
+    if (!myReceipts) {
+      formatted.readBy = [];
+    } else {
+      formatted.readBy = (formatted.readBy || []).filter(
+        (uId) => getPrivacy(String(uId)).readReceipts !== false,
+      );
+    }
+
     return formatted;
   });
 };
@@ -326,21 +339,44 @@ export const markGroupSeenService = async ({
       readBy: { $ne: me },
       silentReadBy: { $ne: me },
     })
-    .select("_id");
+    .select("_id senderId");
 
   const ids = unread.map((m) => m._id);
 
   if (ids.length) {
     if (readReceipts !== false) {
-      await groupMessageRepository.updateMany(
-        { _id: { $in: ids } },
-        { $addToSet: { readBy: me } },
-      );
-      emitToGroupRoom(group._id, GROUP_SOCKET_EVENTS.GROUP_MESSAGES_SEEN, {
-        groupId: String(group._id),
-        seenBy: String(me),
-        messageIds: ids,
-      });
+      // Respect mutual privacy per message:
+      // only record in readBy and broadcast if sender ALSO has read receipts enabled
+      const visibleIds = [];
+      const silentIds = [];
+
+      for (const m of unread) {
+        const sPriv = getPrivacy(String(m.senderId)) || {};
+        if (sPriv.readReceipts !== false) {
+          visibleIds.push(m._id);
+        } else {
+          silentIds.push(m._id);
+        }
+      }
+
+      if (visibleIds.length) {
+        await groupMessageRepository.updateMany(
+          { _id: { $in: visibleIds } },
+          { $addToSet: { readBy: me } },
+        );
+        emitToGroupRoom(group._id, GROUP_SOCKET_EVENTS.GROUP_MESSAGES_SEEN, {
+          groupId: String(group._id),
+          seenBy: String(me),
+          messageIds: visibleIds,
+        });
+      }
+
+      if (silentIds.length) {
+        await groupMessageRepository.updateMany(
+          { _id: { $in: silentIds } },
+          { $addToSet: { silentReadBy: me } },
+        );
+      }
     } else {
       await groupMessageRepository.updateMany(
         { _id: { $in: ids } },

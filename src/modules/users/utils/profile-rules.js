@@ -38,6 +38,10 @@ export const RULES = {
     test: (v) => v.length <= 160,
     msg: "Bio can be at most 160 characters.",
   },
+  customStatus: {
+    test: (v) => v.length <= 120,
+    msg: "Custom status can be at most 120 characters.",
+  },
   timezone: {
     test: isValidTimeZone,
     msg: "Invalid timezone (example: Asia/Kolkata).",

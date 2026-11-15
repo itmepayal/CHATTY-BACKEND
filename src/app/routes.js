@@ -8,11 +8,13 @@ import callRoutes from "../modules/calling/routes/call.routes.js";
 import groupCallRoutes from "../modules/calling/routes/group-call.routes.js";
 import contactRoutes from "../modules/contacts/routes/contact.routes.js";
 import { e2eeRoutes, e2eeMessageRoutes } from "../modules/e2ee/index.js";
+import settingsRoutes from "../modules/notifications/routes/notification-settings.routes.js";
 
 const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/users", userRoutes);
+router.use("/settings", settingsRoutes);
 router.use("/e2ee", e2eeRoutes);
 router.use("/messages/e2ee", e2eeMessageRoutes);
 router.use("/messages", messageRoutes);

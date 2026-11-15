@@ -13,6 +13,7 @@ import {
 } from "../../utils/message-helpers.js";
 import { assertValidId } from "../../../../shared/utils/validators.js";
 import { isBlockedEitherWay } from "../../../privacy/services/privacy.service.js";
+import User from "../../../users/models/users.model.js";
 
 export const deliverMessage = async ({ senderId, receiverId, data }) => {
   const online = isUserOnline(receiverId);
@@ -27,6 +28,8 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
     getPrivacy(senderId).readReceipts !== false;
   const seenNow = viewing && canSendReceipt;
   const now = new Date();
+
+  User.findByIdAndUpdate(senderId, { lastSeen: now }).catch(() => {});
 
   const message = await messageRepository.create({
     senderId,

@@ -410,7 +410,7 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
   const target = await userRepository
     .findById(targetUserId)
     .select(
-      "fullName username avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission blockedUsers location website createdAt updatedAt",
+      "fullName username avatar bio customStatus lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission blockedUsers location website createdAt updatedAt readReceipts typingIndicator",
     )
     .lean();
 
@@ -427,11 +427,19 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
       username: target.username || "",
       avatar: target.avatar?.url || target.avatar || "",
       bio: target.bio || "",
+      customStatus: target.customStatus || "",
       lastSeen: target.lastSeen || null,
       showOnlineStatus: target.showOnlineStatus !== false,
       onlineStatusVisibility: target.onlineStatusVisibility ?? "everyone",
+      readReceipts: target.readReceipts !== false,
+      typingIndicator: target.typingIndicator !== false,
       location: target.location || "",
       website: target.website || "",
+      isAboutRestricted: false,
+      isPhotoRestricted: false,
+      isLastSeenRestricted: false,
+      isOnlineRestricted: false,
+      canAddToGroup: true,
       createdAt: target.createdAt,
       updatedAt: target.updatedAt,
     };
@@ -450,12 +458,20 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
       username: target.username || "",
       avatar: null,
       bio: "",
+      customStatus: "",
       lastSeen: null,
       showOnlineStatus: false,
+      readReceipts: false,
+      typingIndicator: false,
       // Only disclose isBlocked: true if viewer initiated the block. Never reveal if target blocked viewer.
       isBlocked: Boolean(blockedByViewer),
       location: "",
       website: "",
+      isAboutRestricted: true,
+      isPhotoRestricted: true,
+      isLastSeenRestricted: true,
+      isOnlineRestricted: true,
+      canAddToGroup: false,
     };
   }
 
@@ -490,6 +506,13 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
     inTargetContacts,
   );
 
+  const groupAddPerm = target.groupAddPermission ?? "contacts";
+  const canAddToGroup =
+    groupAddPerm === "everyone" ||
+    (groupAddPerm === "contacts" && inTargetContacts);
+
+  const canReceipt = await canSendReadReceipt(viewerId, targetUserId);
+
   return {
     id: String(target._id),
     _id: target._id,
@@ -497,10 +520,18 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
     username: target.username || "",
     avatar: showPhoto ? target.avatar?.url || target.avatar || "" : null,
     bio: showAbout ? target.bio || "" : "",
+    customStatus: showAbout ? target.customStatus || "" : "",
     lastSeen: showLastSeen ? target.lastSeen || null : null,
     showOnlineStatus: showOnline,
+    readReceipts: canReceipt,
+    typingIndicator: target.typingIndicator !== false,
     location: showAbout ? target.location || "" : "",
     website: showAbout ? target.website || "" : "",
+    isAboutRestricted: !showAbout,
+    isPhotoRestricted: !showPhoto,
+    isLastSeenRestricted: !showLastSeen,
+    isOnlineRestricted: !showOnline,
+    canAddToGroup,
     createdAt: target.createdAt,
     updatedAt: target.updatedAt,
   };
@@ -527,10 +558,17 @@ export const sanitizeUserForViewer = async (user, viewerId) => {
   const isBlocked = await isBlockedEitherWay(vId, ownerId);
   if (isBlocked) {
     obj.avatar = null;
+    obj.avatarUrl = "";
     obj.bio = "";
     obj.about = "";
+    obj.customStatus = "";
     delete obj.lastSeen;
     obj.showOnlineStatus = false;
+    obj.isPhotoRestricted = true;
+    obj.isLastSeenRestricted = true;
+    obj.isOnlineRestricted = true;
+    obj.isAboutRestricted = true;
+    obj.canAddToGroup = false;
     return sanitizePrivateKeys(obj);
   }
 
@@ -561,6 +599,16 @@ export const sanitizeUserForViewer = async (user, viewerId) => {
       : (obj.onlineStatusVisibility ?? "everyone");
   const onlineOk = canViewSync(onlineVis, ownerId, vId, inTargetContacts);
 
+  const groupAddPerm = obj.groupAddPermission ?? "contacts";
+  obj.canAddToGroup =
+    groupAddPerm === "everyone" ||
+    (groupAddPerm === "contacts" && inTargetContacts);
+
+  obj.isPhotoRestricted = !photoOk;
+  obj.isLastSeenRestricted = !lastSeenOk;
+  obj.isOnlineRestricted = !onlineOk;
+  obj.isAboutRestricted = !aboutOk;
+
   if (!photoOk) {
     if (typeof obj.avatar === "object" && obj.avatar !== null) {
       obj.avatar = { public_id: "", url: "" };
@@ -578,6 +626,7 @@ export const sanitizeUserForViewer = async (user, viewerId) => {
   if (!aboutOk) {
     obj.bio = "";
     obj.about = "";
+    obj.customStatus = "";
     obj.location = "";
     obj.website = "";
   }
@@ -644,8 +693,14 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
       obj.avatarUrl = "";
       obj.bio = "";
       obj.about = "";
+      obj.customStatus = "";
       delete obj.lastSeen;
       obj.showOnlineStatus = false;
+      obj.isPhotoRestricted = true;
+      obj.isLastSeenRestricted = true;
+      obj.isOnlineRestricted = true;
+      obj.isAboutRestricted = true;
+      obj.canAddToGroup = false;
       return sanitizePrivateKeys(obj);
     }
 
@@ -675,6 +730,16 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
         : (obj.onlineStatusVisibility ?? "everyone");
     const onlineOk = canViewSync(onlineVis, ownerId, vId, inTargetContacts);
 
+    const groupAddPerm = obj.groupAddPermission ?? "contacts";
+    obj.canAddToGroup =
+      groupAddPerm === "everyone" ||
+      (groupAddPerm === "contacts" && inTargetContacts);
+
+    obj.isPhotoRestricted = !photoOk;
+    obj.isLastSeenRestricted = !lastSeenOk;
+    obj.isOnlineRestricted = !onlineOk;
+    obj.isAboutRestricted = !aboutOk;
+
     if (!photoOk) {
       if (typeof obj.avatar === "object" && obj.avatar !== null) {
         obj.avatar = { public_id: "", url: "" };
@@ -692,6 +757,7 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
     if (!aboutOk) {
       obj.bio = "";
       obj.about = "";
+      obj.customStatus = "";
       obj.location = "";
       obj.website = "";
     }

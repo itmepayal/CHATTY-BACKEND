@@ -17,6 +17,7 @@ const formatUser = (user) => {
     location: u.location,
     website: u.website,
     bio: u.bio,
+    customStatus: u.customStatus || "",
     timezone: u.timezone,
     lastSeen: u.lastSeen,
     createdAt: u.createdAt,
@@ -41,6 +42,25 @@ const formatUser = (user) => {
     appearanceDensity: u.density ?? u.appearanceDensity ?? "comfortable",
     appearanceTimestamps: (u.showTimestamps ?? u.appearanceTimestamps) !== false,
     appearanceTimeFormat: u.timeFormat ?? u.appearanceTimeFormat ?? "12h",
+    notificationSettings: {
+      soundEnabled:
+        u.notificationSettings?.soundEnabled !== undefined
+          ? Boolean(u.notificationSettings.soundEnabled)
+          : true,
+      soundVolume:
+        typeof u.notificationSettings?.soundVolume === "number" &&
+        !Number.isNaN(u.notificationSettings.soundVolume)
+          ? Math.max(0, Math.min(100, Math.round(u.notificationSettings.soundVolume)))
+          : 60,
+      desktopNotifications:
+        u.notificationSettings?.desktopNotifications !== undefined
+          ? Boolean(u.notificationSettings.desktopNotifications)
+          : false,
+      showPreview:
+        u.notificationSettings?.showPreview !== undefined
+          ? Boolean(u.notificationSettings.showPreview)
+          : true,
+    },
     ...(u.status ? { status: u.status } : {}),
     ...(typeof u.twoFactorEnabled === "boolean"
       ? {
