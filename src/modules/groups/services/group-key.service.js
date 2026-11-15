@@ -167,7 +167,18 @@ export const applyGroupKeys = async ({ group, member, entries, me }) => {
         .filter((e) => Number(e.version) === maxIncoming)
         .map((e) => String(e.userId)),
     );
-    if ([...memberIds].some((id) => !covered.has(id))) {
+    const usersWithKeys = await userRepository
+      .find({
+        _id: { $in: [...memberIds] },
+        publicKey: { $exists: true, $ne: null },
+      })
+      .select("_id")
+      .lean();
+    const requiredMemberIds = new Set([
+      String(me),
+      ...usersWithKeys.map((u) => String(u._id)),
+    ]);
+    if ([...requiredMemberIds].some((id) => !covered.has(id))) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         GROUP_ERROR_MESSAGES.KEY_VERSION_INCLUDE_ALL,

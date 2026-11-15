@@ -76,7 +76,8 @@ export const parseKeyEntries = (raw, defaultVersion) => {
     if (!Number.isInteger(version) || version < 1) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid key version.");
     }
-    if (!isBase64(e?.wrappedKey, { min: 16, max: MAX_WRAPPED_KEY_LENGTH })) {
+    const wrappedKey = e?.wrappedKey ?? e?.encryptedKey;
+    if (!isBase64(wrappedKey, { min: 16, max: MAX_WRAPPED_KEY_LENGTH })) {
       throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid wrapped key.");
     }
     assertValidIv(e?.iv);
@@ -84,7 +85,7 @@ export const parseKeyEntries = (raw, defaultVersion) => {
     map.set(`${userId}:${version}`, {
       userId,
       version,
-      wrappedKey: e.wrappedKey,
+      wrappedKey,
       iv: e.iv,
     });
   }

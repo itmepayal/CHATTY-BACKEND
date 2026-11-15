@@ -12,7 +12,7 @@ export const createGroup = asyncHandler(async (req, res) => {
   const payload = await groupMemberService.createGroupWithMembers({
     me: req.user._id,
     name: req.body.name,
-    rawMemberIds: req.body.memberIds,
+    rawMemberIds: req.body.memberIds ?? req.body.members,
     file: req.file,
     e2ee: req.body.e2ee,
     keys: req.body.keys,
@@ -192,8 +192,11 @@ export const setGroupKeys = asyncHandler(async (req, res) => {
   const payload = await groupKeyService.setGroupKeysForRequest({
     groupId: req.params.id,
     me: req.user._id,
-    keys: req.body.keys,
-    version: req.body.version,
+    keys:
+      req.body?.keys ??
+      req.body?.entries ??
+      (Array.isArray(req.body) ? req.body : undefined),
+    version: req.body?.version,
   });
 
   return new ApiResponse(

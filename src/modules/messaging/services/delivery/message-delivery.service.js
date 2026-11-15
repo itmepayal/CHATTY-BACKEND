@@ -50,7 +50,9 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
   );
 
   io.to(receiverId.toString()).emit("newMessage", payload);
-  io.to(senderId.toString()).emit("newMessage", payload);
+  if (senderId.toString() !== receiverId.toString()) {
+    io.to(senderId.toString()).emit("newMessage", payload);
+  }
 
   if (seenNow) {
     io.to(senderId.toString()).emit("messagesSeen", {
