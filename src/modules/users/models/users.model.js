@@ -92,6 +92,13 @@ const UserSchema = new mongoose.Schema(
       maxlength: 160,
     },
 
+    customStatus: {
+      type: String,
+      trim: true,
+      maxlength: 120,
+      default: "",
+    },
+
     blockedUsers: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -252,6 +259,27 @@ const UserSchema = new mongoose.Schema(
     autoScroll: {
       type: Boolean,
       default: true,
+    },
+
+    notificationSettings: {
+      soundEnabled: {
+        type: Boolean,
+        default: true,
+      },
+      soundVolume: {
+        type: Number,
+        min: 0,
+        max: 100,
+        default: 60,
+      },
+      desktopNotifications: {
+        type: Boolean,
+        default: false,
+      },
+      showPreview: {
+        type: Boolean,
+        default: true,
+      },
     },
 
     theme: {

@@ -133,6 +133,7 @@ export const APPEARANCE_BOOL_FIELDS = Object.freeze([
 
 export const EDITABLE_FIELDS = Object.freeze([
   "bio",
+  "customStatus",
   "phone",
   "website",
   "location",

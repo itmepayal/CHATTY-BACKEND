@@ -22,7 +22,7 @@ export const getUsersForSidebar = async (userId, query = {}) => {
   const limit = Math.min(Math.max(1, Number(query.limit) || 50), 100);
 
   const [me, archivedSet] = await Promise.all([
-    userRepository.findById(userId).select("blockedUsers").lean(),
+    userRepository.findById(userId).select("blockedUsers readReceipts").lean(),
     getArchivedSet(userId),
   ]);
 
@@ -115,7 +115,7 @@ export const getUsersForSidebar = async (userId, query = {}) => {
     userRepository
       .find({ _id: { $in: targetUserIds } })
       .select(
-        "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility +publicKey",
+        "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility readReceipts typingIndicator +publicKey",
       )
       .lean(),
     userRepository
@@ -157,6 +157,11 @@ export const getUsersForSidebar = async (userId, query = {}) => {
           ? "nobody"
           : (user.onlineStatusVisibility ?? "everyone");
       const showOnline = canSee(onlineVis, "everyone");
+      const canAddToGroup = canSee(user.groupAddPermission, "contacts");
+      const canReceipt =
+        !isBlockedEither &&
+        me?.readReceipts !== false &&
+        user.readReceipts !== false;
 
       return {
         id: user._id,
@@ -164,8 +169,16 @@ export const getUsersForSidebar = async (userId, query = {}) => {
         email: user.email,
         avatar: showPhoto ? user.avatar?.url || "" : "",
         bio: showAbout ? user.bio || "" : "",
+        customStatus: showAbout ? user.customStatus || "" : "",
         lastSeen: showLastSeen ? user.lastSeen || null : null,
         showOnlineStatus: showOnline,
+        readReceipts: canReceipt,
+        typingIndicator: user.typingIndicator !== false,
+        isAboutRestricted: !showAbout,
+        isPhotoRestricted: !showPhoto,
+        isLastSeenRestricted: !showLastSeen,
+        isOnlineRestricted: !showOnline,
+        canAddToGroup,
         isBlocked: isBlockedByMe,
         isArchived: archivedSet.has(otherId),
         hasPublicKey: Boolean(user.publicKey),

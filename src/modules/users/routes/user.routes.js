@@ -1,6 +1,7 @@
 import express from "express";
 import authMiddleware from "../../../middlewares/auth.middleware.js";
 import usersController from "../controllers/users.controller.js";
+import notificationSettingsController from "../../notifications/controllers/notification-settings.controller.js";
 import upload, {
   autoCleanupMulterOnFailure,
 } from "../../../middlewares/multer.middleware.js";
@@ -33,6 +34,10 @@ router
   .route("/appearance")
   .get(usersController.getAppearance)
   .patch(settingsLimiter, usersController.updateAppearance);
+router
+  .route("/notifications")
+  .get(notificationSettingsController.getNotificationSettings)
+  .patch(settingsLimiter, notificationSettingsController.updateNotificationSettings);
 router.put("/me/public-key", settingsLimiter, usersController.setMyPublicKey);
 router.get("/:id/profile", usersController.getUserProfile);
 router.get("/:id/public-key", usersController.getUserPublicKey);

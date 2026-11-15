@@ -449,6 +449,35 @@ export const refreshPrivacy = async (userId) => {
   io.to(uId).emit("privacy:update", priv);
   io.emit("user:profile-updated", { userId: uId });
 
+  if (priv.typingIndicator === false) {
+    const socketIds = onlineUsers.get(uId);
+    if (socketIds) {
+      for (const sId of socketIds) {
+        const sock = io.sockets.sockets.get(sId);
+        if (sock) {
+          if (sock.data?.typingTo?.size) {
+            for (const to of sock.data.typingTo) {
+              io.to(to).emit("typing", { from: uId, isTyping: false });
+            }
+            sock.data.typingTo.clear();
+          }
+          if (sock.data?.typingGroups?.size) {
+            for (const gId of sock.data.typingGroups) {
+              const room = groupRoom(gId);
+              io.to(room).emit("group:typing", {
+                groupId: gId,
+                userId: uId,
+                fullName: sock.data?.fullName,
+                isTyping: false,
+              });
+            }
+            sock.data.typingGroups.clear();
+          }
+        }
+      }
+    }
+  }
+
   const isOnline = (onlineUsers.get(uId)?.size || 0) > 0;
   const onlineVis =
     priv.showOnlineStatus === false
@@ -582,6 +611,13 @@ io.on("connection", (socket) => {
         return;
       }
 
+      // If sender has disabled typing indicator, DROP event completely
+      if (!getPrivacy(userId).typingIndicator) return;
+      // If receiver has disabled typing indicator, DROP event completely
+      if (!getPrivacy(to).typingIndicator) return;
+
+      if (await isBlockedEitherWay(userId, to)) return;
+
       const isTyping = Boolean(payload.isTyping);
 
       if (isTyping) {
@@ -589,10 +625,6 @@ io.on("connection", (socket) => {
 
         if (now - lastEmit.typing < THROTTLE_MS) return;
         lastEmit.typing = now;
-
-        if (!getPrivacy(userId).typingIndicator) return;
-
-        if (await isBlockedEitherWay(userId, to)) return;
 
         socket.data.typingTo.add(to);
       } else {
@@ -614,6 +646,19 @@ io.on("connection", (socket) => {
 
       if (!socket.rooms.has(room)) return;
 
+      // If user has disabled typing indicator, DROP event completely
+      if (!getPrivacy(userId).typingIndicator) return;
+
+      if (
+        !socketLimiter.consume(
+          userId,
+          "group:typing",
+          SOCKET_RATE_LIMITS.TYPING,
+        )
+      ) {
+        return;
+      }
+
       const isTyping = Boolean(payload.isTyping);
 
       if (isTyping) {
@@ -621,8 +666,6 @@ io.on("connection", (socket) => {
 
         if (now - lastEmit.groupTyping < THROTTLE_MS) return;
         lastEmit.groupTyping = now;
-
-        if (!getPrivacy(userId).typingIndicator) return;
 
         socket.data.typingGroups.add(groupId);
       } else {
