@@ -112,10 +112,10 @@ export const notifyKeysNeeded = async (group, newIds) => {
   const targetIds = group.members
     .filter((m) => !skip.has(sid(m.userId)))
     .map((m) => sid(m.userId));
-  groupId: (String(group._id),
-    broadcastGroupKeysNeeded(targetIds, {
-      userIds: newIds.map(String),
-    }));
+  broadcastGroupKeysNeeded(targetIds, {
+    groupId: String(group._id),
+    userIds: newIds.map(String),
+  });
 };
 
 export const loadGroup = (id) =>
@@ -434,7 +434,9 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
 
   const memberIds = group.members.map((m) => sid(m.userId));
   const blockers = await getBlockersOf(memberIds, senderId);
-  const eligibleMemberIds = memberIds.filter((id) => !blockers.has(id));
+  const eligibleMemberIds = [
+    ...new Set(memberIds.filter((id) => !blockers.has(id))),
+  ];
 
   let contactsWhoSavedSender = new Set();
   if (vis === "contacts") {

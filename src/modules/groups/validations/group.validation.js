@@ -10,8 +10,6 @@ import {
 } from "../constants/index.js";
 import { objectIdSchema } from "../../../shared/validators/object-id.validation.js";
 
-// --- Zod Schemas ---
-
 export const groupIdParamSchema = z.object({
   id: objectIdSchema,
 });
@@ -305,6 +303,23 @@ export const validatePaginationQuery = (req, _res, next) => {
       StatusCodes.BAD_REQUEST,
       GROUP_ERROR_MESSAGES.INVALID_PAGINATION,
     );
+  }
+  next();
+};
+
+/**
+ * Validates body payload for setting or rotating group E2EE keys.
+ */
+export const validateSetGroupKeysBody = (req, _res, next) => {
+  const keys =
+    req.body?.keys ??
+    req.body?.entries ??
+    (Array.isArray(req.body) ? req.body : undefined);
+  if (!keys) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Keys are required.");
+  }
+  if (!Array.isArray(keys) || keys.length === 0) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Keys are required.");
   }
   next();
 };

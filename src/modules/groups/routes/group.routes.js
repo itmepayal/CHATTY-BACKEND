@@ -19,6 +19,7 @@ import {
   validateAddMembersBody,
   validateChangeRoleBody,
   validatePaginationQuery,
+  validateSetGroupKeysBody,
 } from "../validations/group.validation.js";
 
 const router = Router();
@@ -49,6 +50,7 @@ router.post(
   "/:id/keys",
   settingsLimiter,
   validateGroupIdParam,
+  validateSetGroupKeysBody,
   groupController.setGroupKeys,
 );
 
