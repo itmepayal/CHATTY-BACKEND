@@ -4,6 +4,8 @@ import { isValidObjectId } from "../../../shared/utils/object-id.util.js";
 import * as userKeyRepository from "../../users/repositories/user-key.repository.js";
 import * as groupKeyRepository from "../../groups/repositories/group-key.repository.js";
 import * as deviceKeyRepository from "../repositories/device-key.repository.js";
+import * as deviceLinkRepository from "../repositories/device-link.repository.js";
+import { io } from "../../../infrastructure/socket/socket.js";
 import {
   E2EE_ERROR_MESSAGES,
   E2EE_RESET_CONFIRM_KEYWORD,
@@ -473,6 +475,203 @@ export const getDevicesPublicKeys = async (userIds) => {
   };
 };
 
+const generatePin = () => {
+  const part1 = Math.floor(100 + Math.random() * 900);
+  const part2 = Math.floor(100 + Math.random() * 900);
+  return `${part1}-${part2}`;
+};
+
+/**
+ * Initiates a device linking session for a new device.
+ */
+export const requestDeviceLink = async (
+  userId,
+  { ephemeralPublicKey, deviceId, deviceName },
+) => {
+  const user = await userKeyRepository.findE2EEStatus(userId);
+  if (!user) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      E2EE_ERROR_MESSAGES.USER_NOT_FOUND,
+    );
+  }
+
+  const linkSessionId = crypto.randomUUID();
+  const linkingPin = generatePin();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await deviceLinkRepository.createLinkSession({
+    userId,
+    linkSessionId,
+    linkingPin,
+    ephemeralPublicKey,
+    newDeviceId: deviceId,
+    newDeviceName: deviceName || "New Device",
+    expiresAt,
+  });
+
+  try {
+    io.to(String(userId)).emit("e2ee:device-link:requested", {
+      linkSessionId,
+      linkingPin,
+      newDeviceId: deviceId,
+      newDeviceName: deviceName || "New Device",
+      expiresAt,
+    });
+  } catch (err) {
+    console.warn(
+      "[e2ee] Failed to emit device-link:requested socket event:",
+      err?.message,
+    );
+  }
+
+  return {
+    linkSessionId,
+    linkingPin,
+    expiresAt,
+  };
+};
+
+/**
+ * Checks the status of a pending device linking session.
+ */
+export const getDeviceLinkStatus = async (userId, linkSessionId) => {
+  const session = await deviceLinkRepository.findLinkSessionById(linkSessionId);
+  if (!session || String(session.userId) !== String(userId)) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Device linking session not found or unauthorized.",
+    );
+  }
+
+  if (new Date() > new Date(session.expiresAt)) {
+    return { status: "expired" };
+  }
+
+  if (session.status === "approved" && session.encryptedPayload) {
+    // Delete session after successful read (one-time consume)
+    await deviceLinkRepository.deleteLinkSession(linkSessionId).catch(() => {});
+
+    return {
+      status: "approved",
+      encryptedPayload: session.encryptedPayload,
+      approverDeviceId: session.approverDeviceId,
+    };
+  }
+
+  return {
+    status: session.status,
+    linkingPin: session.linkingPin,
+    expiresAt: session.expiresAt,
+  };
+};
+
+/**
+ * Looks up a pending device link session by linking PIN for the authenticated user.
+ */
+export const lookupPendingLinkSession = async (userId, linkingPin) => {
+  const cleanPin = String(linkingPin).trim().replace(/\s+/g, "");
+  const session = await deviceLinkRepository.findPendingSessionByPin(
+    userId,
+    cleanPin,
+  );
+
+  if (!session) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Pending device linking session not found or has expired.",
+    );
+  }
+
+  if (new Date() > new Date(session.expiresAt)) {
+    throw new ApiError(
+      StatusCodes.GONE,
+      "This device linking session has expired.",
+    );
+  }
+
+  return {
+    linkSessionId: session.linkSessionId,
+    linkingPin: session.linkingPin,
+    ephemeralPublicKey: session.ephemeralPublicKey,
+    newDeviceId: session.newDeviceId,
+    newDeviceName: session.newDeviceName,
+    expiresAt: session.expiresAt,
+  };
+};
+
+/**
+ * Approves a device linking session from an existing trusted device.
+ */
+export const approveDeviceLink = async (
+  userId,
+  { linkSessionId, linkingPin, encryptedPayload, approverDeviceId },
+) => {
+  let session = null;
+  if (linkSessionId) {
+    session = await deviceLinkRepository.findLinkSessionById(linkSessionId);
+  } else if (linkingPin) {
+    session = await deviceLinkRepository.findPendingSessionByPin(
+      userId,
+      linkingPin,
+    );
+  }
+
+  if (!session) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Device linking session not found or has expired.",
+    );
+  }
+
+  if (String(session.userId) !== String(userId)) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Unauthorized device link approval.",
+    );
+  }
+
+  if (
+    session.status !== "pending" ||
+    new Date() > new Date(session.expiresAt)
+  ) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Device linking session is no longer pending or has expired.",
+    );
+  }
+
+  await deviceLinkRepository.approveLinkSession(session.linkSessionId, {
+    encryptedPayload,
+    approverDeviceId,
+  });
+
+  try {
+    io.to(String(userId)).emit("e2ee:device-link:approved", {
+      linkSessionId: session.linkSessionId,
+      encryptedPayload,
+      approverDeviceId,
+      newDeviceId: session.newDeviceId,
+    });
+    io.to(String(userId)).emit("e2ee:device-link:completed", {
+      deviceId: session.newDeviceId,
+      deviceName: session.newDeviceName,
+      approverDeviceId,
+    });
+  } catch (err) {
+    console.warn(
+      "[e2ee] Failed to emit device-link:approved socket event:",
+      err?.message,
+    );
+  }
+
+  return {
+    success: true,
+    linkSessionId: session.linkSessionId,
+    newDeviceId: session.newDeviceId,
+  };
+};
+
 const e2eeService = {
   getStatus,
   registerKeys,
@@ -485,6 +684,9 @@ const e2eeService = {
   getDevices,
   revokeDevice,
   getDevicesPublicKeys,
+  requestDeviceLink,
+  getDeviceLinkStatus,
+  approveDeviceLink,
 };
 
 export default e2eeService;
