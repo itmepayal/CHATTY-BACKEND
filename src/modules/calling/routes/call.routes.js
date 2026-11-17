@@ -12,4 +12,16 @@ router.get(
   callController.getCallHistory,
 );
 
+router.patch(
+  "/mark-seen",
+  authMiddleware,
+  callController.markMissedCallsSeen,
+);
+
+router.patch(
+  "/missed/seen",
+  authMiddleware,
+  callController.markMissedCallsSeen,
+);
+
 export default router;

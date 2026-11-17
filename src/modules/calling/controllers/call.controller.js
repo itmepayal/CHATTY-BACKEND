@@ -17,8 +17,24 @@ export const getCallHistory = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const markMissedCallsSeen = asyncHandler(async (req, res) => {
+  const { callerId, callIds } = req.body || {};
+  const data = await callService.markMissedCallsAsSeen({
+    userId: req.user._id,
+    callerId,
+    callIds,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Missed calls marked as seen successfully.",
+  ).send(res);
+});
+
 const callController = {
   getCallHistory,
+  markMissedCallsSeen,
 };
 
 export default callController;

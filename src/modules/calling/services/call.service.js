@@ -3,7 +3,8 @@ import * as callRepository from "../repositories/call.repository.js";
 import * as userRepository from "../../users/repositories/user.repository.js";
 import * as contactRepository from "../../contacts/repositories/contact.repository.js";
 import { canViewSync } from "../../privacy/services/privacy-visibility.service.js";
-import { CALL_LIMITS } from "../constants/call.constants.js";
+import { CALL_LIMITS, CALL_SOCKET_EVENTS } from "../constants/call.constants.js";
+import { io } from "../../../infrastructure/socket/socket.js";
 
 export const formatCallRecord = (
   c,
@@ -49,8 +50,17 @@ export const formatCallRecord = (
     };
   }
 
+  const isSeen = isOutgoing
+    ? true
+    : Boolean(
+        c.seen === true ||
+          (Array.isArray(c.readBy) &&
+            c.readBy.some((id) => String(id) === String(userId))),
+      );
+
   return {
     id: c._id,
+    callId: c.callId,
     direction: isOutgoing ? "outgoing" : "incoming",
     type: c.type,
     status: c.status,
@@ -58,6 +68,8 @@ export const formatCallRecord = (
     startedAt: c.startedAt,
     answeredAt: c.answeredAt || null,
     endedAt: c.endedAt || null,
+    seen: isSeen,
+    seenAt: c.seenAt || null,
     user: otherUserPayload,
   };
 };
@@ -148,10 +160,39 @@ export const createCallRecord = async ({
   }
 };
 
+export const markMissedCallsAsSeen = async ({
+  userId,
+  callerId = null,
+  callIds = null,
+}) => {
+  const result = await callRepository.markCallsAsReadForUser(userId, {
+    callerId,
+    callIds,
+  });
+
+  const remainingUnread = await callRepository.countUnreadMissedCalls(userId);
+
+  // Emit socket event to all active sessions of this user so other devices/tabs stay in sync
+  try {
+    io.to(String(userId)).emit(CALL_SOCKET_EVENTS.CALL_MISSED_CLEARED, {
+      callerId: callerId ? String(callerId) : null,
+      remainingUnseen: remainingUnread,
+    });
+  } catch (err) {
+    console.error("[call] failed to emit CALL_MISSED_CLEARED:", err?.message || err);
+  }
+
+  return {
+    modifiedCount: result.modifiedCount || 0,
+    remainingUnseen: remainingUnread,
+  };
+};
+
 const callService = {
   formatCallRecord,
   getCallHistoryList,
   createCallRecord,
+  markMissedCallsAsSeen,
 };
 
 export default callService;

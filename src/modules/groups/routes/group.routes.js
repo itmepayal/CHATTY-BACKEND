@@ -1,6 +1,7 @@
 import { Router } from "express";
 import groupController from "../controllers/group.controller.js";
 import * as groupInviteController from "../controllers/group-invite.controller.js";
+import messageController from "../../messaging/controllers/messages.controller.js";
 import authMiddleware from "../../../middlewares/auth.middleware.js";
 import upload, {
   enforceTypeSizeLimit,
@@ -93,6 +94,18 @@ router.patch(
 
 // Read receipts route
 router.post("/:id/seen", validateGroupIdParam, groupController.markGroupSeen);
+
+// Scheduled group messages
+router.post(
+  "/:id/schedule",
+  sendMessageLimiter,
+  validateGroupIdParam,
+  (req, res, next) => {
+    req.body.groupId = req.params.id;
+    req.body.messageType = "group";
+    return messageController.scheduleMessage(req, res, next);
+  },
+);
 
 // Location sharing routes
 router.post(
