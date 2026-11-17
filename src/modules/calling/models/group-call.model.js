@@ -54,6 +54,12 @@ const GroupCallSchema = mongoose.Schema(
       default: 1,
       min: 1,
     },
+    readBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true },
 );
@@ -61,6 +67,7 @@ const GroupCallSchema = mongoose.Schema(
 GroupCallSchema.index({ groupId: 1, createdAt: -1 });
 GroupCallSchema.index({ startedBy: 1, createdAt: -1 });
 GroupCallSchema.index({ participants: 1, createdAt: -1 });
+GroupCallSchema.index({ participants: 1, readBy: 1 });
 
 const GroupCall = mongoose.model("GroupCall", GroupCallSchema);
 export default GroupCall;

@@ -38,6 +38,8 @@ export const CALL_SOCKET_EVENTS = Object.freeze({
   CALL_ANSWER: "call:answer",
   CALL_ICE: "call:ice",
   CALL_MEDIA: "call:media",
+  CALLS_READ: "calls:read",
+  CALL_MISSED_CLEARED: "call:missed:cleared",
 
   // Group calling
   GCALL_START: "gcall:start",
