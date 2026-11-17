@@ -84,6 +84,25 @@ export const countDocuments = (filter = {}, options = {}) => {
 
 export const count = (filter, options) => countDocuments(filter, options);
 
+export const markGroupCallsAsReadForUser = (userId, groupCallIds = null, options = {}) => {
+  const uid = toObjectId(userId);
+  const filter = {
+    participants: uid,
+    readBy: { $ne: uid },
+  };
+  if (Array.isArray(groupCallIds) && groupCallIds.length > 0) {
+    const validIds = groupCallIds.map(toObjectId).filter(Boolean);
+    if (validIds.length > 0) {
+      filter._id = { $in: validIds };
+    }
+  }
+  return GroupCall.updateMany(
+    filter,
+    { $addToSet: { readBy: uid } },
+    options,
+  );
+};
+
 const groupCallRepository = Object.freeze({
   findForGroupAfter,
   findByGroupIds,
@@ -97,6 +116,7 @@ const groupCallRepository = Object.freeze({
   createGroupCall,
   countDocuments,
   count,
+  markGroupCallsAsReadForUser,
 });
 
 export default groupCallRepository;

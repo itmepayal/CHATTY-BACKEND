@@ -82,6 +82,41 @@ export const countCallsByUser = (userId, options = {}) => {
   return query;
 };
 
+export const markCallsAsReadForUser = (userId, callIds = null, options = {}) => {
+  const uid = toObjectId(userId);
+  const filter = {
+    receiverId: uid,
+    readBy: { $ne: uid },
+  };
+  if (Array.isArray(callIds) && callIds.length > 0) {
+    const validIds = callIds.map(toObjectId).filter(Boolean);
+    if (validIds.length > 0) {
+      filter._id = { $in: validIds };
+    }
+  }
+  return Call.updateMany(
+    filter,
+    { $addToSet: { readBy: uid } },
+    options,
+  );
+};
+
+export const countUnreadMissedCalls = (userId, options = {}) => {
+  const uid = toObjectId(userId);
+  const filter = {
+    receiverId: uid,
+    readBy: { $ne: uid },
+    $or: [
+      { status: { $in: ["missed", "rejected", "no-answer", "unanswered"] } },
+      { status: "cancelled", answeredAt: { $exists: false } },
+      { status: "cancelled", answeredAt: null },
+    ],
+  };
+  const query = Call.countDocuments(filter);
+  if (options.session) query.session(options.session);
+  return query;
+};
+
 export const deleteMany = (filter, options = {}) =>
   Call.deleteMany(filter, options);
 
@@ -96,6 +131,8 @@ const callRepository = Object.freeze({
   createCall,
   updateCallByCallId,
   countCallsByUser,
+  markCallsAsReadForUser,
+  countUnreadMissedCalls,
   deleteMany,
 });
 

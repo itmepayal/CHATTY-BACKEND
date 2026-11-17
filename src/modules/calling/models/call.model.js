@@ -50,6 +50,12 @@ const CallSchema = mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    readBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true },
 );
@@ -57,6 +63,7 @@ const CallSchema = mongoose.Schema(
 CallSchema.index({ callerId: 1, createdAt: -1 });
 CallSchema.index({ receiverId: 1, createdAt: -1 });
 CallSchema.index({ callerId: 1, receiverId: 1, createdAt: -1 });
+CallSchema.index({ receiverId: 1, readBy: 1 });
 
 const Call = mongoose.model("Call", CallSchema);
 export default Call;
