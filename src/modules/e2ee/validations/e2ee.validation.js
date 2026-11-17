@@ -102,3 +102,31 @@ export const batchDevicePublicKeysSchema = z.object({
     .max(MAX_BATCH_PUBLIC_KEYS, E2EE_ERROR_MESSAGES.BATCH_LIMIT_EXCEEDED),
 });
 
+export const requestDeviceLinkSchema = z.object({
+  ephemeralPublicKey: publicKeySchema,
+  deviceId: z.string().trim().min(1).max(128),
+  deviceName: z.string().trim().max(100).optional(),
+});
+
+export const approveDeviceLinkSchema = z.object({
+  linkSessionId: z.string().trim().min(1).max(128).optional(),
+  linkingPin: z.string().trim().min(1).max(20).optional(),
+  encryptedPayload: z.object({
+    ciphertext: z.string().min(1),
+    iv: z.string().min(1),
+    approverDeviceId: z.string().optional(),
+  }).passthrough(),
+  approverDeviceId: z.string().trim().min(1).max(128),
+}).refine((data) => data.linkSessionId || data.linkingPin, {
+  message: "Either linkSessionId or linkingPin is required to approve device link.",
+});
+
+export const linkSessionIdParamSchema = z.object({
+  linkSessionId: z.string().trim().min(1).max(128),
+});
+
+export const linkingPinParamSchema = z.object({
+  linkingPin: z.string().trim().min(6).max(12),
+});
+
+

@@ -17,6 +17,10 @@ import {
   registerDeviceSchema,
   deviceIdParamSchema,
   batchDevicePublicKeysSchema,
+  requestDeviceLinkSchema,
+  approveDeviceLinkSchema,
+  linkSessionIdParamSchema,
+  linkingPinParamSchema,
 } from "../validations/e2ee.validation.js";
 
 const router = express.Router();
@@ -89,6 +93,31 @@ router.post(
   e2eePublicKeysLimiter,
   validate(batchDevicePublicKeysSchema, "body"),
   e2eeController.getDevicesPublicKeys,
+);
+
+// Device Linking Routes for Automatic Key Sharing Between Trusted Devices
+router.post(
+  "/devices/link/request",
+  validate(requestDeviceLinkSchema, "body"),
+  e2eeController.requestDeviceLink,
+);
+
+router.get(
+  "/devices/link/status/:linkSessionId",
+  validate(linkSessionIdParamSchema, "params"),
+  e2eeController.getDeviceLinkStatus,
+);
+
+router.get(
+  "/devices/link/pin/:linkingPin",
+  validate(linkingPinParamSchema, "params"),
+  e2eeController.lookupPendingLinkSession,
+);
+
+router.post(
+  "/devices/link/approve",
+  validate(approveDeviceLinkSchema, "body"),
+  e2eeController.approveDeviceLink,
 );
 
 export default router;

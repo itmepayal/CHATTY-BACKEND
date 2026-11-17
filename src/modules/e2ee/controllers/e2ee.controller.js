@@ -103,6 +103,48 @@ export const getDevicesPublicKeys = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const requestDeviceLink = asyncHandler(async (req, res) => {
+  const data = await e2eeService.requestDeviceLink(req.user._id, req.body);
+  return new ApiResponse(
+    StatusCodes.CREATED,
+    data,
+    "Device linking session created successfully.",
+  ).send(res);
+});
+
+export const getDeviceLinkStatus = asyncHandler(async (req, res) => {
+  const data = await e2eeService.getDeviceLinkStatus(
+    req.user._id,
+    req.params.linkSessionId,
+  );
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Device linking session status retrieved successfully.",
+  ).send(res);
+});
+
+export const lookupPendingLinkSession = asyncHandler(async (req, res) => {
+  const data = await e2eeService.lookupPendingLinkSession(
+    req.user._id,
+    req.params.linkingPin,
+  );
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Pending device linking session retrieved successfully.",
+  ).send(res);
+});
+
+export const approveDeviceLink = asyncHandler(async (req, res) => {
+  const data = await e2eeService.approveDeviceLink(req.user._id, req.body);
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Device linking session approved successfully.",
+  ).send(res);
+});
+
 const e2eeController = {
   getStatus,
   registerKeys,
@@ -115,6 +157,10 @@ const e2eeController = {
   getDevices,
   revokeDevice,
   getDevicesPublicKeys,
+  requestDeviceLink,
+  getDeviceLinkStatus,
+  lookupPendingLinkSession,
+  approveDeviceLink,
 };
 
 export default e2eeController;
