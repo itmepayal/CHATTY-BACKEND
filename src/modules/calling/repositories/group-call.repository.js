@@ -14,8 +14,8 @@ export const findForGroupAfter = (
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)
-    .populate("startedBy", "fullName avatar profilePhotoVisibility")
-    .populate("participants", "fullName avatar profilePhotoVisibility");
+    .populate("startedBy", "fullName avatar profilePhotoVisibility profilePhotoExceptions")
+    .populate("participants", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
   if (options.session) query.session(options.session);
   return query;
 };
@@ -29,8 +29,8 @@ export const findByGroupIds = (
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)
-    .populate("startedBy", "fullName avatar profilePhotoVisibility")
-    .populate("participants", "fullName avatar profilePhotoVisibility");
+    .populate("startedBy", "fullName avatar profilePhotoVisibility profilePhotoExceptions")
+    .populate("participants", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
   if (options.session) query.session(options.session);
   return query;
 };

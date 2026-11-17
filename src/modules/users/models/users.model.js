@@ -12,9 +12,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../shared/errors/api-error.js";
-import { VIS } from "../../privacy/constants/privacy.constants.js";
+import { VIS, ONLINE_VIS, STATUS_VIS } from "../../privacy/constants/privacy.constants.js";
 
-export { VIS };
+export { VIS, ONLINE_VIS, STATUS_VIS };
 
 const UserSchema = new mongoose.Schema(
   {
@@ -120,6 +120,7 @@ const UserSchema = new mongoose.Schema(
 
     lastSeen: {
       type: Date,
+      default: Date.now,
     },
 
     publicKey: {
@@ -208,7 +209,7 @@ const UserSchema = new mongoose.Schema(
 
     onlineStatusVisibility: {
       type: String,
-      enum: VIS,
+      enum: ONLINE_VIS,
       default: "everyone",
     },
 
@@ -225,8 +226,16 @@ const UserSchema = new mongoose.Schema(
     lastSeenVisibility: {
       type: String,
       enum: VIS,
-      default: "contacts",
+      default: "everyone",
     },
+
+    lastSeenExceptions: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
 
     profilePhotoVisibility: {
       type: String,
@@ -234,17 +243,92 @@ const UserSchema = new mongoose.Schema(
       default: "everyone",
     },
 
+    profilePhotoExceptions: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
+
     aboutVisibility: {
       type: String,
       enum: VIS,
+      default: "everyone",
+    },
+
+    aboutExceptions: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
+
+    statusVisibility: {
+      type: String,
+      enum: STATUS_VIS,
       default: "contacts",
     },
+
+    statusExceptions: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
+
+    statusIncluded: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
 
     groupAddPermission: {
       type: String,
       enum: VIS,
-      default: "contacts",
+      default: "everyone",
     },
+
+    groupAddExceptions: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
+
+    silenceUnknownCallers: {
+      type: Boolean,
+      default: false,
+    },
+
+    appLockEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    appLockTimeout: {
+      type: String,
+      enum: ["immediately", "1m", "5m", "15m", "1h"],
+      default: "immediately",
+    },
+
+    appLockPinHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
+    lockedChats: [
+      {
+        type: String,
+        default: [],
+      },
+    ],
 
     enterToSend: {
       type: Boolean,

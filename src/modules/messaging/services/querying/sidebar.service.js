@@ -115,7 +115,7 @@ export const getUsersForSidebar = async (userId, query = {}) => {
     userRepository
       .find({ _id: { $in: targetUserIds } })
       .select(
-        "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility readReceipts typingIndicator +publicKey",
+        "fullName email avatar bio lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility lastSeenExceptions profilePhotoExceptions aboutExceptions groupAddExceptions readReceipts typingIndicator +publicKey",
       )
       .lean(),
     userRepository
@@ -145,23 +145,61 @@ export const getUsersForSidebar = async (userId, query = {}) => {
       const isBlockedByMe = myBlockedSet.has(otherId);
       const isBlockedEither = isBlockedByMe || blockerSet.has(otherId);
 
-      const canSee = (visibility, fallback) =>
+      const canSee = (visibility, fallback, exceptions = []) =>
         !isBlockedEither &&
-        canViewSync(visibility ?? fallback, otherId, userId, targetSavedMeSet);
+        canViewSync(
+          visibility ?? fallback,
+          otherId,
+          userId,
+          targetSavedMeSet,
+          exceptions,
+        );
 
-      const showPhoto = canSee(user.profilePhotoVisibility, "everyone");
-      const showLastSeen = canSee(user.lastSeenVisibility, "contacts");
-      const showAbout = canSee(user.aboutVisibility, "contacts");
-      const onlineVis =
-        user.showOnlineStatus === false
-          ? "nobody"
-          : (user.onlineStatusVisibility ?? "everyone");
-      const showOnline = canSee(onlineVis, "everyone");
-      const canAddToGroup = canSee(user.groupAddPermission, "contacts");
+      const showPhoto = canSee(
+        user.profilePhotoVisibility,
+        "everyone",
+        user.profilePhotoExceptions,
+      );
+      const showLastSeen = canSee(
+        user.lastSeenVisibility,
+        "everyone",
+        user.lastSeenExceptions,
+      );
+      const showAbout = canSee(
+        user.aboutVisibility,
+        "everyone",
+        user.aboutExceptions,
+      );
+
+      let effectiveOnlineVis = user.onlineStatusVisibility ?? "everyone";
+      let effectiveOnlineExceptions = user.lastSeenExceptions || [];
+      if (effectiveOnlineVis === "same_as_last_seen") {
+        effectiveOnlineVis = user.lastSeenVisibility ?? "everyone";
+        effectiveOnlineExceptions = user.lastSeenExceptions || [];
+      }
+      if (user.showOnlineStatus === false) {
+        effectiveOnlineVis = "nobody";
+      }
+
+      const showOnline = canSee(
+        effectiveOnlineVis,
+        "everyone",
+        effectiveOnlineExceptions,
+      );
+      const canAddToGroup = canSee(
+        user.groupAddPermission,
+        "everyone",
+        user.groupAddExceptions,
+      );
       const canReceipt =
         !isBlockedEither &&
         me?.readReceipts !== false &&
         user.readReceipts !== false;
+
+      let lastMsg = c?.lastMessage ? formatMessage(c.lastMessage) : null;
+      if (lastMsg && !canReceipt && lastMsg.status === "seen") {
+        lastMsg = { ...lastMsg, status: "delivered", seenAt: null };
+      }
 
       return {
         id: user._id,
@@ -183,7 +221,7 @@ export const getUsersForSidebar = async (userId, query = {}) => {
         isArchived: archivedSet.has(otherId),
         hasPublicKey: Boolean(user.publicKey),
         unreadCount: isBlockedEither ? 0 : c?.unreadCount || 0,
-        lastMessage: c ? formatMessage(c.lastMessage) : null,
+        lastMessage: lastMsg,
         lastMessageAt: c?.lastMessage?.createdAt || null,
         ts,
       };

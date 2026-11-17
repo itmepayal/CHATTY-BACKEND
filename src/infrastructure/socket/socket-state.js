@@ -9,10 +9,21 @@ export const DEFAULT_PRIVACY = {
   onlineStatusVisibility: "everyone",
   readReceipts: true,
   typingIndicator: true,
-  lastSeenVisibility: "contacts",
+  silenceUnknownCallers: false,
+  appLockEnabled: false,
+  appLockTimeout: "immediately",
+  lastSeenVisibility: "everyone",
   profilePhotoVisibility: "everyone",
-  aboutVisibility: "contacts",
-  groupAddPermission: "contacts",
+  aboutVisibility: "everyone",
+  statusVisibility: "contacts",
+  groupAddPermission: "everyone",
+  lastSeenExceptions: [],
+  profilePhotoExceptions: [],
+  aboutExceptions: [],
+  statusExceptions: [],
+  statusIncluded: [],
+  groupAddExceptions: [],
+  lockedChats: [],
 };
 
 export const privacyByUser = new Map();
@@ -26,10 +37,21 @@ export const cleanPrivacy = (p = {}) => {
     onlineStatusVisibility,
     readReceipts: p.readReceipts !== false,
     typingIndicator: p.typingIndicator !== false,
-    lastSeenVisibility: p.lastSeenVisibility ?? "contacts",
+    silenceUnknownCallers: Boolean(p.silenceUnknownCallers),
+    appLockEnabled: Boolean(p.appLockEnabled),
+    appLockTimeout: p.appLockTimeout || "immediately",
+    lastSeenVisibility: p.lastSeenVisibility ?? "everyone",
     profilePhotoVisibility: p.profilePhotoVisibility ?? "everyone",
-    aboutVisibility: p.aboutVisibility ?? "contacts",
-    groupAddPermission: p.groupAddPermission ?? "contacts",
+    aboutVisibility: p.aboutVisibility ?? "everyone",
+    statusVisibility: p.statusVisibility ?? "contacts",
+    groupAddPermission: p.groupAddPermission ?? "everyone",
+    lastSeenExceptions: (p.lastSeenExceptions || []).map(String),
+    profilePhotoExceptions: (p.profilePhotoExceptions || []).map(String),
+    aboutExceptions: (p.aboutExceptions || []).map(String),
+    statusExceptions: (p.statusExceptions || []).map(String),
+    statusIncluded: (p.statusIncluded || []).map(String),
+    groupAddExceptions: (p.groupAddExceptions || []).map(String),
+    lockedChats: (p.lockedChats || []).map(String),
   };
 };
 
@@ -49,7 +71,7 @@ export const loadPrivacy = async (userId) => {
   try {
     const u = await User.findById(userId)
       .select(
-        "showOnlineStatus onlineStatusVisibility readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission",
+        "showOnlineStatus onlineStatusVisibility readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility statusVisibility groupAddPermission lastSeenExceptions profilePhotoExceptions aboutExceptions statusExceptions statusIncluded groupAddExceptions silenceUnknownCallers appLockEnabled appLockTimeout lockedChats",
       )
       .lean();
 

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import groupController from "../controllers/group.controller.js";
+import * as groupInviteController from "../controllers/group-invite.controller.js";
 import authMiddleware from "../../../middlewares/auth.middleware.js";
 import upload, {
   enforceTypeSizeLimit,
@@ -25,6 +26,12 @@ import {
 const router = Router();
 
 router.use(authMiddleware);
+
+// Group invitations routes
+router.get("/invites/my", groupInviteController.getMyGroupInvites);
+router.post("/invites/:inviteId/accept", groupInviteController.acceptGroupInvite);
+router.post("/invites/:inviteId/decline", groupInviteController.declineGroupInvite);
+router.post("/:id/invites", validateGroupIdParam, groupInviteController.createGroupInvite);
 
 // Group collection routes
 router

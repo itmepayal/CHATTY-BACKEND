@@ -33,7 +33,7 @@ export const getLatestVersions = async (groupIds) => {
 export const loadGroup = (id) =>
   Group.findById(id).populate(
     "members.userId",
-    "fullName avatar profilePhotoVisibility",
+    "fullName avatar profilePhotoVisibility profilePhotoExceptions",
   );
 
 export const formatGroup = (
@@ -61,7 +61,13 @@ export const formatGroup = (
           showPhoto = false;
         } else {
           const vis = u?.profilePhotoVisibility ?? "everyone";
-          showPhoto = canViewSync(vis, uid, vId, targetSavedViewerSet);
+          showPhoto = canViewSync(
+            vis,
+            uid,
+            vId,
+            targetSavedViewerSet,
+            u?.profilePhotoExceptions || [],
+          );
         }
       }
 

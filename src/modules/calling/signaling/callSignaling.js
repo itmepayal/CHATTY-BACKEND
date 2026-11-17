@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import mongoose from "mongoose";
 import User from "../../users/models/users.model.js";
+import Contact from "../../contacts/models/contact.model.js";
 import { assertCanMessage } from "../../messaging/utils/chat-guard.js";
 import { safeHandler } from "../../../infrastructure/socket/socket-safe.js";
 import { socketLimiter } from "../../../infrastructure/socket/socket-rate-limit.js";
@@ -161,7 +162,7 @@ export function registerCallHandlers(
           return reply({ ok: false, reason: "rate_limited" });
         }
 
-        const callee = await User.findById(to).select("status fullName").lean();
+        const callee = await User.findById(to).select("status fullName silenceUnknownCallers").lean();
         if (!callee || callee.status === "suspended") {
           return reply({ ok: false, reason: "not-allowed" });
         }
@@ -170,6 +171,14 @@ export function registerCallHandlers(
           await assertCanMessage(userId, to);
         } catch {
           return reply({ ok: false, reason: "not-allowed" });
+        }
+
+        let isSilenced = false;
+        if (callee?.silenceUnknownCallers) {
+          const isSaved = await Contact.exists({ ownerId: to, contactId: userId });
+          if (!isSaved) {
+            isSilenced = true;
+          }
         }
 
         if (!isUserOnline(to)) return reply({ ok: false, reason: "offline" });
@@ -212,6 +221,7 @@ export function registerCallHandlers(
           from: userId,
           fromName: socket.data?.fullName || "User",
           type,
+          silenced: isSilenced,
         });
 
         reply({ ok: true, callId });

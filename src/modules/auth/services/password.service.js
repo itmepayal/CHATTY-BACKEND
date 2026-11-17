@@ -145,11 +145,33 @@ export const changePassword = async ({
   return { message: AUTH_MESSAGES.PASSWORD_CHANGED };
 };
 
+export const verifyPassword = async ({ userId, password }) => {
+  if (!password || typeof password !== "string") {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Password is required.");
+  }
+
+  const user = await userRepository.findByIdSelect(userId, "+password");
+  if (!user) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.USER_NOT_FOUND);
+  }
+
+  const isCorrect = await user.isPassword(password);
+  if (!isCorrect) {
+    throw new ApiError(
+      StatusCodes.UNAUTHORIZED,
+      "Incorrect password.",
+    );
+  }
+
+  return { verified: true };
+};
+
 const passwordService = {
   requestPasswordReset,
   getOpenAppResetHtml,
   resetPassword,
   changePassword,
+  verifyPassword,
 };
 
 export default passwordService;

@@ -13,7 +13,7 @@ export const findHistoryForUser = (
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)
-    .populate("callerId receiverId", "fullName avatar profilePhotoVisibility");
+    .populate("callerId receiverId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
   if (options.session) query.session(options.session);
   return query;
 };

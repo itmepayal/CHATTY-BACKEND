@@ -1,27 +1,28 @@
-/**
- * User Settings Service
- * Handles user preferences, privacy configurations, appearance, and chat behaviors.
- */
-
 import { StatusCodes } from "http-status-codes";
+import mongoose from "mongoose";
 import * as userRepository from "../repositories/user.repository.js";
+import * as groupRepository from "../../groups/repositories/group.repository.js";
 import ApiError from "../../../shared/errors/api-error.js";
 import { assertBooleanFields } from "../../../shared/utils/validators.js";
 import {
   PRIVACY_FIELDS,
   PRIVACY_BOOL_FIELDS,
   PRIVACY_VIS_FIELDS,
+  PRIVACY_ARRAY_FIELDS,
+  PRIVACY_MISC_FIELDS,
   CHAT_PREF_FIELDS,
   APPEARANCE_ENUMS,
   APPEARANCE_BOOL_FIELDS,
   CANONICAL_APPEARANCE_KEYS,
   APPEARANCE_DB_KEY,
   VIS,
+  ONLINE_VIS,
+  STATUS_VIS,
+  PRIVACY_PROJECTION_FIELDS as PRIVACY_SELECT,
 } from "../../privacy/constants/privacy.constants.js";
 import { refreshPrivacy } from "../../../infrastructure/socket/socket.js";
 
-const PRIVACY_SELECT =
-  "showOnlineStatus onlineStatusVisibility readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission";
+const toStrList = (arr) => (Array.isArray(arr) ? arr.map(String) : []);
 
 const formatPrivacy = (u) => {
   const onlineStatusVisibility =
@@ -31,11 +32,22 @@ const formatPrivacy = (u) => {
     showOnlineStatus: onlineStatusVisibility !== "nobody",
     readReceipts: u.readReceipts !== false,
     typingIndicator: u.typingIndicator !== false,
-    lastSeenVisibility: u.lastSeenVisibility ?? "contacts",
+    silenceUnknownCallers: Boolean(u.silenceUnknownCallers),
+    appLockEnabled: Boolean(u.appLockEnabled),
+    appLockTimeout: u.appLockTimeout || "immediately",
+    lastSeenVisibility: u.lastSeenVisibility ?? "everyone",
     onlineStatusVisibility,
     profilePhotoVisibility: u.profilePhotoVisibility ?? "everyone",
-    aboutVisibility: u.aboutVisibility ?? "contacts",
-    groupAddPermission: u.groupAddPermission ?? "contacts",
+    aboutVisibility: u.aboutVisibility ?? "everyone",
+    statusVisibility: u.statusVisibility ?? "contacts",
+    groupAddPermission: u.groupAddPermission ?? "everyone",
+    lastSeenExceptions: toStrList(u.lastSeenExceptions),
+    profilePhotoExceptions: toStrList(u.profilePhotoExceptions),
+    aboutExceptions: toStrList(u.aboutExceptions),
+    statusExceptions: toStrList(u.statusExceptions),
+    statusIncluded: toStrList(u.statusIncluded),
+    groupAddExceptions: toStrList(u.groupAddExceptions),
+    lockedChats: toStrList(u.lockedChats),
   };
 };
 
@@ -48,17 +60,96 @@ export const getPrivacy = async (userId) => {
 };
 
 export const setPrivacy = async (userId, body = {}) => {
-  const boolBody = {};
-  const visBody = {};
+  const $set = {};
   const unknown = [];
 
   for (const [rawKey, val] of Object.entries(body)) {
     const key =
       rawKey === "whoCanAddMeToGroups" ? "groupAddPermission" : rawKey;
+
     if (PRIVACY_BOOL_FIELDS.includes(key)) {
-      boolBody[key] = val;
+      if (typeof val !== "boolean") {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          `"${key}" must be a boolean.`,
+        );
+      }
+      $set[key] = val;
     } else if (PRIVACY_VIS_FIELDS.includes(key)) {
-      visBody[key] = val;
+      const allowed =
+        key === "onlineStatusVisibility"
+          ? ONLINE_VIS
+          : key === "statusVisibility"
+            ? STATUS_VIS
+            : VIS;
+      if (!allowed.includes(val)) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          `Invalid value for "${key}". Allowed: ${allowed.join(", ")}`,
+        );
+      }
+      $set[key] = val;
+    } else if (PRIVACY_ARRAY_FIELDS.includes(key)) {
+      if (!Array.isArray(val)) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          `"${key}" must be an array of IDs.`,
+        );
+      }
+      const rawIds = [...new Set(val.map(String))];
+      if (key === "lockedChats") {
+        const validatedIds = [];
+        for (const cid of rawIds) {
+          if (!mongoose.Types.ObjectId.isValid(cid)) {
+            throw new ApiError(
+              StatusCodes.BAD_REQUEST,
+              `Invalid conversation ID: ${cid}`,
+            );
+          }
+
+          // Check if it is a group and verify the user is an active member
+          const group = await groupRepository.findOne({
+            _id: cid,
+            "members.userId": userId,
+          });
+          if (group) {
+            validatedIds.push(cid);
+            continue;
+          }
+
+          // Otherwise check if it is a valid existing user
+          const otherUser = await userRepository.findById(cid).select("_id");
+          if (otherUser) {
+            validatedIds.push(cid);
+            continue;
+          }
+
+          throw new ApiError(
+            StatusCodes.BAD_REQUEST,
+            `Invalid conversation or group: ${cid}`,
+          );
+        }
+        $set[key] = validatedIds;
+      } else {
+        $set[key] = rawIds;
+      }
+    } else if (key === "appLockTimeout") {
+      const timeouts = ["immediately", "1m", "5m", "15m", "1h"];
+      if (!timeouts.includes(val)) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          `Invalid appLockTimeout. Allowed: ${timeouts.join(", ")}`,
+        );
+      }
+      $set[key] = val;
+    } else if (key === "appLockPinHash") {
+      if (val !== null && typeof val !== "string") {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "appLockPinHash must be a string or null.",
+        );
+      }
+      $set[key] = val;
     } else {
       unknown.push(rawKey);
     }
@@ -71,31 +162,10 @@ export const setPrivacy = async (userId, body = {}) => {
     );
   }
 
-  const $set = {};
-
-  if (Object.keys(boolBody).length) {
-    Object.assign(
-      $set,
-      assertBooleanFields(boolBody, PRIVACY_BOOL_FIELDS, "privacy"),
-    );
-  }
-
-  for (const [key, value] of Object.entries(visBody)) {
-    if (!VIS.includes(value)) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        `Invalid value for "${key}". Allowed: ${VIS.join(", ")}`,
-      );
-    }
-    $set[key] = value;
-  }
-
-  if (visBody.onlineStatusVisibility) {
-    $set.showOnlineStatus = visBody.onlineStatusVisibility !== "nobody";
-  } else if (boolBody.showOnlineStatus !== undefined) {
-    $set.onlineStatusVisibility = boolBody.showOnlineStatus
-      ? "everyone"
-      : "nobody";
+  if ($set.onlineStatusVisibility) {
+    $set.showOnlineStatus = $set.onlineStatusVisibility !== "nobody";
+  } else if ($set.showOnlineStatus !== undefined) {
+    $set.onlineStatusVisibility = $set.showOnlineStatus ? "everyone" : "nobody";
   }
 
   if (!Object.keys($set).length) {

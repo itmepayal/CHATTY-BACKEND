@@ -121,7 +121,7 @@ export const notifyKeysNeeded = async (group, newIds) => {
 export const loadGroup = (id) =>
   groupRepository
     .findById(id)
-    .populate("members.userId", "fullName avatar profilePhotoVisibility");
+    .populate("members.userId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
 
 export const formatGroup = (
   group,
@@ -148,7 +148,13 @@ export const formatGroup = (
           showPhoto = false;
         } else {
           const vis = u?.profilePhotoVisibility ?? "everyone";
-          showPhoto = canViewSync(vis, uid, vId, targetSavedViewerSet);
+          showPhoto = canViewSync(
+            vis,
+            uid,
+            vId,
+            targetSavedViewerSet,
+            u?.profilePhotoExceptions || [],
+          );
         }
       }
 
@@ -378,7 +384,7 @@ export const getLast = (groupId, joinedAt, blockedIds) =>
       senderId: { $nin: blockedIds },
     })
     .sort({ createdAt: -1 })
-    .populate("senderId", "fullName avatar profilePhotoVisibility");
+    .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
 
 export const emitMemberConversation = async (groupId, member) => {
   const uid = sid(member.userId);
@@ -422,7 +428,7 @@ export const emitGroupConversation = async (group) => {
 };
 
 export const broadcastGroupMessage = async (group, message, senderId) => {
-  await message.populate("senderId", "fullName avatar profilePhotoVisibility");
+  await message.populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
   await groupRepository.updateOne(
     { _id: group._id },
     { lastMessageAt: message.createdAt },
@@ -439,7 +445,7 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
   ];
 
   let contactsWhoSavedSender = new Set();
-  if (vis === "contacts") {
+  if (vis === "contacts" || vis === "contacts_except") {
     const contacts = await contactRepository
       .find({
         ownerId: sId,
@@ -451,14 +457,19 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
   }
 
   const basePayload = formatGroupMessage(message);
+  const exceptions = sender?.profilePhotoExceptions || [];
 
   for (const id of eligibleMemberIds) {
     const isSelf = id === sId;
     let canSeePhoto = isSelf;
     if (!isSelf) {
-      if (vis === "everyone") canSeePhoto = true;
-      else if (vis === "contacts") canSeePhoto = contactsWhoSavedSender.has(id);
-      else canSeePhoto = false;
+      canSeePhoto = canViewSync(
+        vis,
+        sId,
+        id,
+        contactsWhoSavedSender.has(id),
+        exceptions,
+      );
     }
 
     const memberPayload = canSeePhoto
@@ -571,6 +582,10 @@ export const destroyGroup = async (group) => {
   await locationShareRepository.deleteMany({ groupId: group._id });
   await groupKeyRepository.deleteMany({ groupId: group._id });
   await groupCallRepository.deleteMany({ groupId: group._id });
+  await userRepository.updateMany(
+    { lockedChats: String(group._id) },
+    { $pull: { lockedChats: String(group._id) } },
+  );
   terminateGroupCallByGroup(io, group._id, "group-deleted");
   await groupRepository.deleteOne({ _id: group._id });
 
@@ -695,7 +710,7 @@ export const getMyGroupsList = async (me) => {
   const [groups, blocked, archivedSet] = await Promise.all([
     groupRepository
       .find({ "members.userId": me })
-      .populate("members.userId", "fullName avatar profilePhotoVisibility"),
+      .populate("members.userId", "fullName avatar profilePhotoVisibility profilePhotoExceptions"),
     getBlockedByMe(me),
     getArchivedGroupSet(me),
   ]);

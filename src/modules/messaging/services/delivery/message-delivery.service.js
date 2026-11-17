@@ -83,7 +83,7 @@ export const markMessagesSeen = async (userId, otherUserId) => {
     .find({
       senderId: otherUserId,
       receiverId: userId,
-      $or: [{ status: { $ne: "seen" } }, { receiverReadAt: null }],
+      receiverReadAt: null,
       isDeleted: { $ne: true },
     })
     .select("_id");

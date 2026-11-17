@@ -1,5 +1,8 @@
 import * as messageRepository from "../../repositories/message.repository.js";
-import { assertValidId, escapeRegex } from "../../../../shared/utils/validators.js";
+import {
+  assertValidId,
+  escapeRegex,
+} from "../../../../shared/utils/validators.js";
 import {
   notExpired,
   REPLY_SELECT,
@@ -96,21 +99,22 @@ export const searchMessages = async (
     };
   }
 
-  const results = await messageRepository.find({
-    $and: [
-      {
-        $or: [
-          { senderId: userId, receiverId: otherId },
-          { senderId: otherId, receiverId: userId },
-        ],
-      },
-      notExpired(),
-    ],
-    deletedFor: { $ne: userId },
-    isDeleted: { $ne: true },
-    e2ee: { $ne: true },
-    text: { $regex: escapeRegex(q), $options: "i" },
-  })
+  const results = await messageRepository
+    .find({
+      $and: [
+        {
+          $or: [
+            { senderId: userId, receiverId: otherId },
+            { senderId: otherId, receiverId: userId },
+          ],
+        },
+        notExpired(),
+      ],
+      deletedFor: { $ne: userId },
+      isDeleted: { $ne: true },
+      e2ee: { $ne: true },
+      text: { $regex: escapeRegex(q), $options: "i" },
+    })
     .sort({ createdAt: -1 })
     .limit(limit)
     .select("senderId receiverId text createdAt");
@@ -133,4 +137,3 @@ const messageQueryService = {
 };
 
 export default messageQueryService;
-

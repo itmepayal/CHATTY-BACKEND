@@ -1,17 +1,34 @@
 import { z } from "zod";
-import { VALID_THEMES } from "../constants/privacy.constants.js";
+import {
+  VIS,
+  ONLINE_VIS,
+  STATUS_VIS,
+  VALID_THEMES,
+} from "../constants/privacy.constants.js";
 
 export const updatePrivacyBodySchema = z
   .object({
     showOnlineStatus: z.boolean().optional(),
     readReceipts: z.boolean().optional(),
     typingIndicator: z.boolean().optional(),
-    lastSeenVisibility: z.enum(["everyone", "contacts", "nobody"]).optional(),
-    onlineStatusVisibility: z.enum(["everyone", "contacts", "nobody"]).optional(),
-    profilePhotoVisibility: z.enum(["everyone", "contacts", "nobody"]).optional(),
-    aboutVisibility: z.enum(["everyone", "contacts", "nobody"]).optional(),
-    groupAddPermission: z.enum(["everyone", "contacts", "nobody"]).optional(),
-    whoCanAddMeToGroups: z.enum(["everyone", "contacts", "nobody"]).optional(),
+    silenceUnknownCallers: z.boolean().optional(),
+    appLockEnabled: z.boolean().optional(),
+    appLockTimeout: z.enum(["immediately", "1m", "5m", "15m", "1h"]).optional(),
+    appLockPinHash: z.string().nullable().optional(),
+    lastSeenVisibility: z.enum(VIS).optional(),
+    onlineStatusVisibility: z.enum(ONLINE_VIS).optional(),
+    profilePhotoVisibility: z.enum(VIS).optional(),
+    aboutVisibility: z.enum(VIS).optional(),
+    statusVisibility: z.enum(STATUS_VIS).optional(),
+    groupAddPermission: z.enum(VIS).optional(),
+    whoCanAddMeToGroups: z.enum(VIS).optional(),
+    lastSeenExceptions: z.array(z.string()).optional(),
+    profilePhotoExceptions: z.array(z.string()).optional(),
+    aboutExceptions: z.array(z.string()).optional(),
+    statusExceptions: z.array(z.string()).optional(),
+    statusIncluded: z.array(z.string()).optional(),
+    groupAddExceptions: z.array(z.string()).optional(),
+    lockedChats: z.array(z.string()).optional(),
   })
   .passthrough();
 
@@ -29,15 +46,17 @@ export const updateAppearanceBodySchema = z
     theme: z.enum(VALID_THEMES).optional(),
     fontSize: z.enum(["sm", "md", "lg", "small", "medium", "large"]).optional(),
     bubbleStyle: z.enum(["rounded", "soft", "sharp", "round"]).optional(),
-    messageBubbleStyle: z.enum([
-      "rounded",
-      "soft",
-      "sharp",
-      "round",
-      "modern",
-      "classic",
-      "minimal",
-    ]).optional(),
+    messageBubbleStyle: z
+      .enum([
+        "rounded",
+        "soft",
+        "sharp",
+        "round",
+        "modern",
+        "classic",
+        "minimal",
+      ])
+      .optional(),
     bubble: z.enum(["round", "soft", "sharp", "rounded"]).optional(),
     density: z.enum(["comfortable", "compact", "cozy"]).optional(),
     spacing: z.enum(["comfortable", "compact", "cozy"]).optional(),

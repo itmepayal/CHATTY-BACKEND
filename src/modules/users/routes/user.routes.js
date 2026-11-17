@@ -39,6 +39,7 @@ router
   .get(notificationSettingsController.getNotificationSettings)
   .patch(settingsLimiter, notificationSettingsController.updateNotificationSettings);
 router.put("/me/public-key", settingsLimiter, usersController.setMyPublicKey);
+router.get("/blocked", usersController.getBlockedUsers);
 router.get("/:id/profile", usersController.getUserProfile);
 router.get("/:id/public-key", usersController.getUserPublicKey);
 router

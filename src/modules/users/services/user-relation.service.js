@@ -7,8 +7,30 @@ import { StatusCodes } from "http-status-codes";
 import * as userRepository from "../repositories/user.repository.js";
 import ApiError from "../../../shared/errors/api-error.js";
 import formatUser from "../utils/format-user.js";
-import { isValidObjectId } from "../../../shared/utils/object-id.util.js";
+import {
+  isValidObjectId,
+  toObjectId,
+} from "../../../shared/utils/object-id.util.js";
 import { io, refreshPrivacy } from "../../../infrastructure/socket/socket.js";
+
+export const getBlockedUsers = async (userId) => {
+  const me = await userRepository.findByIdLeanSelect(userId, "blockedUsers");
+  const blockedIds = (me?.blockedUsers || []).map(toObjectId);
+  if (!blockedIds.length) return [];
+
+  const list = await userRepository
+    .find({ _id: { $in: blockedIds } }, "_id fullName username avatar email")
+    .lean();
+
+  return list.map((u) => ({
+    id: String(u._id),
+    _id: u._id,
+    fullName: u.fullName,
+    username: u.username || "",
+    avatar: u.avatar?.url || (typeof u.avatar === "string" ? u.avatar : ""),
+    email: u.email,
+  }));
+};
 
 export const applyRelation = async (myId, targetId, field, action, message) => {
   if (!isValidObjectId(targetId)) {
@@ -23,6 +45,8 @@ export const applyRelation = async (myId, targetId, field, action, message) => {
   if (!(await userRepository.existsById(targetId))) {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
   }
+
+  const targetObjectId = toObjectId(targetId);
 
   if (field === "favorites" && action === "add") {
     const me = await userRepository.findById(myId).select("blockedUsers");
@@ -39,11 +63,11 @@ export const applyRelation = async (myId, targetId, field, action, message) => {
 
   const update =
     action === "add"
-      ? { $addToSet: { [field]: targetId } }
-      : { $pull: { [field]: targetId } };
+      ? { $addToSet: { [field]: targetObjectId } }
+      : { $pull: { [field]: targetObjectId } };
 
   if (field === "blockedUsers" && action === "add") {
-    update.$pull = { favorites: targetId };
+    update.$pull = { favorites: targetObjectId };
   }
 
   const updatedUser = await userRepository.findByIdAndUpdate(myId, update, {
@@ -73,6 +97,7 @@ export const applyRelation = async (myId, targetId, field, action, message) => {
 
 const userRelationService = {
   applyRelation,
+  getBlockedUsers,
 };
 
 export default userRelationService;
