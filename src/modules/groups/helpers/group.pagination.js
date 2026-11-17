@@ -16,4 +16,4 @@ export const getLast = (groupId, joinedAt, blockedIds = []) =>
     senderId: { $nin: blockedIds },
   })
     .sort({ createdAt: -1 })
-    .populate("senderId", "fullName avatar profilePhotoVisibility");
+    .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");

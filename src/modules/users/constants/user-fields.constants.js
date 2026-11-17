@@ -5,16 +5,16 @@
  */
 
 export const PUBLIC_USER_FIELDS =
-  "fullName username avatar bio profilePhotoVisibility aboutVisibility status";
+  "fullName username avatar bio profilePhotoVisibility aboutVisibility profilePhotoExceptions aboutExceptions status";
 
 export const CONTACT_POPULATE_FIELDS =
-  "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility status";
+  "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility lastSeenExceptions profilePhotoExceptions aboutExceptions status";
 
 export const SEARCH_USER_FIELDS =
-  "fullName username avatar bio profilePhotoVisibility aboutVisibility";
+  "fullName username avatar bio profilePhotoVisibility aboutVisibility profilePhotoExceptions aboutExceptions";
 
 export const CHAT_LIST_USER_FIELDS =
-  "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility";
+  "fullName username avatar lastSeen showOnlineStatus onlineStatusVisibility bio lastSeenVisibility profilePhotoVisibility aboutVisibility lastSeenExceptions profilePhotoExceptions aboutExceptions";
 
 export const USER_PROFILE = Object.freeze({
   FULL_NAME_MIN: 2,

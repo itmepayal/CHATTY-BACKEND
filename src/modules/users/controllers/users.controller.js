@@ -62,6 +62,16 @@ export const getUserProfile = asyncHandler(async (req, res) => {
   );
 });
 
+export const getBlockedUsers = asyncHandler(async (req, res) => {
+  const list = await userRelationService.getBlockedUsers(req.user._id);
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    list,
+    "Blocked users retrieved.",
+  ).send(res);
+});
+
 export const blockUser = asyncHandler(async (req, res) => {
   const data = await userRelationService.applyRelation(
     req.user._id,
@@ -203,6 +213,7 @@ const usersController = {
   deleteAvatar,
   getCurrentUser,
   getUserProfile,
+  getBlockedUsers,
   blockUser,
   unblockUser,
   addFavorite,

@@ -1,10 +1,25 @@
-export const VIS = Object.freeze(["everyone", "contacts", "nobody"]);
+export const VIS = Object.freeze(["everyone", "contacts", "contacts_except", "nobody"]);
 export const VISIBILITY_OPTIONS = VIS;
+
+export const ONLINE_VIS = Object.freeze([
+  "everyone",
+  "same_as_last_seen",
+  "contacts",
+  "nobody",
+]);
+
+export const STATUS_VIS = Object.freeze([
+  "contacts",
+  "contacts_except",
+  "only_share_with",
+]);
 
 export const PRIVACY_BOOL_FIELDS = Object.freeze([
   "showOnlineStatus",
   "readReceipts",
   "typingIndicator",
+  "silenceUnknownCallers",
+  "appLockEnabled",
 ]);
 
 export const PRIVACY_VIS_FIELDS = Object.freeze([
@@ -12,13 +27,31 @@ export const PRIVACY_VIS_FIELDS = Object.freeze([
   "onlineStatusVisibility",
   "profilePhotoVisibility",
   "aboutVisibility",
+  "statusVisibility",
   "groupAddPermission",
   "whoCanAddMeToGroups",
+]);
+
+export const PRIVACY_ARRAY_FIELDS = Object.freeze([
+  "lastSeenExceptions",
+  "profilePhotoExceptions",
+  "aboutExceptions",
+  "statusExceptions",
+  "statusIncluded",
+  "groupAddExceptions",
+  "lockedChats",
+]);
+
+export const PRIVACY_MISC_FIELDS = Object.freeze([
+  "appLockTimeout",
+  "appLockPinHash",
 ]);
 
 export const PRIVACY_FIELDS = Object.freeze([
   ...PRIVACY_BOOL_FIELDS,
   ...PRIVACY_VIS_FIELDS,
+  ...PRIVACY_ARRAY_FIELDS,
+  ...PRIVACY_MISC_FIELDS,
 ]);
 
 export const CHAT_PREF_FIELDS = Object.freeze([
@@ -143,7 +176,7 @@ export const EDITABLE_FIELDS = Object.freeze([
 ]);
 
 export const PRIVACY_PROJECTION_FIELDS =
-  "showOnlineStatus onlineStatusVisibility readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission";
+  "showOnlineStatus onlineStatusVisibility readReceipts typingIndicator lastSeenVisibility profilePhotoVisibility aboutVisibility statusVisibility groupAddPermission lastSeenExceptions profilePhotoExceptions aboutExceptions statusExceptions statusIncluded groupAddExceptions silenceUnknownCallers appLockEnabled appLockTimeout lockedChats";
 
 export const CHAT_PREF_PROJECTION_FIELDS =
   "enterToSend largeEmoji autoScroll";

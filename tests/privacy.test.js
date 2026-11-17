@@ -68,11 +68,11 @@ async function runTests() {
       assert.equal(data.showOnlineStatus, true);
       assert.equal(data.readReceipts, true);
       assert.equal(data.typingIndicator, true);
-      assert.equal(data.lastSeenVisibility, "contacts");
+      assert.equal(data.lastSeenVisibility, "everyone");
       assert.equal(data.onlineStatusVisibility, "everyone");
       assert.equal(data.profilePhotoVisibility, "everyone");
-      assert.equal(data.aboutVisibility, "contacts");
-      assert.equal(data.groupAddPermission, "contacts");
+      assert.equal(data.aboutVisibility, "everyone");
+      assert.equal(data.groupAddPermission, "everyone");
     });
 
     await testCase("1.2 PATCH /api/v1/users/privacy updates visibility settings", async () => {

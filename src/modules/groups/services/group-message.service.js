@@ -80,7 +80,7 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
     })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .populate("senderId", "fullName avatar profilePhotoVisibility");
+    .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
 
   const senderIds = [
     ...new Set(msgs.map((m) => m.senderId?._id || m.senderId).filter(Boolean)),
@@ -107,7 +107,13 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
       const sId = sid(sender);
       if (sId !== String(me)) {
         const vis = sender.profilePhotoVisibility ?? "everyone";
-        const canSeePhoto = canViewSync(vis, sId, me, targetSavedMeSet);
+        const canSeePhoto = canViewSync(
+          vis,
+          sId,
+          me,
+          targetSavedMeSet,
+          sender.profilePhotoExceptions || [],
+        );
         if (!canSeePhoto && formatted.sender) {
           formatted.sender.avatar = "";
         }
@@ -242,7 +248,7 @@ export const editGroupMessageService = async ({
       },
       { new: true },
     )
-    .populate("senderId", "fullName avatar profilePhotoVisibility");
+    .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
 
   if (!updatedMessage) {
     const msg = await groupMessageRepository.findOne({

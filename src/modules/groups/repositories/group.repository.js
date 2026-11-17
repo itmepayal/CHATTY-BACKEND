@@ -45,7 +45,7 @@ export const findGroupById = (id, projection, options = {}) => {
 export const loadWithMembers = (id, options = {}) => {
   const query = Group.findById(toObjectId(id)).populate(
     "members.userId",
-    "fullName avatar profilePhotoVisibility",
+    "fullName avatar profilePhotoVisibility profilePhotoExceptions",
   );
   if (options.session) query.session(options.session);
   return query;
@@ -54,7 +54,7 @@ export const loadWithMembers = (id, options = {}) => {
 export const findByMember = (me, options = {}) => {
   const query = Group.find({ "members.userId": toObjectId(me) }).populate(
     "members.userId",
-    "fullName avatar profilePhotoVisibility",
+    "fullName avatar profilePhotoVisibility profilePhotoExceptions",
   );
   if (options.session) query.session(options.session);
   return query;

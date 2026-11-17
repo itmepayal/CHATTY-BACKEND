@@ -280,17 +280,20 @@ export const getAuthorizedOnlineUsersForViewer = async (viewerId) => {
       continue;
     }
     const priv = getPrivacy(id);
-    const onlineVis =
+    let onlineVis =
       priv.showOnlineStatus === false
         ? "nobody"
         : (priv.onlineStatusVisibility ?? "everyone");
+    if (onlineVis === "same_as_last_seen") {
+      onlineVis = priv.lastSeenVisibility ?? "everyone";
+    }
 
     if (onlineVis === "nobody") {
       continue;
     }
     if (onlineVis === "everyone") {
       candidates.push(id);
-    } else if (onlineVis === "contacts") {
+    } else if (onlineVis === "contacts" || onlineVis === "contacts_except") {
       contactsCheckIds.push(id);
     }
   }
@@ -327,10 +330,15 @@ export const getAuthorizedOnlineUsersForViewer = async (viewerId) => {
       continue;
     }
     const priv = getPrivacy(id);
-    const onlineVis =
+    let onlineVis =
       priv.showOnlineStatus === false
         ? "nobody"
         : (priv.onlineStatusVisibility ?? "everyone");
+    let exceptions = priv.lastSeenExceptions || [];
+    if (onlineVis === "same_as_last_seen") {
+      onlineVis = priv.lastSeenVisibility ?? "everyone";
+      exceptions = priv.lastSeenExceptions || [];
+    }
 
     if (onlineVis === "nobody") {
       continue;
@@ -339,6 +347,9 @@ export const getAuthorizedOnlineUsersForViewer = async (viewerId) => {
       authorized.push(id);
     } else if (onlineVis === "contacts" && savedSet.has(id)) {
       authorized.push(id);
+    } else if (onlineVis === "contacts_except" && savedSet.has(id)) {
+      const isExcluded = (exceptions || []).some((ex) => String(ex) === vId);
+      if (!isExcluded) authorized.push(id);
     }
   }
 
@@ -371,12 +382,18 @@ export const notifyUserPresenceChange = async (
     lastSeen: isOnline ? null : lastSeen,
   });
 
-  const onlineVis =
+  let onlineVis =
     priv.showOnlineStatus === false
       ? "nobody"
       : (priv.onlineStatusVisibility ?? "everyone");
+  let onlineExceptions = priv.lastSeenExceptions || [];
+  if (onlineVis === "same_as_last_seen") {
+    onlineVis = priv.lastSeenVisibility ?? "everyone";
+    onlineExceptions = priv.lastSeenExceptions || [];
+  }
 
-  const lastSeenVis = priv.lastSeenVisibility ?? "contacts";
+  const lastSeenVis = priv.lastSeenVisibility ?? "everyone";
+  const lastSeenExceptions = priv.lastSeenExceptions || [];
 
   const activeViewerIds = Array.from(onlineUsers.keys()).filter(
     (id) => id !== uId,
@@ -404,11 +421,24 @@ export const notifyUserPresenceChange = async (
     if (blockerSet.has(viewerId) || myBlockedSet.has(viewerId)) continue;
 
     const isContact = contactViewerIds.has(viewerId);
+    const isExcludedFromOnline = (onlineExceptions || []).some(
+      (ex) => String(ex) === viewerId,
+    );
+    const isExcludedFromLastSeen = (lastSeenExceptions || []).some(
+      (ex) => String(ex) === viewerId,
+    );
 
     const canSeeOnline =
-      onlineVis === "everyone" || (onlineVis === "contacts" && isContact);
+      onlineVis === "everyone" ||
+      (onlineVis === "contacts" && isContact) ||
+      (onlineVis === "contacts_except" && isContact && !isExcludedFromOnline);
+
     const canSeeLastSeen =
-      lastSeenVis === "everyone" || (lastSeenVis === "contacts" && isContact);
+      lastSeenVis === "everyone" ||
+      (lastSeenVis === "contacts" && isContact) ||
+      (lastSeenVis === "contacts_except" &&
+        isContact &&
+        !isExcludedFromLastSeen);
 
     if (isOnline) {
       if (canSeeOnline) {
@@ -448,6 +478,18 @@ export const refreshPrivacy = async (userId) => {
   io.to(uId).emit("privacy:settings-updated", priv);
   io.to(uId).emit("privacy:update", priv);
   io.emit("user:profile-updated", { userId: uId });
+
+  try {
+    const isOnline = isUserOnline(uId);
+    const uDoc = await User.findById(uId).select("lastSeen").lean();
+    await notifyUserPresenceChange(uId, isOnline, uDoc?.lastSeen || null);
+    await broadcastOnline();
+  } catch (err) {
+    console.error(
+      `[socket] refreshPrivacy presence update error for ${uId}:`,
+      err?.message || err,
+    );
+  }
 
   if (priv.typingIndicator === false) {
     const socketIds = onlineUsers.get(uId);
@@ -611,10 +653,10 @@ io.on("connection", (socket) => {
         return;
       }
 
-      // If sender has disabled typing indicator, DROP event completely
-      if (!getPrivacy(userId).typingIndicator) return;
-      // If receiver has disabled typing indicator, DROP event completely
-      if (!getPrivacy(to).typingIndicator) return;
+      // If sender or recipient has disabled typing indicator, DROP event completely
+      if (getPrivacy(userId).typingIndicator === false) return;
+      const targetPrivacy = await getOrFetchPrivacy(to);
+      if (targetPrivacy?.typingIndicator === false) return;
 
       if (await isBlockedEitherWay(userId, to)) return;
 

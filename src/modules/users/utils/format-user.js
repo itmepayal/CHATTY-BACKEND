@@ -7,6 +7,7 @@ const formatUser = (user) => {
 
   return {
     id: String(u._id),
+    _id: u._id,
     email: u.email,
     fullName: u.fullName,
     avatar: u.avatar?.url || "",
@@ -25,6 +26,13 @@ const formatUser = (user) => {
     blockedUsers: toIdList(u.blockedUsers),
     favorites: toIdList(u.favorites),
     showOnlineStatus: u.showOnlineStatus !== false,
+    onlineStatusVisibility:
+      u.onlineStatusVisibility ??
+      (u.showOnlineStatus === false ? "nobody" : "everyone"),
+    lastSeenVisibility: u.lastSeenVisibility ?? "everyone",
+    profilePhotoVisibility: u.profilePhotoVisibility ?? "everyone",
+    aboutVisibility: u.aboutVisibility ?? "everyone",
+    groupAddPermission: u.groupAddPermission ?? "everyone",
     readReceipts: u.readReceipts !== false,
     typingIndicator: u.typingIndicator !== false,
     enterToSend: u.enterToSend !== false,

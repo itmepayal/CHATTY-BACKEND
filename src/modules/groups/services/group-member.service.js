@@ -4,6 +4,7 @@ import { isValidObjectId } from "../../../shared/utils/object-id.util.js";
 import * as groupRepository from "../repositories/group.repository.js";
 import * as groupKeyRepository from "../repositories/group-key.repository.js";
 import * as groupArchiveRepository from "../repositories/group-archive.repository.js";
+import * as userRepository from "../../users/repositories/user.repository.js";
 import * as locationShareRepository from "../../messaging/repositories/location-share.repository.js";
 import {
   assertUsersAddable,
@@ -206,6 +207,7 @@ export const removeMemberFromGroup = async ({ group, me, targetId }) => {
     ),
     groupArchiveRepository.deleteMany({ ownerId: tId, groupId: group._id }),
     groupKeyRepository.deleteMany({ groupId: group._id, userId: tId }),
+    userRepository.updateOne({ _id: tId }, { $pull: { lockedChats: String(group._id) } }),
   ]);
 
   leaveGroupRoom(tId, group._id);
@@ -287,6 +289,7 @@ export const leaveGroupFlow = async ({ group, me }) => {
     ),
     groupArchiveRepository.deleteMany({ ownerId: meId, groupId: group._id }),
     groupKeyRepository.deleteMany({ groupId: group._id, userId: meId }),
+    userRepository.updateOne({ _id: meId }, { $pull: { lockedChats: String(group._id) } }),
   ]);
 
   leaveGroupRoom(meId, group._id);

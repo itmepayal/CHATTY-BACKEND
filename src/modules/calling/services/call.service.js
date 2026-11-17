@@ -40,6 +40,7 @@ export const formatCallRecord = (
         otherIdStr,
         userId,
         inContacts,
+        other.profilePhotoExceptions || [],
       );
     otherUserPayload = {
       id: other._id,

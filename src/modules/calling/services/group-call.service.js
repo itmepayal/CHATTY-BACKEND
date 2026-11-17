@@ -26,6 +26,7 @@ export const formatGroupCall = (c, meId, targetSavedMeSet, blockedSet) => {
           starterIdStr,
           meId,
           inContacts,
+          c.startedBy.profilePhotoExceptions || [],
         );
       starterAvatarUrl = canSee ? c.startedBy.avatar?.url || "" : "";
     }
@@ -46,6 +47,7 @@ export const formatGroupCall = (c, meId, targetSavedMeSet, blockedSet) => {
               pIdStr,
               meId,
               inContacts,
+              p.profilePhotoExceptions || [],
             ));
         return {
           id: pIdStr,

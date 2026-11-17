@@ -96,7 +96,13 @@ export const getContactIdSet = async (userId) => {
 /**
  * Evaluates whether viewerId can view ownerId's data given visibility setting.
  */
-export const canView = async (visibility, ownerId, viewerId) => {
+export const canView = async (
+  visibility,
+  ownerId,
+  viewerId,
+  exceptions = [],
+  included = [],
+) => {
   const oStr = String(ownerId);
   const vStr = String(viewerId);
   if (oStr === vStr) return true;
@@ -105,23 +111,63 @@ export const canView = async (visibility, ownerId, viewerId) => {
   if (await isBlockedEitherWay(oStr, vStr)) return false;
   if (visibility === "everyone") return true;
 
-  // "contacts" requires ownerId to have saved viewerId in their contacts
-  return isContact(ownerId, viewerId);
+  if (visibility === "only_share_with") {
+    const incSet = new Set((included || []).map(String));
+    return incSet.has(vStr);
+  }
+
+  const isSavedContact = await isContact(ownerId, viewerId);
+  if (!isSavedContact) return false;
+
+  if (visibility === "contacts_except") {
+    const excSet = new Set((exceptions || []).map(String));
+    if (excSet.has(vStr)) return false;
+  }
+
+  return true;
 };
 
 /**
  * Synchronous evaluation when contacts set is already known.
  */
-export const canViewSync = (visibility, ownerId, viewerId, contacts) => {
-  if (String(ownerId) === String(viewerId)) return true;
-  if (visibility === "nobody") return false;
-  if (visibility === "everyone") return true;
+export const canViewSync = (
+  visibility,
+  ownerId,
+  viewerId,
+  contacts,
+  exceptions = [],
+  included = [],
+) => {
+  const oStr = String(ownerId);
+  const vStr = String(viewerId);
+  if (oStr === vStr) return true;
 
-  if (contacts instanceof Set) return contacts.has(String(ownerId));
-  if (Array.isArray(contacts)) {
-    return contacts.some((c) => String(c) === String(ownerId));
+  const vis = String(visibility || "everyone").toLowerCase();
+  if (vis === "everyone") return true;
+  if (vis === "nobody") return false;
+
+  if (vis === "only_share_with") {
+    const incSet = new Set((included || []).map(String));
+    return incSet.has(vStr);
   }
-  return Boolean(contacts);
+
+  let isSavedContact = false;
+  if (contacts instanceof Set) {
+    isSavedContact = contacts.has(oStr) || contacts.has(vStr);
+  } else if (Array.isArray(contacts)) {
+    isSavedContact = contacts.some((c) => String(c) === oStr || String(c) === vStr);
+  } else {
+    isSavedContact = Boolean(contacts);
+  }
+
+  if (!isSavedContact) return false;
+
+  if (vis === "contacts_except") {
+    const excSet = new Set((exceptions || []).map(String));
+    if (excSet.has(vStr)) return false;
+  }
+
+  return true;
 };
 
 /**
@@ -132,7 +178,7 @@ export const getLastSeenVisibility = async (userId) => {
     .findById(userId)
     .select("lastSeenVisibility")
     .lean();
-  return user?.lastSeenVisibility ?? "contacts";
+  return user?.lastSeenVisibility ?? "everyone";
 };
 
 /**
@@ -157,14 +203,15 @@ export const canViewLastSeen = async (viewerId, targetUserId) => {
 
   const target = await userRepository
     .findById(targetUserId)
-    .select("lastSeenVisibility")
+    .select("lastSeenVisibility lastSeenExceptions")
     .lean();
   if (!target) return false;
 
   return canView(
-    target.lastSeenVisibility ?? "contacts",
+    target.lastSeenVisibility ?? "everyone",
     targetUserId,
     viewerId,
+    target.lastSeenExceptions || [],
   );
 };
 
@@ -177,18 +224,28 @@ export const canViewOnlineStatus = async (viewerId, targetUserId) => {
 
   const target = await userRepository
     .findById(targetUserId)
-    .select("showOnlineStatus onlineStatusVisibility lastSeenVisibility")
+    .select("showOnlineStatus onlineStatusVisibility lastSeenVisibility lastSeenExceptions")
     .lean();
   if (!target) return false;
 
-  const onlineVis =
+  let effectiveOnlineVis =
     target.showOnlineStatus === false
       ? "nobody"
       : (target.onlineStatusVisibility ?? "everyone");
+  let effectiveOnlineExceptions = target.lastSeenExceptions || [];
+  if (effectiveOnlineVis === "same_as_last_seen") {
+    effectiveOnlineVis = target.lastSeenVisibility ?? "everyone";
+    effectiveOnlineExceptions = target.lastSeenExceptions || [];
+  }
 
-  if (onlineVis === "nobody") return false;
+  if (effectiveOnlineVis === "nobody") return false;
 
-  return canView(onlineVis, targetUserId, viewerId);
+  return canView(
+    effectiveOnlineVis,
+    targetUserId,
+    viewerId,
+    effectiveOnlineExceptions,
+  );
 };
 
 /**
@@ -200,7 +257,7 @@ export const canViewProfilePhoto = async (viewerId, targetUserId) => {
 
   const target = await userRepository
     .findById(targetUserId)
-    .select("profilePhotoVisibility")
+    .select("profilePhotoVisibility profilePhotoExceptions")
     .lean();
   if (!target) return false;
 
@@ -208,6 +265,7 @@ export const canViewProfilePhoto = async (viewerId, targetUserId) => {
     target.profilePhotoVisibility ?? "everyone",
     targetUserId,
     viewerId,
+    target.profilePhotoExceptions || [],
   );
 };
 
@@ -220,11 +278,16 @@ export const canViewAbout = async (viewerId, targetUserId) => {
 
   const target = await userRepository
     .findById(targetUserId)
-    .select("aboutVisibility")
+    .select("aboutVisibility aboutExceptions")
     .lean();
   if (!target) return false;
 
-  return canView(target.aboutVisibility ?? "contacts", targetUserId, viewerId);
+  return canView(
+    target.aboutVisibility ?? "everyone",
+    targetUserId,
+    viewerId,
+    target.aboutExceptions || [],
+  );
 };
 
 /**
@@ -241,7 +304,7 @@ export const canAddUserToGroup = async (actorId, targetUserId) => {
     .lean();
   if (!target) return false;
 
-  const permission = target.groupAddPermission ?? "contacts";
+  const permission = target.groupAddPermission ?? "everyone";
   if (permission === "nobody") return false;
   if (permission === "everyone") return true;
 
@@ -317,7 +380,7 @@ export const checkGroupAddPermission = async (adderId, targetIds) => {
   const adder = String(adderId);
   const targets = await userRepository
     .find({ _id: { $in: targetIds } })
-    .select("groupAddPermission blockedUsers fullName")
+    .select("groupAddPermission groupAddExceptions blockedUsers fullName")
     .lean();
 
   const foundMap = new Map(targets.map((t) => [String(t._id), t]));
@@ -363,11 +426,21 @@ export const checkGroupAddPermission = async (adderId, targetIds) => {
       continue;
     }
 
-    const perm = t.groupAddPermission ?? "contacts";
+    const perm = t.groupAddPermission ?? "everyone";
     if (perm === "everyone") {
       allowed.push(id);
     } else if (perm === "contacts") {
       if (adderInContactsSet.has(id)) {
+        allowed.push(id);
+      } else {
+        denied.push(id);
+        reasons[id] = "This user does not allow you to add them to groups.";
+      }
+    } else if (perm === "contacts_except") {
+      const isExcluded = (t.groupAddExceptions || []).some(
+        (exId) => String(exId) === adder,
+      );
+      if (adderInContactsSet.has(id) && !isExcluded) {
         allowed.push(id);
       } else {
         denied.push(id);
@@ -410,7 +483,7 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
   const target = await userRepository
     .findById(targetUserId)
     .select(
-      "fullName username avatar bio customStatus lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission blockedUsers location website createdAt updatedAt readReceipts typingIndicator",
+      "fullName username avatar bio customStatus lastSeen showOnlineStatus onlineStatusVisibility lastSeenVisibility profilePhotoVisibility aboutVisibility groupAddPermission lastSeenExceptions profilePhotoExceptions aboutExceptions groupAddExceptions statusVisibility statusExceptions statusIncluded blockedUsers location website createdAt updatedAt readReceipts typingIndicator",
     )
     .lean();
 
@@ -481,35 +554,49 @@ export const getFilteredUserProfile = async (viewerId, targetUserId) => {
     targetUserId,
     viewerId,
     inTargetContacts,
+    target.profilePhotoExceptions || [],
   );
   const showLastSeen = canViewSync(
-    target.lastSeenVisibility ?? "contacts",
+    target.lastSeenVisibility ?? "everyone",
     targetUserId,
     viewerId,
     inTargetContacts,
+    target.lastSeenExceptions || [],
   );
   const showAbout = canViewSync(
-    target.aboutVisibility ?? "contacts",
+    target.aboutVisibility ?? "everyone",
     targetUserId,
     viewerId,
     inTargetContacts,
+    target.aboutExceptions || [],
   );
 
-  const onlineVis =
-    target.showOnlineStatus === false
-      ? "nobody"
-      : (target.onlineStatusVisibility ?? "everyone");
+  let effectiveOnlineVis = target.onlineStatusVisibility ?? "everyone";
+  let effectiveOnlineExceptions = target.lastSeenExceptions || [];
+  if (effectiveOnlineVis === "same_as_last_seen") {
+    effectiveOnlineVis = target.lastSeenVisibility ?? "everyone";
+    effectiveOnlineExceptions = target.lastSeenExceptions || [];
+  }
+  if (target.showOnlineStatus === false) {
+    effectiveOnlineVis = "nobody";
+  }
+
   const showOnline = canViewSync(
-    onlineVis,
+    effectiveOnlineVis,
     targetUserId,
     viewerId,
     inTargetContacts,
+    effectiveOnlineExceptions,
   );
 
-  const groupAddPerm = target.groupAddPermission ?? "contacts";
+  const groupAddPerm = target.groupAddPermission ?? "everyone";
+  const isExcludedFromGroup = (target.groupAddExceptions || []).some(
+    (exId) => String(exId) === String(viewerId),
+  );
   const canAddToGroup =
     groupAddPerm === "everyone" ||
-    (groupAddPerm === "contacts" && inTargetContacts);
+    (groupAddPerm === "contacts" && inTargetContacts) ||
+    (groupAddPerm === "contacts_except" && inTargetContacts && !isExcludedFromGroup);
 
   const canReceipt = await canSendReadReceipt(viewerId, targetUserId);
 
@@ -579,30 +666,48 @@ export const sanitizeUserForViewer = async (user, viewerId) => {
     ownerId,
     vId,
     inTargetContacts,
+    obj.profilePhotoExceptions || [],
   );
   const lastSeenOk = canViewSync(
-    obj.lastSeenVisibility ?? "contacts",
+    obj.lastSeenVisibility ?? "everyone",
     ownerId,
     vId,
     inTargetContacts,
+    obj.lastSeenExceptions || [],
   );
   const aboutOk = canViewSync(
-    obj.aboutVisibility ?? "contacts",
+    obj.aboutVisibility ?? "everyone",
     ownerId,
     vId,
     inTargetContacts,
+    obj.aboutExceptions || [],
   );
 
-  const onlineVis =
+  let effectiveOnlineVis =
     obj.showOnlineStatus === false
       ? "nobody"
       : (obj.onlineStatusVisibility ?? "everyone");
-  const onlineOk = canViewSync(onlineVis, ownerId, vId, inTargetContacts);
+  let effectiveOnlineExceptions = obj.lastSeenExceptions || [];
+  if (effectiveOnlineVis === "same_as_last_seen") {
+    effectiveOnlineVis = obj.lastSeenVisibility ?? "everyone";
+    effectiveOnlineExceptions = obj.lastSeenExceptions || [];
+  }
+  const onlineOk = canViewSync(
+    effectiveOnlineVis,
+    ownerId,
+    vId,
+    inTargetContacts,
+    effectiveOnlineExceptions,
+  );
 
-  const groupAddPerm = obj.groupAddPermission ?? "contacts";
+  const groupAddPerm = obj.groupAddPermission ?? "everyone";
+  const isExcludedFromGroup = (obj.groupAddExceptions || []).some(
+    (exId) => String(exId) === vId,
+  );
   obj.canAddToGroup =
     groupAddPerm === "everyone" ||
-    (groupAddPerm === "contacts" && inTargetContacts);
+    (groupAddPerm === "contacts" && inTargetContacts) ||
+    (groupAddPerm === "contacts_except" && inTargetContacts && !isExcludedFromGroup);
 
   obj.isPhotoRestricted = !photoOk;
   obj.isLastSeenRestricted = !lastSeenOk;
@@ -685,11 +790,7 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
 
     const isBlocked = blockedByMe.has(ownerId) || blockedMe.has(ownerId);
     if (isBlocked) {
-      if (typeof obj.avatar === "object" && obj.avatar !== null) {
-        obj.avatar = { public_id: "", url: "" };
-      } else {
-        obj.avatar = null;
-      }
+      obj.avatar = null;
       obj.avatarUrl = "";
       obj.bio = "";
       obj.about = "";
@@ -711,29 +812,47 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
       ownerId,
       vId,
       inTargetContacts,
+      obj.profilePhotoExceptions || [],
     );
     const lastSeenOk = canViewSync(
-      obj.lastSeenVisibility ?? "contacts",
+      obj.lastSeenVisibility ?? "everyone",
       ownerId,
       vId,
       inTargetContacts,
+      obj.lastSeenExceptions || [],
     );
     const aboutOk = canViewSync(
-      obj.aboutVisibility ?? "contacts",
+      obj.aboutVisibility ?? "everyone",
       ownerId,
       vId,
       inTargetContacts,
+      obj.aboutExceptions || [],
     );
-    const onlineVis =
+    let effectiveOnlineVis =
       obj.showOnlineStatus === false
         ? "nobody"
         : (obj.onlineStatusVisibility ?? "everyone");
-    const onlineOk = canViewSync(onlineVis, ownerId, vId, inTargetContacts);
+    let effectiveOnlineExceptions = obj.lastSeenExceptions || [];
+    if (effectiveOnlineVis === "same_as_last_seen") {
+      effectiveOnlineVis = obj.lastSeenVisibility ?? "everyone";
+      effectiveOnlineExceptions = obj.lastSeenExceptions || [];
+    }
+    const onlineOk = canViewSync(
+      effectiveOnlineVis,
+      ownerId,
+      vId,
+      inTargetContacts,
+      effectiveOnlineExceptions,
+    );
 
-    const groupAddPerm = obj.groupAddPermission ?? "contacts";
+    const groupAddPerm = obj.groupAddPermission ?? "everyone";
+    const isExcludedFromGroup = (obj.groupAddExceptions || []).some(
+      (exId) => String(exId) === vId,
+    );
     obj.canAddToGroup =
       groupAddPerm === "everyone" ||
-      (groupAddPerm === "contacts" && inTargetContacts);
+      (groupAddPerm === "contacts" && inTargetContacts) ||
+      (groupAddPerm === "contacts_except" && inTargetContacts && !isExcludedFromGroup);
 
     obj.isPhotoRestricted = !photoOk;
     obj.isLastSeenRestricted = !lastSeenOk;
@@ -741,11 +860,7 @@ export const sanitizeUsersForViewer = async (users, viewerId) => {
     obj.isAboutRestricted = !aboutOk;
 
     if (!photoOk) {
-      if (typeof obj.avatar === "object" && obj.avatar !== null) {
-        obj.avatar = { public_id: "", url: "" };
-      } else {
-        obj.avatar = null;
-      }
+      obj.avatar = null;
       obj.avatarUrl = "";
     }
     if (!lastSeenOk) {

@@ -144,6 +144,19 @@ export const changePassword = asyncHandler(async (req, res) => {
   return new ApiResponse(StatusCodes.OK, null, result.message).send(res);
 });
 
+export const verifyPassword = asyncHandler(async (req, res) => {
+  const result = await passwordService.verifyPassword({
+    userId: req.user._id,
+    password: req.body.password,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    "Password verified successfully.",
+  ).send(res);
+});
+
 export const updateLoginAlerts = asyncHandler(async (req, res) => {
   const result = await authService.updateLoginAlerts({
     userId: req.user._id,
@@ -167,6 +180,7 @@ const authController = {
   openAppResetPassword,
   resetPassword,
   changePassword,
+  verifyPassword,
   updateLoginAlerts,
 };
 

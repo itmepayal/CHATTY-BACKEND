@@ -33,6 +33,9 @@ router
   .route("/change-password")
   .patch(authMiddleware, strictLimiter, authController.changePassword);
 router
+  .route("/verify-password")
+  .post(authMiddleware, strictLimiter, authController.verifyPassword);
+router
   .route("/forgot-password")
   .post(strictLimiter, authController.forgotPassword);
 router
