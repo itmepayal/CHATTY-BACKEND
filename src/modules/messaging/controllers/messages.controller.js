@@ -125,10 +125,20 @@ export const getScheduled = asyncHandler(async (req, res) => {
 export const cancelScheduled = asyncHandler(async (req, res) => {
   const { id, message } = await scheduleService.cancelScheduled(
     req.user._id,
-    req.params.scheduleId,
+    req.params.scheduleId || req.params.id,
   );
 
   return new ApiResponse(StatusCodes.OK, { id }, message).send(res);
+});
+
+export const updateScheduled = asyncHandler(async (req, res) => {
+  const { doc, message } = await scheduleService.updateScheduled(
+    req.user._id,
+    req.params.scheduleId || req.params.id,
+    req.body,
+  );
+
+  return new ApiResponse(StatusCodes.OK, doc, message).send(res);
 });
 
 export const markMessagesSeen = asyncHandler(async (req, res) => {
@@ -259,6 +269,7 @@ const messageController = {
   scheduleMessage,
   getScheduled,
   cancelScheduled,
+  updateScheduled,
   markMessagesSeen,
   reactMessage,
   deleteMessageForMe,

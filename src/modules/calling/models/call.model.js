@@ -50,6 +50,14 @@ const CallSchema = mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    seen: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    seenAt: {
+      type: Date,
+    },
     readBy: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -63,6 +71,7 @@ const CallSchema = mongoose.Schema(
 CallSchema.index({ callerId: 1, createdAt: -1 });
 CallSchema.index({ receiverId: 1, createdAt: -1 });
 CallSchema.index({ callerId: 1, receiverId: 1, createdAt: -1 });
+CallSchema.index({ receiverId: 1, seen: 1 });
 CallSchema.index({ receiverId: 1, readBy: 1 });
 
 const Call = mongoose.model("Call", CallSchema);

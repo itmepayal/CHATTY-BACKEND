@@ -25,6 +25,13 @@ export const findById = (id, options = {}) => {
   return query;
 };
 
+export const findOne = (filter, options = {}) => {
+  const query = ScheduledMessage.findOne(filter);
+  if (options.projection) query.select(options.projection);
+  if (options.session) query.session(options.session);
+  return query;
+};
+
 export const findOneAndUpdate = (filter, update, options = {}) =>
   ScheduledMessage.findOneAndUpdate(filter, update, options);
 
@@ -41,6 +48,7 @@ const scheduledMessageRepository = Object.freeze({
   create,
   findSorted,
   findById,
+  findOne,
   findOneAndUpdate,
   deleteForSender,
   deleteOne,

@@ -82,21 +82,38 @@ export const countCallsByUser = (userId, options = {}) => {
   return query;
 };
 
-export const markCallsAsReadForUser = (userId, callIds = null, options = {}) => {
+export const markCallsAsReadForUser = (
+  userId,
+  { callerId = null, callIds = null } = {},
+  options = {},
+) => {
   const uid = toObjectId(userId);
   const filter = {
     receiverId: uid,
-    readBy: { $ne: uid },
+    $or: [
+      { seen: false },
+      { seen: { $exists: false } },
+      { readBy: { $ne: uid } },
+    ],
   };
+
+  if (callerId) {
+    filter.callerId = toObjectId(callerId);
+  }
+
   if (Array.isArray(callIds) && callIds.length > 0) {
     const validIds = callIds.map(toObjectId).filter(Boolean);
     if (validIds.length > 0) {
       filter._id = { $in: validIds };
     }
   }
+
   return Call.updateMany(
     filter,
-    { $addToSet: { readBy: uid } },
+    {
+      $set: { seen: true, seenAt: new Date() },
+      $addToSet: { readBy: uid },
+    },
     options,
   );
 };
@@ -105,6 +122,7 @@ export const countUnreadMissedCalls = (userId, options = {}) => {
   const uid = toObjectId(userId);
   const filter = {
     receiverId: uid,
+    seen: { $ne: true },
     readBy: { $ne: uid },
     $or: [
       { status: { $in: ["missed", "rejected", "no-answer", "unanswered"] } },

@@ -1,12 +1,14 @@
 /**
  * Message Schedule Service
- * Handles queuing, listing, and canceling scheduled 1:1 messages.
+ * Handles queuing, listing, updating, and canceling scheduled 1:1 and group messages.
  */
 
 import { StatusCodes } from "http-status-codes";
 import * as scheduledMessageRepository from "../../repositories/scheduled-message.repository.js";
 import { assertCanMessage } from "../../utils/chat-guard.js";
 import { assertE2EEReady } from "../core/message.service.js";
+import { getGroupAndMember } from "../../../groups/helpers/group.member.helpers.js";
+import { io } from "../../../../infrastructure/socket/socket.js";
 import ApiError from "../../../../shared/errors/api-error.js";
 import { assertValidId } from "../../../../shared/utils/validators.js";
 import { isValidObjectId, toObjectId } from "../../../../shared/utils/object-id.util.js";
@@ -17,19 +19,73 @@ import {
 } from "../../utils/e2ee.js";
 import { MAX_TEXT_LENGTH } from "../../constants/messages.constants.js";
 
+const validateScheduleTime = (when) => {
+  if (
+    Number.isNaN(when.getTime()) ||
+    when.getTime() < Date.now() + 30_000 ||
+    when.getTime() > Date.now() + 30 * 86_400_000
+  ) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Pick a time between 1 minute and 30 days from now.",
+    );
+  }
+};
+
 export const scheduleMessage = async (
   senderId,
-  receiverId,
-  { text: rawText, encrypted, e2ee, iv, keyEnvelopes, scheduledFor } = {},
+  targetId,
+  {
+    text: rawText,
+    encrypted,
+    e2ee,
+    iv,
+    keyEnvelopes,
+    groupKeyVersion,
+    scheduledFor,
+    clientRequestId,
+    groupId: explicitGroupId,
+    receiverId: explicitReceiverId,
+    messageType: explicitMessageType,
+  } = {},
 ) => {
   const text = rawText?.trim();
   const wantsE2EE = parseBool(encrypted ?? e2ee);
   const when = new Date(scheduledFor);
 
-  assertValidId(receiverId, "receiver ID");
+  validateScheduleTime(when);
 
-  if (receiverId.toString() === senderId.toString()) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "You cannot message yourself.");
+  // Determine if direct or group
+  const isGroup =
+    explicitMessageType === "group" ||
+    Boolean(explicitGroupId) ||
+    (!explicitReceiverId && targetId && !isValidObjectId(explicitReceiverId));
+
+  let finalMessageType = "direct";
+  let finalReceiverId = null;
+  let finalGroupId = null;
+
+  if (explicitMessageType === "group" || explicitGroupId) {
+    finalMessageType = "group";
+    finalGroupId = explicitGroupId || targetId;
+  } else if (explicitReceiverId) {
+    finalMessageType = "direct";
+    finalReceiverId = explicitReceiverId;
+  } else if (targetId) {
+    // Check if target is a group or user
+    // If explicitGroupId was not passed, we can check if targetId matches a group or user
+    finalReceiverId = targetId;
+  }
+
+  // Idempotency check: if clientRequestId provided, check if already exists
+  if (clientRequestId) {
+    const existing = await scheduledMessageRepository.findOne({
+      senderId,
+      clientRequestId: String(clientRequestId),
+    });
+    if (existing) {
+      return { doc: existing, message: "Message scheduled (idempotent)." };
+    }
   }
 
   const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
@@ -41,82 +97,196 @@ export const scheduleMessage = async (
         : `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
     );
   }
-  if (wantsE2EE) {
-    assertValidCipher(text, iv);
-    if (!Array.isArray(keyEnvelopes) || keyEnvelopes.length === 0) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Key envelopes are required for encrypted scheduled message.",
-      );
+
+  let sanitizedEnvelopes = [];
+
+  if (finalMessageType === "group" || finalGroupId) {
+    assertValidId(finalGroupId, "group ID");
+    const { group } = await getGroupAndMember(finalGroupId, senderId);
+    if (!group) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Group not found.");
     }
-  }
+    finalMessageType = "group";
+    finalReceiverId = null;
 
-  if (
-    Number.isNaN(when.getTime()) ||
-    when.getTime() < Date.now() + 30_000 ||
-    when.getTime() > Date.now() + 30 * 86_400_000
-  ) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "Pick a time between 1 minute and 30 days from now.",
-    );
-  }
+    if (wantsE2EE) {
+      assertValidCipher(text, iv);
+    }
+  } else {
+    // Direct message
+    finalMessageType = "direct";
+    assertValidId(finalReceiverId, "receiver ID");
 
-  await assertCanMessage(senderId, receiverId);
-  if (wantsE2EE) await assertE2EEReady(senderId, receiverId);
+    if (finalReceiverId.toString() === senderId.toString()) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "You cannot message yourself.");
+    }
 
-  const sanitizedEnvelopes = [];
-  if (wantsE2EE && Array.isArray(keyEnvelopes)) {
-    for (const env of keyEnvelopes) {
-      if (
-        env &&
-        env.deviceId &&
-        env.wrappedKey &&
-        env.iv &&
-        isValidObjectId(env.userId)
-      ) {
-        sanitizedEnvelopes.push({
-          deviceId: String(env.deviceId),
-          userId: toObjectId(env.userId),
-          wrappedKey: String(env.wrappedKey),
-          iv: String(env.iv),
-        });
+    if (wantsE2EE) {
+      assertValidCipher(text, iv);
+      if (!Array.isArray(keyEnvelopes) || keyEnvelopes.length === 0) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Key envelopes are required for encrypted scheduled message.",
+        );
       }
     }
-    if (sanitizedEnvelopes.length === 0) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Key envelopes are required for encrypted scheduled message.",
-      );
+
+    await assertCanMessage(senderId, finalReceiverId);
+    if (wantsE2EE) await assertE2EEReady(senderId, finalReceiverId);
+
+    if (wantsE2EE && Array.isArray(keyEnvelopes)) {
+      for (const env of keyEnvelopes) {
+        if (
+          env &&
+          env.deviceId &&
+          env.wrappedKey &&
+          env.iv &&
+          isValidObjectId(env.userId)
+        ) {
+          sanitizedEnvelopes.push({
+            deviceId: String(env.deviceId),
+            userId: toObjectId(env.userId),
+            wrappedKey: String(env.wrappedKey),
+            iv: String(env.iv),
+          });
+        }
+      }
+      if (sanitizedEnvelopes.length === 0) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Key envelopes are required for encrypted scheduled message.",
+        );
+      }
     }
   }
 
   const doc = await scheduledMessageRepository.create({
     senderId,
-    receiverId,
+    messageType: finalMessageType,
+    ...(finalReceiverId ? { receiverId: finalReceiverId } : {}),
+    ...(finalGroupId ? { groupId: finalGroupId } : {}),
     text,
     scheduledFor: when,
+    clientRequestId: clientRequestId ? String(clientRequestId) : undefined,
     ...(wantsE2EE
       ? {
           e2ee: true,
           iv,
-          keyEnvelopes: sanitizedEnvelopes,
+          ...(finalMessageType === "group"
+            ? { groupKeyVersion: groupKeyVersion != null ? Number(groupKeyVersion) : null }
+            : { keyEnvelopes: sanitizedEnvelopes }),
         }
       : {}),
   });
 
+  // Real-time Socket sync
+  try {
+    io.to(senderId.toString()).emit("scheduled:created", doc);
+  } catch (_e) {}
+
   return { doc, message: "Message scheduled." };
 };
 
-export const getScheduled = async (userId, { to } = {}) => {
+export const getScheduled = async (userId, { to, groupId, type } = {}) => {
   const filter = { senderId: userId, status: "pending" };
   if (to && isValidObjectId(to)) {
     filter.receiverId = to;
+  }
+  if (groupId && isValidObjectId(groupId)) {
+    filter.groupId = groupId;
+  }
+  if (type) {
+    filter.messageType = type;
   }
 
   const list = await scheduledMessageRepository.findSorted(filter);
 
   return { list, message: "Scheduled messages." };
+};
+
+export const updateScheduled = async (
+  userId,
+  scheduleId,
+  { text: rawText, encrypted, e2ee, iv, keyEnvelopes, groupKeyVersion, scheduledFor } = {},
+) => {
+  assertValidId(scheduleId, "schedule ID");
+
+  const existing = await scheduledMessageRepository.findById(scheduleId);
+  if (!existing || existing.senderId.toString() !== userId.toString()) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Scheduled message not found.");
+  }
+  if (existing.status !== "pending") {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Cannot edit a scheduled message with status '${existing.status}'.`,
+    );
+  }
+
+  const updates = {};
+
+  if (scheduledFor) {
+    const when = new Date(scheduledFor);
+    validateScheduleTime(when);
+    updates.scheduledFor = when;
+  }
+
+  if (rawText !== undefined) {
+    const text = rawText?.trim();
+    const wantsE2EE = parseBool(encrypted ?? e2ee ?? existing.e2ee);
+    const maxLen = wantsE2EE ? MAX_CIPHERTEXT_LENGTH : MAX_TEXT_LENGTH;
+    if (!text || text.length > maxLen) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        wantsE2EE
+          ? "Encrypted payload is invalid or too large."
+          : `Text must be 1-${MAX_TEXT_LENGTH} characters.`,
+      );
+    }
+    updates.text = text;
+
+    if (wantsE2EE) {
+      updates.e2ee = true;
+      if (iv) updates.iv = iv;
+      if (existing.messageType === "group") {
+        if (groupKeyVersion != null) updates.groupKeyVersion = Number(groupKeyVersion);
+      } else if (Array.isArray(keyEnvelopes) && keyEnvelopes.length > 0) {
+        const sanitized = [];
+        for (const env of keyEnvelopes) {
+          if (
+            env &&
+            env.deviceId &&
+            env.wrappedKey &&
+            env.iv &&
+            isValidObjectId(env.userId)
+          ) {
+            sanitized.push({
+              deviceId: String(env.deviceId),
+              userId: toObjectId(env.userId),
+              wrappedKey: String(env.wrappedKey),
+              iv: String(env.iv),
+            });
+          }
+        }
+        if (sanitized.length > 0) updates.keyEnvelopes = sanitized;
+      }
+    }
+  }
+
+  const updatedDoc = await scheduledMessageRepository.findOneAndUpdate(
+    { _id: scheduleId, senderId: userId, status: "pending" },
+    { $set: updates },
+    { new: true },
+  );
+
+  if (!updatedDoc) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Scheduled message not found.");
+  }
+
+  try {
+    io.to(userId.toString()).emit("scheduled:updated", updatedDoc);
+  } catch (_e) {}
+
+  return { doc: updatedDoc, message: "Scheduled message updated." };
 };
 
 export const cancelScheduled = async (userId, scheduleId) => {
@@ -130,12 +300,21 @@ export const cancelScheduled = async (userId, scheduleId) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Scheduled message not found.");
   }
 
+  try {
+    io.to(userId.toString()).emit("scheduled:cancelled", {
+      id: doc._id,
+      receiverId: doc.receiverId,
+      groupId: doc.groupId,
+    });
+  } catch (_e) {}
+
   return { id: doc._id, message: "Scheduled message cancelled." };
 };
 
 const messageScheduleService = {
   scheduleMessage,
   getScheduled,
+  updateScheduled,
   cancelScheduled,
 };
 
