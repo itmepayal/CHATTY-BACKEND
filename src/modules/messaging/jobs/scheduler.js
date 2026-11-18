@@ -62,14 +62,14 @@ export const startScheduler = () => {
       await recoverStrandedJobs();
 
       const due = await ScheduledMessage.find({
-        status: "pending",
+        status: { $in: ["pending", "scheduled"] },
         scheduledFor: { $lte: new Date() },
       }).limit(50);
 
       for (const s of due) {
         // Atomic lease acquisition to prevent race conditions across server instances
         const claimed = await ScheduledMessage.findOneAndUpdate(
-          { _id: s._id, status: "pending" },
+          { _id: s._id, status: { $in: ["pending", "scheduled"] } },
           {
             status: "processing",
             processingStartedAt: new Date(),

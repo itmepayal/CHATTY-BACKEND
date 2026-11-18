@@ -37,7 +37,7 @@ const DeviceLinkSessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected", "expired"],
+      enum: ["pending", "approved", "rejected", "cancelled", "expired"],
       default: "pending",
       index: true,
     },

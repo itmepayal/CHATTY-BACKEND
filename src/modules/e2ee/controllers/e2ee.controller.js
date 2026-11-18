@@ -171,6 +171,18 @@ export const approveDeviceLink = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const cancelDeviceLink = asyncHandler(async (req, res) => {
+  const data = await e2eeService.cancelDeviceLinkSession(
+    req.user._id,
+    req.params.linkSessionId,
+  );
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Device linking session cancelled successfully.",
+  ).send(res);
+});
+
 const e2eeController = {
   getStatus,
   registerKeys,
@@ -189,6 +201,7 @@ const e2eeController = {
   getDeviceLinkStatus,
   lookupPendingLinkSession,
   approveDeviceLink,
+  cancelDeviceLink,
 };
 
 export default e2eeController;

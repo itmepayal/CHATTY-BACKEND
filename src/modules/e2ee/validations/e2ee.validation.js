@@ -57,14 +57,20 @@ export const encryptedPrivateKeySchema = z
       return true;
     },
     {
-      message: "Plaintext private keys must never be transmitted or stored on the server.",
+      message:
+        "Plaintext private keys must never be transmitted or stored on the server.",
     },
   )
   .refine(
     (val) => {
       try {
         const parsed = JSON.parse(val);
-        if (parsed && typeof parsed === "object" && parsed.version && parsed.algorithm) {
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          parsed.version &&
+          parsed.algorithm
+        ) {
           if (!parsed.salt || !parsed.iv || !parsed.ciphertext) {
             return false;
           }
@@ -75,7 +81,8 @@ export const encryptedPrivateKeySchema = z
       return true;
     },
     {
-      message: "Encrypted backup envelope is missing required cryptographic fields (salt, iv, ciphertext).",
+      message:
+        "Encrypted backup envelope is missing required cryptographic fields (salt, iv, ciphertext).",
     },
   );
 
@@ -161,18 +168,23 @@ export const requestDeviceLinkSchema = z.object({
   deviceName: z.string().trim().max(100).optional(),
 });
 
-export const approveDeviceLinkSchema = z.object({
-  linkSessionId: z.string().trim().min(1).max(128).optional(),
-  linkingPin: z.string().trim().min(1).max(20).optional(),
-  encryptedPayload: z.object({
-    ciphertext: z.string().min(1),
-    iv: z.string().min(1),
-    approverDeviceId: z.string().optional(),
-  }).passthrough(),
-  approverDeviceId: z.string().trim().min(1).max(128),
-}).refine((data) => data.linkSessionId || data.linkingPin, {
-  message: "Either linkSessionId or linkingPin is required to approve device link.",
-});
+export const approveDeviceLinkSchema = z
+  .object({
+    linkSessionId: z.string().trim().min(1).max(128).optional(),
+    linkingPin: z.string().trim().min(1).max(20).optional(),
+    encryptedPayload: z
+      .object({
+        ciphertext: z.string().min(1),
+        iv: z.string().min(1),
+        approverDeviceId: z.string().optional(),
+      })
+      .passthrough(),
+    approverDeviceId: z.string().trim().min(1).max(128),
+  })
+  .refine((data) => data.linkSessionId || data.linkingPin, {
+    message:
+      "Either linkSessionId or linkingPin is required to approve device link.",
+  });
 
 export const linkSessionIdParamSchema = z.object({
   linkSessionId: z.string().trim().min(1).max(128),
@@ -194,5 +206,3 @@ export const rotateDeviceSchema = z.object({
   newPublicKey: publicKeySchema,
   deviceName: z.string().trim().max(100).optional(),
 });
-
-

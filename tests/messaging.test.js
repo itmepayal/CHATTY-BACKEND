@@ -2977,7 +2977,10 @@ async function runAllTests() {
         "GET /:id",
         "POST /send/:id",
         "POST /schedule/:id",
+        "PATCH /scheduled/:scheduleId",
         "DELETE /scheduled/:scheduleId",
+        "POST /scheduled/:scheduleId/send-now",
+        "POST /scheduled/:scheduleId/send",
         "POST /forward/:messageId",
         "PATCH /edit/:messageId",
         "PATCH /pin/:messageId",
@@ -2995,8 +2998,8 @@ async function runAllTests() {
         actualPaths.every((p, idx) => p === expectedPaths[idx]);
       recordResult(
         "Snapshot",
-        "[Route Table Snapshot] All 22 routes match exact method & path in order",
-        "22 routes matching frozen contract",
+        `[Route Table Snapshot] All ${expectedPaths.length} routes match exact method & path in order`,
+        `${expectedPaths.length} routes matching frozen contract`,
         `actual=${actualPaths.length} routes`,
         pass,
         actualPaths,
