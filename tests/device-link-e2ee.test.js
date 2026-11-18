@@ -560,5 +560,59 @@ test("Device Linking E2EE Suite", async (t) => {
     );
   });
 
+  await t.test(
+    "15. Session cancellation marks status cancelled and blocks lookup & approval",
+    async () => {
+      const reqRes = await request(app)
+        .post("/api/v1/e2ee/devices/link/request")
+        .set("Cookie", alice.cookies)
+        .send({
+          ephemeralPublicKey: sampleEphemeralKey,
+          deviceId: "device_cancel_test",
+          deviceName: "Alice's Cancel Device",
+        })
+        .expect(201);
+
+      const { linkSessionId, linkingPin } = reqRes.body.data;
+
+      // Cancel session
+      const cancelRes = await request(app)
+        .delete(`/api/v1/e2ee/devices/link/${linkSessionId}`)
+        .set("Cookie", alice.cookies)
+        .expect(200);
+
+      assert.equal(cancelRes.body?.data?.cancelled, true);
+
+      // Lookup of cancelled session returns HTTP 410 Gone
+      const lookupRes = await request(app)
+        .get(`/api/v1/e2ee/devices/link/pin/${linkingPin}`)
+        .set("Cookie", alice.cookies)
+        .expect(410);
+
+      assert.match(
+        lookupRes.body?.message?.toLowerCase() || "",
+        /cancelled/,
+        "Lookup must indicate session was cancelled",
+      );
+
+      // Approval attempt of cancelled session returns HTTP 410 Gone
+      const approveRes = await request(app)
+        .post("/api/v1/e2ee/devices/link/approve")
+        .set("Cookie", alice.cookies)
+        .send({
+          linkSessionId,
+          encryptedPayload: { ciphertext: "payload", iv: "iv" },
+          approverDeviceId: "device_approver",
+        })
+        .expect(410);
+
+      assert.match(
+        approveRes.body?.message?.toLowerCase() || "",
+        /cancelled/,
+        "Approve must indicate session was cancelled",
+      );
+    },
+  );
+
   await teardownTestEnvironment();
 });

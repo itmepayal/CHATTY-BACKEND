@@ -133,4 +133,10 @@ router.post(
   e2eeController.approveDeviceLink,
 );
 
+router.delete(
+  "/devices/link/:linkSessionId",
+  validate(linkSessionIdParamSchema, "params"),
+  e2eeController.cancelDeviceLink,
+);
+
 export default router;

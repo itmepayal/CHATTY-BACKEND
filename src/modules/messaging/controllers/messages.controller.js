@@ -141,6 +141,15 @@ export const updateScheduled = asyncHandler(async (req, res) => {
   return new ApiResponse(StatusCodes.OK, doc, message).send(res);
 });
 
+export const sendScheduledNow = asyncHandler(async (req, res) => {
+  const { doc, message } = await scheduleService.sendScheduledNow(
+    req.user._id,
+    req.params.scheduleId || req.params.id,
+  );
+
+  return new ApiResponse(StatusCodes.OK, doc, message).send(res);
+});
+
 export const markMessagesSeen = asyncHandler(async (req, res) => {
   const result = await deliveryService.markMessagesSeen(
     req.user._id,
@@ -270,6 +279,7 @@ const messageController = {
   getScheduled,
   cancelScheduled,
   updateScheduled,
+  sendScheduledNow,
   markMessagesSeen,
   reactMessage,
   deleteMessageForMe,

@@ -10,7 +10,9 @@ export const createLinkSession = async ({
   newDeviceName,
   expiresAt,
 }) => {
-  const cleanPin = String(linkingPin).trim().replace(/[\s-]+/g, "");
+  const cleanPin = String(linkingPin)
+    .trim()
+    .replace(/[\s-]+/g, "");
   const session = new DeviceLinkSession({
     userId: toObjectId(userId),
     linkSessionId,
@@ -29,7 +31,9 @@ export const findLinkSessionById = async (linkSessionId) => {
 };
 
 export const findSessionByPin = async (userId, linkingPin) => {
-  const clean = String(linkingPin).trim().replace(/[\s-]+/g, "");
+  const clean = String(linkingPin)
+    .trim()
+    .replace(/[\s-]+/g, "");
   const withHyphen =
     clean.length === 6 ? `${clean.slice(0, 3)}-${clean.slice(3)}` : clean;
   const pinCandidates = Array.from(new Set([clean, withHyphen]));
@@ -65,6 +69,18 @@ export const deleteLinkSession = async (linkSessionId) => {
   return DeviceLinkSession.deleteOne({ linkSessionId });
 };
 
+export const cancelSession = async (linkSessionId, userId) => {
+  return DeviceLinkSession.findOneAndUpdate(
+    { linkSessionId, userId: toObjectId(userId), status: "pending" },
+    { $set: { status: "cancelled" } },
+    { new: true, runValidators: true },
+  ).lean();
+};
+
+export const deleteSessionsForUser = async (userId) => {
+  return DeviceLinkSession.deleteMany({ userId: toObjectId(userId) });
+};
+
 export default {
   createLinkSession,
   findLinkSessionById,
@@ -72,4 +88,6 @@ export default {
   findPendingSessionByPin,
   approveLinkSession,
   deleteLinkSession,
+  cancelSession,
+  deleteSessionsForUser,
 };

@@ -182,7 +182,10 @@ export const updateBackup = async (
 
   // If deviceId provided, verify it is not revoked
   if (deviceId) {
-    const dev = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+    const dev = await deviceKeyRepository.findDeviceByUserAndId(
+      userId,
+      deviceId,
+    );
     if (dev?.isRevoked) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
@@ -221,7 +224,10 @@ export const updateBackup = async (
       backupUpdatedAt: updated.e2eeBackupUpdatedAt,
     });
   } catch (err) {
-    console.warn("[e2ee] Failed to emit backup:updated socket event:", err?.message);
+    console.warn(
+      "[e2ee] Failed to emit backup:updated socket event:",
+      err?.message,
+    );
   }
 
   return {
@@ -263,8 +269,20 @@ export const resetKeys = async (userId, { password, confirm }) => {
   // Invalidate any registered device keys for this user
   await deviceKeyRepository.deleteDevicesForUser(userId);
 
+  // Invalidate any pending device link sessions for this user
+  await deviceLinkRepository.deleteSessionsForUser(userId);
+
   // Invalidate any wrapped group keys distributed for the previous identity
   await groupKeyRepository.deleteForUser(userId);
+
+  try {
+    io.to(String(userId)).emit("e2ee:reset", { reset: true });
+  } catch (err) {
+    console.warn(
+      "[e2ee] Failed to emit e2ee:reset socket event:",
+      err?.message,
+    );
+  }
 
   return {
     reset: true,
@@ -382,7 +400,10 @@ export const registerDevice = async (
   }
 
   // Prevent silent re-registration of explicitly revoked devices
-  const existing = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+  const existing = await deviceKeyRepository.findDeviceByUserAndId(
+    userId,
+    deviceId,
+  );
   if (existing?.isRevoked) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
@@ -414,6 +435,20 @@ export const registerDevice = async (
     deviceName,
   });
 
+  try {
+    io.to(String(userId)).emit("e2ee:device:registered", {
+      deviceId: device.deviceId,
+      deviceName: device.deviceName,
+      publicKey: device.publicKey,
+      createdAt: device.createdAt,
+    });
+  } catch (err) {
+    console.warn(
+      "[e2ee] Failed to emit device:registered socket event:",
+      err?.message,
+    );
+  }
+
   return {
     deviceId: device.deviceId,
     deviceName: device.deviceName,
@@ -432,9 +467,15 @@ export const heartbeatDevice = async (userId, deviceId) => {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Valid device ID is required.");
   }
 
-  const result = await deviceKeyRepository.updateDeviceActivity(userId, deviceId);
+  const result = await deviceKeyRepository.updateDeviceActivity(
+    userId,
+    deviceId,
+  );
   if (!result || result.matchedCount === 0) {
-    const existing = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+    const existing = await deviceKeyRepository.findDeviceByUserAndId(
+      userId,
+      deviceId,
+    );
     if (existing?.isRevoked) {
       throw new ApiError(StatusCodes.FORBIDDEN, "Device is revoked.");
     }
@@ -481,7 +522,10 @@ export const revokeDevice = async (userId, deviceId) => {
       revokedAt: updated.lastActiveAt || new Date(),
     });
   } catch (err) {
-    console.warn("[e2ee] Failed to emit device:revoked socket event:", err?.message);
+    console.warn(
+      "[e2ee] Failed to emit device:revoked socket event:",
+      err?.message,
+    );
   }
 
   return {
@@ -501,7 +545,10 @@ export const rotateDeviceKey = async (
     throw new ApiError(StatusCodes.BAD_REQUEST, "Valid device ID is required.");
   }
 
-  const existing = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+  const existing = await deviceKeyRepository.findDeviceByUserAndId(
+    userId,
+    deviceId,
+  );
   if (!existing) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Device not found.");
   }
@@ -530,7 +577,10 @@ export const rotateDeviceKey = async (
       rotatedAt: updated.lastActiveAt,
     });
   } catch (err) {
-    console.warn("[e2ee] Failed to emit device:rotated socket event:", err?.message);
+    console.warn(
+      "[e2ee] Failed to emit device:rotated socket event:",
+      err?.message,
+    );
   }
 
   return {
@@ -728,7 +778,9 @@ export const getDeviceLinkStatus = async (userId, linkSessionId) => {
  * Looks up a pending device link session by linking PIN for the authenticated user.
  */
 export const lookupPendingLinkSession = async (userId, linkingPin) => {
-  const cleanPin = String(linkingPin || "").trim().replace(/[\s-]+/g, "");
+  const cleanPin = String(linkingPin || "")
+    .trim()
+    .replace(/[\s-]+/g, "");
   const now = new Date();
 
   console.log("[e2ee:device-link:lookup] Session lookup requested:", {
@@ -749,10 +801,7 @@ export const lookupPendingLinkSession = async (userId, linkingPin) => {
     );
   }
 
-  const session = await deviceLinkRepository.findSessionByPin(
-    userId,
-    cleanPin,
-  );
+  const session = await deviceLinkRepository.findSessionByPin(userId, cleanPin);
 
   if (!session) {
     console.log("[e2ee:device-link:lookup] Session not found:", {
@@ -788,6 +837,16 @@ export const lookupPendingLinkSession = async (userId, linkingPin) => {
     );
   }
 
+  if (session.status === "cancelled") {
+    console.log("[e2ee:device-link:lookup] Session cancelled:", {
+      linkSessionId: session.linkSessionId,
+    });
+    throw new ApiError(
+      StatusCodes.GONE,
+      "This device linking session was cancelled.",
+    );
+  }
+
   if (session.status === "approved") {
     console.log("[e2ee:device-link:lookup] Session already approved:", {
       linkSessionId: session.linkSessionId,
@@ -802,6 +861,19 @@ export const lookupPendingLinkSession = async (userId, linkingPin) => {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       "This device linking session is no longer active.",
+    );
+  }
+
+  try {
+    io.to(String(userId)).emit("e2ee:device-link:connecting", {
+      linkSessionId: session.linkSessionId,
+      newDeviceId: session.newDeviceId,
+      newDeviceName: session.newDeviceName,
+    });
+  } catch (err) {
+    console.warn(
+      "[e2ee] Failed to emit device-link:connecting socket event:",
+      err?.message,
     );
   }
 
@@ -824,7 +896,9 @@ export const approveDeviceLink = async (
 ) => {
   const now = new Date();
   const cleanPin = linkingPin
-    ? String(linkingPin).trim().replace(/[\s-]+/g, "")
+    ? String(linkingPin)
+        .trim()
+        .replace(/[\s-]+/g, "")
     : undefined;
 
   console.log("[e2ee:device-link:approve] Session approval requested:", {
@@ -886,6 +960,16 @@ export const approveDeviceLink = async (
     throw new ApiError(
       StatusCodes.GONE,
       "This device linking session has expired.",
+    );
+  }
+
+  if (session.status === "cancelled") {
+    console.log("[e2ee:device-link:approve] Session cancelled:", {
+      linkSessionId: session.linkSessionId,
+    });
+    throw new ApiError(
+      StatusCodes.GONE,
+      "This device linking session was cancelled.",
     );
   }
 
@@ -960,6 +1044,37 @@ export const approveDeviceLink = async (
   };
 };
 
+/**
+ * Cancels an active or pending device linking session.
+ */
+export const cancelDeviceLinkSession = async (userId, linkSessionId) => {
+  const session = await deviceLinkRepository.findLinkSessionById(linkSessionId);
+  if (!session || String(session.userId) !== String(userId)) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Device linking session not found or unauthorized.",
+    );
+  }
+
+  await deviceLinkRepository.cancelSession(linkSessionId, userId);
+
+  try {
+    io.to(String(userId)).emit("e2ee:device-link:cancelled", {
+      linkSessionId,
+    });
+  } catch (err) {
+    console.warn(
+      "[e2ee] Failed to emit device-link:cancelled socket event:",
+      err?.message,
+    );
+  }
+
+  return {
+    cancelled: true,
+    linkSessionId,
+  };
+};
+
 const e2eeService = {
   getStatus,
   registerKeys,
@@ -977,6 +1092,7 @@ const e2eeService = {
   getDeviceLinkStatus,
   lookupPendingLinkSession,
   approveDeviceLink,
+  cancelDeviceLinkSession,
 };
 
 export default e2eeService;

@@ -1,17 +1,18 @@
-/**
- * Message Schedule Service
- * Handles queuing, listing, updating, and canceling scheduled 1:1 and group messages.
- */
-
 import { StatusCodes } from "http-status-codes";
 import * as scheduledMessageRepository from "../../repositories/scheduled-message.repository.js";
 import { assertCanMessage } from "../../utils/chat-guard.js";
 import { assertE2EEReady } from "../core/message.service.js";
+import { deliverMessage } from "../delivery/message-delivery.service.js";
+import { sendGroupMessageService } from "../../../groups/services/group-message.service.js";
+import { attachLinkPreview } from "../../../../shared/utils/link-preview.js";
 import { getGroupAndMember } from "../../../groups/helpers/group.member.helpers.js";
 import { io } from "../../../../infrastructure/socket/socket.js";
 import ApiError from "../../../../shared/errors/api-error.js";
 import { assertValidId } from "../../../../shared/utils/validators.js";
-import { isValidObjectId, toObjectId } from "../../../../shared/utils/object-id.util.js";
+import {
+  isValidObjectId,
+  toObjectId,
+} from "../../../../shared/utils/object-id.util.js";
 import {
   parseBool,
   assertValidCipher,
@@ -119,7 +120,10 @@ export const scheduleMessage = async (
     assertValidId(finalReceiverId, "receiver ID");
 
     if (finalReceiverId.toString() === senderId.toString()) {
-      throw new ApiError(StatusCodes.BAD_REQUEST, "You cannot message yourself.");
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "You cannot message yourself.",
+      );
     }
 
     if (wantsE2EE) {
@@ -157,7 +161,10 @@ export const scheduleMessage = async (
           e2ee: true,
           iv,
           ...(finalMessageType === "group"
-            ? { groupKeyVersion: groupKeyVersion != null ? Number(groupKeyVersion) : null }
+            ? {
+                groupKeyVersion:
+                  groupKeyVersion != null ? Number(groupKeyVersion) : null,
+              }
             : { keyEnvelopes: sanitizedEnvelopes }),
         }
       : {}),
@@ -172,7 +179,10 @@ export const scheduleMessage = async (
 };
 
 export const getScheduled = async (userId, { to, groupId, type } = {}) => {
-  const filter = { senderId: userId, status: "pending" };
+  const filter = {
+    senderId: userId,
+    status: { $in: ["pending", "scheduled"] },
+  };
   if (to && isValidObjectId(to)) {
     filter.receiverId = to;
   }
@@ -191,7 +201,15 @@ export const getScheduled = async (userId, { to, groupId, type } = {}) => {
 export const updateScheduled = async (
   userId,
   scheduleId,
-  { text: rawText, encrypted, e2ee, iv, keyEnvelopes, groupKeyVersion, scheduledFor } = {},
+  {
+    text: rawText,
+    encrypted,
+    e2ee,
+    iv,
+    keyEnvelopes,
+    groupKeyVersion,
+    scheduledFor,
+  } = {},
 ) => {
   assertValidId(scheduleId, "schedule ID");
 
@@ -199,7 +217,7 @@ export const updateScheduled = async (
   if (!existing || existing.senderId.toString() !== userId.toString()) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Scheduled message not found.");
   }
-  if (existing.status !== "pending") {
+  if (!["pending", "scheduled"].includes(existing.status)) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       `Cannot edit a scheduled message with status '${existing.status}'.`,
@@ -232,7 +250,8 @@ export const updateScheduled = async (
       updates.e2ee = true;
       if (iv) updates.iv = iv;
       if (existing.messageType === "group") {
-        if (groupKeyVersion != null) updates.groupKeyVersion = Number(groupKeyVersion);
+        if (groupKeyVersion != null)
+          updates.groupKeyVersion = Number(groupKeyVersion);
       } else if (Array.isArray(keyEnvelopes) && keyEnvelopes.length > 0) {
         const sanitized = [];
         for (const env of keyEnvelopes) {
@@ -257,7 +276,11 @@ export const updateScheduled = async (
   }
 
   const updatedDoc = await scheduledMessageRepository.findOneAndUpdate(
-    { _id: scheduleId, senderId: userId, status: "pending" },
+    {
+      _id: scheduleId,
+      senderId: userId,
+      status: { $in: ["pending", "scheduled"] },
+    },
     { $set: updates },
     { new: true },
   );
@@ -277,7 +300,11 @@ export const cancelScheduled = async (userId, scheduleId) => {
   assertValidId(scheduleId, "schedule ID");
 
   const doc = await scheduledMessageRepository.findOneAndUpdate(
-    { _id: scheduleId, senderId: userId, status: "pending" },
+    {
+      _id: scheduleId,
+      senderId: userId,
+      status: { $in: ["pending", "scheduled"] },
+    },
     { status: "cancelled" },
   );
   if (!doc) {
@@ -295,11 +322,132 @@ export const cancelScheduled = async (userId, scheduleId) => {
   return { id: doc._id, message: "Scheduled message cancelled." };
 };
 
+export const sendScheduledNow = async (userId, scheduleId) => {
+  assertValidId(scheduleId, "schedule ID");
+
+  // Atomically claim the scheduled message from pending or scheduled status
+  const claimed = await scheduledMessageRepository.findOneAndUpdate(
+    {
+      _id: scheduleId,
+      senderId: userId,
+      status: { $in: ["pending", "scheduled"] },
+    },
+    {
+      $set: {
+        status: "processing",
+        processingStartedAt: new Date(),
+      },
+    },
+    { new: true },
+  );
+
+  if (!claimed) {
+    const existing = await scheduledMessageRepository.findById(scheduleId);
+    if (!existing || existing.senderId.toString() !== userId.toString()) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Scheduled message not found.");
+    }
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Cannot send scheduled message with status '${existing.status}'.`,
+    );
+  }
+
+  try {
+    if (claimed.messageType === "group") {
+      const { group } = await getGroupAndMember(
+        claimed.groupId,
+        claimed.senderId,
+      );
+
+      const result = await sendGroupMessageService({
+        group,
+        me: claimed.senderId,
+        body: {
+          text: claimed.text,
+          encrypted: claimed.e2ee ? "true" : undefined,
+          e2ee: claimed.e2ee ? "true" : undefined,
+          ...(claimed.iv ? { iv: claimed.iv } : {}),
+          ...(claimed.groupKeyVersion != null
+            ? { keyVersion: String(claimed.groupKeyVersion) }
+            : {}),
+        },
+      });
+
+      const sentId = result?.payload?._id || result?.payload?.id;
+
+      await scheduledMessageRepository.findOneAndUpdate(
+        { _id: claimed._id },
+        { status: "sent", sentMessageId: sentId },
+      );
+
+      try {
+        io.to(claimed.senderId.toString()).emit("scheduled:sent", {
+          scheduleId: claimed._id,
+          messageId: sentId,
+          groupId: claimed.groupId,
+        });
+      } catch (_err) {}
+
+      return { doc: claimed, message: "Scheduled message sent immediately." };
+    } else {
+      await assertCanMessage(claimed.senderId, claimed.receiverId);
+
+      const { message } = await deliverMessage({
+        senderId: claimed.senderId,
+        receiverId: claimed.receiverId,
+        data: {
+          text: claimed.text,
+          e2ee: Boolean(claimed.e2ee),
+          ...(claimed.iv ? { iv: claimed.iv } : {}),
+          ...(claimed.e2ee &&
+          Array.isArray(claimed.keyEnvelopes) &&
+          claimed.keyEnvelopes.length > 0
+            ? { keyEnvelopes: claimed.keyEnvelopes }
+            : {}),
+        },
+      });
+
+      if (!claimed.e2ee) attachLinkPreview(message);
+
+      await scheduledMessageRepository.findOneAndUpdate(
+        { _id: claimed._id },
+        { status: "sent", sentMessageId: message._id },
+      );
+
+      try {
+        io.to(claimed.senderId.toString()).emit("scheduled:sent", {
+          scheduleId: claimed._id,
+          messageId: message._id,
+          receiverId: claimed.receiverId,
+        });
+      } catch (_err) {}
+
+      return { doc: claimed, message: "Scheduled message sent immediately." };
+    }
+  } catch (err) {
+    const errMsg = String(err?.message || err).slice(0, 200);
+    await scheduledMessageRepository.findOneAndUpdate(
+      { _id: claimed._id },
+      { status: "failed", error: errMsg },
+    );
+    try {
+      io.to(claimed.senderId.toString()).emit("scheduled:failed", {
+        scheduleId: claimed._id,
+        error: errMsg,
+        receiverId: claimed.receiverId,
+        groupId: claimed.groupId,
+      });
+    } catch (_err) {}
+    throw err;
+  }
+};
+
 const messageScheduleService = {
   scheduleMessage,
   getScheduled,
   updateScheduled,
   cancelScheduled,
+  sendScheduledNow,
 };
 
 export default messageScheduleService;

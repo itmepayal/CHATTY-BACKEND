@@ -11,5 +11,15 @@ router.get("/", messageController.getScheduled);
 router.post("/", sendMessageLimiter, messageController.scheduleMessage);
 router.patch("/:scheduleId", messageController.updateScheduled);
 router.delete("/:scheduleId", messageController.cancelScheduled);
+router.post(
+  "/:scheduleId/send-now",
+  sendMessageLimiter,
+  messageController.sendScheduledNow,
+);
+router.post(
+  "/:scheduleId/send",
+  sendMessageLimiter,
+  messageController.sendScheduledNow,
+);
 
 export default router;

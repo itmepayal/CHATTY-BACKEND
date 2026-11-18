@@ -52,7 +52,18 @@ router.post(
   sendMessageLimiter,
   messageController.scheduleMessage,
 );
+router.patch("/scheduled/:scheduleId", messageController.updateScheduled);
 router.delete("/scheduled/:scheduleId", messageController.cancelScheduled);
+router.post(
+  "/scheduled/:scheduleId/send-now",
+  sendMessageLimiter,
+  messageController.sendScheduledNow,
+);
+router.post(
+  "/scheduled/:scheduleId/send",
+  sendMessageLimiter,
+  messageController.sendScheduledNow,
+);
 
 router.post(
   "/forward/:messageId",
