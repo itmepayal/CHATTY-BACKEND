@@ -10,10 +10,11 @@ export const createLinkSession = async ({
   newDeviceName,
   expiresAt,
 }) => {
+  const cleanPin = String(linkingPin).trim().replace(/[\s-]+/g, "");
   const session = new DeviceLinkSession({
     userId: toObjectId(userId),
     linkSessionId,
-    linkingPin,
+    linkingPin: cleanPin,
     ephemeralPublicKey,
     newDeviceId,
     newDeviceName,
@@ -27,20 +28,21 @@ export const findLinkSessionById = async (linkSessionId) => {
   return DeviceLinkSession.findOne({ linkSessionId }).lean();
 };
 
-export const findPendingSessionByPin = async (userId, linkingPin) => {
-  const clean = String(linkingPin).trim().replace(/\s+/g, "");
-  const withHyphen = clean.includes("-")
-    ? clean
-    : `${clean.slice(0, 3)}-${clean.slice(3)}`;
-  const withoutHyphen = clean.replace(/-/g, "");
+export const findSessionByPin = async (userId, linkingPin) => {
+  const clean = String(linkingPin).trim().replace(/[\s-]+/g, "");
+  const withHyphen =
+    clean.length === 6 ? `${clean.slice(0, 3)}-${clean.slice(3)}` : clean;
+  const pinCandidates = Array.from(new Set([clean, withHyphen]));
 
   return DeviceLinkSession.findOne({
     userId: toObjectId(userId),
-    linkingPin: { $in: [clean, withHyphen, withoutHyphen] },
-    status: "pending",
-    expiresAt: { $gt: new Date() },
-  }).lean();
+    linkingPin: { $in: pinCandidates },
+  })
+    .sort({ createdAt: -1 })
+    .lean();
 };
+
+export const findPendingSessionByPin = findSessionByPin;
 
 export const approveLinkSession = async (
   linkSessionId,
@@ -66,6 +68,7 @@ export const deleteLinkSession = async (linkSessionId) => {
 export default {
   createLinkSession,
   findLinkSessionById,
+  findSessionByPin,
   findPendingSessionByPin,
   approveLinkSession,
   deleteLinkSession,

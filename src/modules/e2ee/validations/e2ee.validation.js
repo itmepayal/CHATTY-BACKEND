@@ -179,7 +179,7 @@ export const linkSessionIdParamSchema = z.object({
 });
 
 export const linkingPinParamSchema = z.object({
-  linkingPin: z.string().trim().min(6).max(12),
+  linkingPin: z.string().trim().min(1).max(20),
 });
 
 export const rotateDeviceSchema = z.object({
