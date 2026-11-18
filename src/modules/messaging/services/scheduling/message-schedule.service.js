@@ -16,6 +16,7 @@ import {
   parseBool,
   assertValidCipher,
   MAX_CIPHERTEXT_LENGTH,
+  sanitizeAndValidateEnvelopes,
 } from "../../utils/e2ee.js";
 import { MAX_TEXT_LENGTH } from "../../constants/messages.constants.js";
 
@@ -134,29 +135,12 @@ export const scheduleMessage = async (
     await assertCanMessage(senderId, finalReceiverId);
     if (wantsE2EE) await assertE2EEReady(senderId, finalReceiverId);
 
-    if (wantsE2EE && Array.isArray(keyEnvelopes)) {
-      for (const env of keyEnvelopes) {
-        if (
-          env &&
-          env.deviceId &&
-          env.wrappedKey &&
-          env.iv &&
-          isValidObjectId(env.userId)
-        ) {
-          sanitizedEnvelopes.push({
-            deviceId: String(env.deviceId),
-            userId: toObjectId(env.userId),
-            wrappedKey: String(env.wrappedKey),
-            iv: String(env.iv),
-          });
-        }
-      }
-      if (sanitizedEnvelopes.length === 0) {
-        throw new ApiError(
-          StatusCodes.BAD_REQUEST,
-          "Key envelopes are required for encrypted scheduled message.",
-        );
-      }
+    if (wantsE2EE) {
+      sanitizedEnvelopes = sanitizeAndValidateEnvelopes(keyEnvelopes, {
+        senderId,
+        receiverId: finalReceiverId,
+        requireReceiverEnvelope: true,
+      });
     }
   }
 

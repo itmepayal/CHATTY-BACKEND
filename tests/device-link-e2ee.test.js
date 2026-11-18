@@ -203,5 +203,149 @@ test("Device Linking E2EE Suite", async (t) => {
     },
   );
 
+  await t.test(
+    "7. Device registration rejects static fallback device ID (HTTP 400)",
+    async () => {
+      const res = await request(app)
+        .post("/api/v1/e2ee/devices")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: "device-session-fallback",
+          publicKey: sampleEphemeralKey,
+          deviceName: "Static Fallback Device",
+        })
+        .expect(400);
+
+      assert.ok(res.body?.message?.includes("fallback") || res.body?.errors);
+    },
+  );
+
+  await t.test(
+    "8. Device registration is an idempotent upsert: does not create duplicate documents",
+    async () => {
+      const testDeviceId = "persistent-unique-dev-123";
+      // First registration
+      const res1 = await request(app)
+        .post("/api/v1/e2ee/devices")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: testDeviceId,
+          publicKey: sampleEphemeralKey,
+          deviceName: "Initial Device Name",
+        })
+        .expect(201);
+
+      assert.equal(res1.body?.data?.deviceId, testDeviceId);
+
+      // Second registration with updated name (same device ID)
+      const res2 = await request(app)
+        .post("/api/v1/e2ee/devices")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: testDeviceId,
+          publicKey: sampleEphemeralKey,
+          deviceName: "Updated Device Name",
+        })
+        .expect(201);
+
+      assert.equal(res2.body?.data?.deviceId, testDeviceId);
+      assert.equal(res2.body?.data?.deviceName, "Updated Device Name");
+
+      // Verify device list only contains ONE entry for this deviceId
+      const listRes = await request(app)
+        .get("/api/v1/e2ee/devices")
+        .set("Cookie", alice.cookies)
+        .expect(200);
+
+      const matching = listRes.body?.data?.devices.filter(
+        (d) => d.deviceId === testDeviceId,
+      );
+      assert.equal(matching.length, 1, "Must not create duplicate device documents");
+    },
+  );
+
+  await t.test(
+    "9. Heartbeat endpoint updates last active timestamp for registered device",
+    async () => {
+      const testDeviceId = "persistent-unique-dev-123";
+      const hbRes = await request(app)
+        .post("/api/v1/e2ee/devices/heartbeat")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: testDeviceId,
+        })
+        .expect(200);
+
+      assert.equal(hbRes.body?.data?.active, true);
+      assert.equal(hbRes.body?.data?.registered, true);
+      assert.equal(hbRes.body?.data?.deviceId, testDeviceId);
+      assert.ok(hbRes.body?.data?.lastActiveAt);
+
+      // Heartbeat rejects static fallback device ID with 400
+      await request(app)
+        .post("/api/v1/e2ee/devices/heartbeat")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: "device-session-fallback",
+        })
+        .expect(400);
+    },
+  );
+
+  await t.test(
+    "10. Revocation semantics: revoked device excluded from list and cannot re-register",
+    async () => {
+      const revokeDeviceId = "revokable-dev-999";
+      await request(app)
+        .post("/api/v1/e2ee/devices")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: revokeDeviceId,
+          publicKey: sampleEphemeralKey,
+          deviceName: "To Be Revoked",
+        })
+        .expect(201);
+
+      // Revoke the device
+      const revRes = await request(app)
+        .delete(`/api/v1/e2ee/devices/${revokeDeviceId}`)
+        .set("Cookie", alice.cookies)
+        .expect(200);
+
+      assert.equal(revRes.body?.data?.revoked, true);
+
+      // Device list must not include revoked device
+      const listRes = await request(app)
+        .get("/api/v1/e2ee/devices")
+        .set("Cookie", alice.cookies)
+        .expect(200);
+
+      const hasRevoked = listRes.body?.data?.devices.some(
+        (d) => d.deviceId === revokeDeviceId,
+      );
+      assert.equal(hasRevoked, false, "Revoked device must be excluded from active devices");
+
+      // Attempting to re-register the revoked device must return 403 Forbidden
+      await request(app)
+        .post("/api/v1/e2ee/devices")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: revokeDeviceId,
+          publicKey: sampleEphemeralKey,
+          deviceName: "Re-register Attempt",
+        })
+        .expect(403);
+
+      // Heartbeat on revoked device must return 403 Forbidden
+      await request(app)
+        .post("/api/v1/e2ee/devices/heartbeat")
+        .set("Cookie", alice.cookies)
+        .send({
+          deviceId: revokeDeviceId,
+        })
+        .expect(403);
+    },
+  );
+
   await teardownTestEnvironment();
 });

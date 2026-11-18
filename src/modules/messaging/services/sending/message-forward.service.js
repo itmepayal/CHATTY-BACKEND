@@ -9,7 +9,7 @@ import {
   isValidObjectId,
   toObjectId,
 } from "../../../../shared/utils/object-id.util.js";
-import { assertValidCipher } from "../../utils/e2ee.js";
+import { assertValidCipher, sanitizeAndValidateEnvelopes } from "../../utils/e2ee.js";
 import { isExpired, isParticipantOf } from "../../utils/message-helpers.js";
 import { MAX_FORWARD_TARGETS } from "../../constants/messages.constants.js";
 
@@ -105,25 +105,14 @@ export const forwardMessage = async (
         assertValidCipher(enc.text, enc.iv);
         await assertE2EEReady(userId, receiverId);
 
-        const sanitizedEnvelopes = [];
-        if (Array.isArray(enc.keyEnvelopes)) {
-          for (const k of enc.keyEnvelopes) {
-            if (
-              k &&
-              k.deviceId &&
-              k.wrappedKey &&
-              k.iv &&
-              isValidObjectId(k.userId)
-            ) {
-              sanitizedEnvelopes.push({
-                deviceId: String(k.deviceId),
-                userId: toObjectId(k.userId),
-                wrappedKey: String(k.wrappedKey),
-                iv: String(k.iv),
-              });
-            }
-          }
-        }
+        const sanitizedEnvelopes = sanitizeAndValidateEnvelopes(
+          enc.keyEnvelopes,
+          {
+            senderId: userId,
+            receiverId,
+            requireReceiverEnvelope: isEncrypted,
+          },
+        );
 
         data.text = enc.text;
         data.e2ee = true;

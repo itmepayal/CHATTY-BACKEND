@@ -19,6 +19,7 @@ import {
   parseBool,
   assertValidCipher,
   MAX_CIPHERTEXT_LENGTH,
+  sanitizeAndValidateEnvelopes,
 } from "../../utils/e2ee.js";
 import { MAX_TEXT_LENGTH } from "../../constants/messages.constants.js";
 
@@ -146,34 +147,11 @@ export const sendMessage = async (
     video: uploadedVideo,
   } = attachment;
 
-  let parsedEnvelopes = keyEnvelopes;
-  if (typeof keyEnvelopes === "string") {
-    try {
-      parsedEnvelopes = JSON.parse(keyEnvelopes);
-    } catch {
-      parsedEnvelopes = [];
-    }
-  }
-
-  const sanitizedEnvelopes = [];
-  if (Array.isArray(parsedEnvelopes)) {
-    for (const env of parsedEnvelopes) {
-      if (
-        env &&
-        env.deviceId &&
-        env.wrappedKey &&
-        env.iv &&
-        isValidObjectId(env.userId)
-      ) {
-        sanitizedEnvelopes.push({
-          deviceId: String(env.deviceId),
-          userId: toObjectId(env.userId),
-          wrappedKey: String(env.wrappedKey),
-          iv: String(env.iv),
-        });
-      }
-    }
-  }
+  const sanitizedEnvelopes = sanitizeAndValidateEnvelopes(keyEnvelopes, {
+    senderId,
+    receiverId,
+    requireReceiverEnvelope: wantsE2EE && Boolean(keyEnvelopes),
+  });
 
   let result;
   try {

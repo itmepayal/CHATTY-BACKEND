@@ -40,7 +40,44 @@ export const encryptedPrivateKeySchema = z
   })
   .refine((val) => val.length <= MAX_BACKUP_SIZE_BYTES, {
     message: E2EE_ERROR_MESSAGES.BACKUP_SIZE_EXCEEDED,
-  });
+  })
+  .refine(
+    (val) => {
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed && typeof parsed === "object") {
+          // Reject unencrypted private key JWKs containing "d" parameter
+          if ("d" in parsed && ("x" in parsed || "kty" in parsed)) {
+            return false;
+          }
+        }
+      } catch {
+        // Plain string or base64 token
+      }
+      return true;
+    },
+    {
+      message: "Plaintext private keys must never be transmitted or stored on the server.",
+    },
+  )
+  .refine(
+    (val) => {
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed && typeof parsed === "object" && parsed.version && parsed.algorithm) {
+          if (!parsed.salt || !parsed.iv || !parsed.ciphertext) {
+            return false;
+          }
+        }
+      } catch {
+        // Ignore parsing errors for non-JSON strings
+      }
+      return true;
+    },
+    {
+      message: "Encrypted backup envelope is missing required cryptographic fields (salt, iv, ciphertext).",
+    },
+  );
 
 export const registerKeysSchema = z.object({
   publicKey: publicKeySchema,
@@ -51,6 +88,8 @@ export const registerKeysSchema = z.object({
 export const updateBackupSchema = z.object({
   encryptedPrivateKey: encryptedPrivateKeySchema,
   backupVersion: z.number().int().min(1).max(100).optional(),
+  expectedVersion: z.number().int().min(1).max(100).optional(),
+  deviceId: z.string().trim().min(1).max(128).optional(),
 });
 
 export const resetKeysSchema = z.object({
@@ -81,13 +120,27 @@ export const targetUserParamSchema = z.object({
 });
 
 export const registerDeviceSchema = z.object({
-  deviceId: z.string().trim().min(1).max(128),
+  deviceId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .refine((id) => id !== "device-session-fallback", {
+      message: "Static fallback device ID is not permitted.",
+    }),
   publicKey: publicKeySchema,
   deviceName: z.string().trim().max(100).optional(),
 });
 
 export const deviceIdParamSchema = z.object({
-  deviceId: z.string().trim().min(1).max(128),
+  deviceId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .refine((id) => id !== "device-session-fallback", {
+      message: "Static fallback device ID is not permitted.",
+    }),
 });
 
 export const batchDevicePublicKeysSchema = z.object({
@@ -127,6 +180,19 @@ export const linkSessionIdParamSchema = z.object({
 
 export const linkingPinParamSchema = z.object({
   linkingPin: z.string().trim().min(6).max(12),
+});
+
+export const rotateDeviceSchema = z.object({
+  deviceId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .refine((id) => id !== "device-session-fallback", {
+      message: "Static fallback device ID is not permitted.",
+    }),
+  newPublicKey: publicKeySchema,
+  deviceName: z.string().trim().max(100).optional(),
 });
 
 

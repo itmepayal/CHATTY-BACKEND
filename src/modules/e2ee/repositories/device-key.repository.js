@@ -35,11 +35,32 @@ export const upsertDeviceKey = async (
   return options.lean === false ? query : query.lean();
 };
 
+export const findDeviceByUserAndId = async (userId, deviceId, options = {}) => {
+  const query = DeviceKey.findOne({
+    userId: toObjectId(userId),
+    deviceId: String(deviceId),
+  });
+
+  if (options.session) query.session(options.session);
+
+  return options.lean === false ? query : query.lean();
+};
+
 export const findActiveDevicesForUser = async (userId, options = {}) => {
   const query = DeviceKey.find({
     userId: toObjectId(userId),
     isRevoked: false,
   }).select("userId deviceId publicKey deviceName lastActiveAt createdAt");
+
+  if (options.session) query.session(options.session);
+
+  return options.lean === false ? query : query.lean();
+};
+
+export const findAllDevicesForUser = async (userId, options = {}) => {
+  const query = DeviceKey.find({
+    userId: toObjectId(userId),
+  }).select("userId deviceId publicKey deviceName isRevoked lastActiveAt createdAt");
 
   if (options.session) query.session(options.session);
 
@@ -116,6 +137,7 @@ export const deleteDevicesForUser = async (userId, options = {}) => {
 
 const deviceKeyRepository = Object.freeze({
   upsertDeviceKey,
+  findDeviceByUserAndId,
   findActiveDevicesForUser,
   findActiveDevicesForUsers,
   revokeDevice,
