@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../shared/errors/api-error.js";
 import { isValidObjectId } from "../../../shared/utils/object-id.util.js";
@@ -629,9 +630,7 @@ export const getDevicesPublicKeys = async (userIds) => {
 };
 
 const generatePin = () => {
-  const part1 = Math.floor(100 + Math.random() * 900);
-  const part2 = Math.floor(100 + Math.random() * 900);
-  return `${part1}-${part2}`;
+  return String(crypto.randomInt(100000, 1000000));
 };
 
 /**
@@ -651,7 +650,7 @@ export const requestDeviceLink = async (
 
   const linkSessionId = crypto.randomUUID();
   const linkingPin = generatePin();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes (TTL)
 
   await deviceLinkRepository.createLinkSession({
     userId,
@@ -661,6 +660,15 @@ export const requestDeviceLink = async (
     newDeviceId: deviceId,
     newDeviceName: deviceName || "New Device",
     expiresAt,
+  });
+
+  console.log("[e2ee:device-link:create] Session created:", {
+    userId: String(userId),
+    linkSessionId,
+    storedCode: linkingPin,
+    createdAt: new Date().toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    now: new Date().toISOString(),
   });
 
   try {
@@ -702,9 +710,6 @@ export const getDeviceLinkStatus = async (userId, linkSessionId) => {
   }
 
   if (session.status === "approved" && session.encryptedPayload) {
-    // Delete session after successful read (one-time consume)
-    await deviceLinkRepository.deleteLinkSession(linkSessionId).catch(() => {});
-
     return {
       status: "approved",
       encryptedPayload: session.encryptedPayload,
@@ -723,23 +728,80 @@ export const getDeviceLinkStatus = async (userId, linkSessionId) => {
  * Looks up a pending device link session by linking PIN for the authenticated user.
  */
 export const lookupPendingLinkSession = async (userId, linkingPin) => {
-  const cleanPin = String(linkingPin).trim().replace(/\s+/g, "");
-  const session = await deviceLinkRepository.findPendingSessionByPin(
+  const cleanPin = String(linkingPin || "").trim().replace(/[\s-]+/g, "");
+  const now = new Date();
+
+  console.log("[e2ee:device-link:lookup] Session lookup requested:", {
+    userId: String(userId),
+    receivedCode: linkingPin,
+    normalizedCode: cleanPin,
+    now: now.toISOString(),
+  });
+
+  if (!cleanPin || cleanPin.length !== 6 || !/^\d{6}$/.test(cleanPin)) {
+    console.log("[e2ee:device-link:lookup] Invalid PIN format:", {
+      receivedCode: linkingPin,
+      cleanPin,
+    });
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Invalid linking code. Please enter a valid 6-digit code.",
+    );
+  }
+
+  const session = await deviceLinkRepository.findSessionByPin(
     userId,
     cleanPin,
   );
 
   if (!session) {
+    console.log("[e2ee:device-link:lookup] Session not found:", {
+      userId: String(userId),
+      cleanPin,
+      now: now.toISOString(),
+    });
     throw new ApiError(
       StatusCodes.NOT_FOUND,
-      "Pending device linking session not found or has expired.",
+      "Invalid linking code. Pending session not found.",
     );
   }
 
-  if (new Date() > new Date(session.expiresAt)) {
+  console.log("[e2ee:device-link:lookup] Session found:", {
+    userId: String(userId),
+    linkSessionId: session.linkSessionId,
+    storedCode: session.linkingPin,
+    status: session.status,
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    now: now.toISOString(),
+  });
+
+  if (now > new Date(session.expiresAt) || session.status === "expired") {
+    console.log("[e2ee:device-link:lookup] Session expired:", {
+      linkSessionId: session.linkSessionId,
+      expiresAt: session.expiresAt,
+      now: now.toISOString(),
+    });
     throw new ApiError(
       StatusCodes.GONE,
       "This device linking session has expired.",
+    );
+  }
+
+  if (session.status === "approved") {
+    console.log("[e2ee:device-link:lookup] Session already approved:", {
+      linkSessionId: session.linkSessionId,
+    });
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "Device linking session already used.",
+    );
+  }
+
+  if (session.status !== "pending") {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "This device linking session is no longer active.",
     );
   }
 
@@ -760,43 +822,116 @@ export const approveDeviceLink = async (
   userId,
   { linkSessionId, linkingPin, encryptedPayload, approverDeviceId },
 ) => {
+  const now = new Date();
+  const cleanPin = linkingPin
+    ? String(linkingPin).trim().replace(/[\s-]+/g, "")
+    : undefined;
+
+  console.log("[e2ee:device-link:approve] Session approval requested:", {
+    userId: String(userId),
+    linkSessionId,
+    receivedCode: linkingPin,
+    cleanCode: cleanPin,
+    approverDeviceId,
+    now: now.toISOString(),
+  });
+
   let session = null;
   if (linkSessionId) {
     session = await deviceLinkRepository.findLinkSessionById(linkSessionId);
-  } else if (linkingPin) {
-    session = await deviceLinkRepository.findPendingSessionByPin(
-      userId,
-      linkingPin,
-    );
+  } else if (cleanPin) {
+    session = await deviceLinkRepository.findSessionByPin(userId, cleanPin);
   }
 
   if (!session) {
+    console.log("[e2ee:device-link:approve] Session not found:", {
+      userId: String(userId),
+      linkSessionId,
+      cleanPin,
+      now: now.toISOString(),
+    });
     throw new ApiError(
       StatusCodes.NOT_FOUND,
-      "Device linking session not found or has expired.",
+      "Invalid linking code. Device linking session not found.",
     );
   }
 
+  console.log("[e2ee:device-link:approve] Session found:", {
+    userId: String(userId),
+    linkSessionId: session.linkSessionId,
+    storedCode: session.linkingPin,
+    status: session.status,
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    now: now.toISOString(),
+  });
+
   if (String(session.userId) !== String(userId)) {
+    console.log("[e2ee:device-link:approve] User mismatch:", {
+      sessionUserId: String(session.userId),
+      authUserId: String(userId),
+    });
     throw new ApiError(
       StatusCodes.FORBIDDEN,
       "Unauthorized device link approval.",
     );
   }
 
-  if (
-    session.status !== "pending" ||
-    new Date() > new Date(session.expiresAt)
-  ) {
+  if (now > new Date(session.expiresAt) || session.status === "expired") {
+    console.log("[e2ee:device-link:approve] Session expired:", {
+      linkSessionId: session.linkSessionId,
+      expiresAt: session.expiresAt,
+      now: now.toISOString(),
+    });
+    throw new ApiError(
+      StatusCodes.GONE,
+      "This device linking session has expired.",
+    );
+  }
+
+  if (session.status === "approved") {
+    // Idempotent retry: if already approved by this approver or payload already set
+    console.log(
+      "[e2ee:device-link:approve] Session already approved (idempotent check):",
+      {
+        linkSessionId: session.linkSessionId,
+        sessionApproverDeviceId: session.approverDeviceId,
+        approverDeviceId,
+      },
+    );
+    if (
+      session.approverDeviceId === approverDeviceId ||
+      (!session.approverDeviceId && session.encryptedPayload)
+    ) {
+      return {
+        success: true,
+        linkSessionId: session.linkSessionId,
+        newDeviceId: session.newDeviceId,
+        alreadyApproved: true,
+      };
+    }
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "Device linking session already used.",
+    );
+  }
+
+  if (session.status !== "pending") {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      "Device linking session is no longer pending or has expired.",
+      "Device linking session is no longer pending.",
     );
   }
 
   await deviceLinkRepository.approveLinkSession(session.linkSessionId, {
     encryptedPayload,
     approverDeviceId,
+  });
+
+  console.log("[e2ee:device-link:approve] Session approved successfully:", {
+    linkSessionId: session.linkSessionId,
+    approverDeviceId,
+    now: new Date().toISOString(),
   });
 
   try {
@@ -840,6 +975,7 @@ const e2eeService = {
   getDevicesPublicKeys,
   requestDeviceLink,
   getDeviceLinkStatus,
+  lookupPendingLinkSession,
   approveDeviceLink,
 };
 
