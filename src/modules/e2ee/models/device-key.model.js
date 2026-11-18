@@ -6,7 +6,6 @@ const DeviceKeySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     deviceId: {
       type: String,
@@ -27,7 +26,6 @@ const DeviceKeySchema = new mongoose.Schema(
     isRevoked: {
       type: Boolean,
       default: false,
-      index: true,
     },
     lastActiveAt: {
       type: Date,

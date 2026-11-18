@@ -13,6 +13,7 @@ import {
   parseBool,
   assertValidCipher,
   MAX_CIPHERTEXT_LENGTH,
+  sanitizeAndValidateEnvelopes,
 } from "../../utils/e2ee.js";
 import {
   EDIT_WINDOW_MS,
@@ -93,30 +94,13 @@ export const editMessage = async (
     };
   }
 
-  const sanitizedEnvelopes = [];
-  if (wantsE2EE && Array.isArray(keyEnvelopes)) {
-    for (const env of keyEnvelopes) {
-      if (
-        env &&
-        env.deviceId &&
-        env.wrappedKey &&
-        env.iv &&
-        isValidObjectId(env.userId)
-      ) {
-        sanitizedEnvelopes.push({
-          deviceId: String(env.deviceId),
-          userId: toObjectId(env.userId),
-          wrappedKey: String(env.wrappedKey),
-          iv: String(env.iv),
-        });
-      }
-    }
-    if (sanitizedEnvelopes.length === 0) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Key envelopes are required for encrypted message.",
-      );
-    }
+  let sanitizedEnvelopes = [];
+  if (wantsE2EE) {
+    sanitizedEnvelopes = sanitizeAndValidateEnvelopes(keyEnvelopes, {
+      senderId: userId,
+      receiverId: message.receiverId,
+      requireReceiverEnvelope: true,
+    });
   }
 
   message.text = text;

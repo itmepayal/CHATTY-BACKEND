@@ -21,6 +21,7 @@ import {
   approveDeviceLinkSchema,
   linkSessionIdParamSchema,
   linkingPinParamSchema,
+  rotateDeviceSchema,
 } from "../validations/e2ee.validation.js";
 
 const router = express.Router();
@@ -82,10 +83,22 @@ router
     e2eeController.registerDevice,
   );
 
+router.post(
+  "/devices/heartbeat",
+  validate(deviceIdParamSchema, "body"),
+  e2eeController.heartbeatDevice,
+);
+
 router.delete(
   "/devices/:deviceId",
   validate(deviceIdParamSchema, "params"),
   e2eeController.revokeDevice,
+);
+
+router.post(
+  "/devices/rotate",
+  validate(rotateDeviceSchema, "body"),
+  e2eeController.rotateDeviceKey,
 );
 
 router.post(

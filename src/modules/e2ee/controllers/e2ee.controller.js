@@ -76,8 +76,22 @@ export const registerDevice = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const heartbeatDevice = asyncHandler(async (req, res) => {
+  const data = await e2eeService.heartbeatDevice(
+    req.user._id,
+    req.body.deviceId,
+  );
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Device heartbeat updated successfully.",
+  ).send(res);
+});
+
 export const getDevices = asyncHandler(async (req, res) => {
-  const data = await e2eeService.getDevices(req.user._id);
+  const data = await e2eeService.getDevices(req.user._id, {
+    includeRevoked: req.query.includeRevoked === "true",
+  });
   return new ApiResponse(
     StatusCodes.OK,
     data,
@@ -85,8 +99,20 @@ export const getDevices = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const rotateDeviceKey = asyncHandler(async (req, res) => {
+  const data = await e2eeService.rotateDeviceKey(req.user._id, req.body);
+  return new ApiResponse(
+    StatusCodes.OK,
+    data,
+    "Device key rotated successfully.",
+  ).send(res);
+});
+
 export const revokeDevice = asyncHandler(async (req, res) => {
-  const data = await e2eeService.revokeDevice(req.user._id, req.params.deviceId);
+  const data = await e2eeService.revokeDevice(
+    req.user._id,
+    req.params.deviceId,
+  );
   return new ApiResponse(
     StatusCodes.OK,
     data,
@@ -154,8 +180,10 @@ const e2eeController = {
   getPublicKey,
   getPublicKeysBatch,
   registerDevice,
+  heartbeatDevice,
   getDevices,
   revokeDevice,
+  rotateDeviceKey,
   getDevicesPublicKeys,
   requestDeviceLink,
   getDeviceLinkStatus,

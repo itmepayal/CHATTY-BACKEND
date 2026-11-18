@@ -162,7 +162,7 @@ export const getBackup = async (userId) => {
  */
 export const updateBackup = async (
   userId,
-  { encryptedPrivateKey, backupVersion },
+  { encryptedPrivateKey, backupVersion, expectedVersion, deviceId },
 ) => {
   const user = await userKeyRepository.findE2EEStatus(userId);
   if (!user) {
@@ -179,6 +179,33 @@ export const updateBackup = async (
     );
   }
 
+  // If deviceId provided, verify it is not revoked
+  if (deviceId) {
+    const dev = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+    if (dev?.isRevoked) {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "Revoked device cannot update encryption backup.",
+      );
+    }
+  }
+
+  // Prevent stale backup overwrites & concurrent collision
+  const currentVersion = user.e2eeBackupVersion || 1;
+  if (expectedVersion !== undefined && expectedVersion !== currentVersion) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      `Concurrent backup update detected. Expected version ${expectedVersion}, but current is ${currentVersion}.`,
+    );
+  }
+
+  if (backupVersion && backupVersion < currentVersion) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      `Cannot overwrite newer backup version ${currentVersion} with older version ${backupVersion}.`,
+    );
+  }
+
   const nextVersion =
     backupVersion || (user.e2eeBackupVersion ? user.e2eeBackupVersion + 1 : 1);
 
@@ -186,6 +213,15 @@ export const updateBackup = async (
     encryptedPrivateKey,
     backupVersion: nextVersion,
   });
+
+  try {
+    io.to(String(userId)).emit("e2ee:backup:updated", {
+      backupVersion: updated.e2eeBackupVersion,
+      backupUpdatedAt: updated.e2eeBackupUpdatedAt,
+    });
+  } catch (err) {
+    console.warn("[e2ee] Failed to emit backup:updated socket event:", err?.message);
+  }
 
   return {
     hasBackup: true,
@@ -329,12 +365,41 @@ export const registerDevice = async (
   userId,
   { deviceId, publicKey, deviceName },
 ) => {
+  if (deviceId === "device-session-fallback") {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Static fallback device ID is not permitted.",
+    );
+  }
+
   const user = await userKeyRepository.findE2EEStatus(userId);
   if (!user) {
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       E2EE_ERROR_MESSAGES.USER_NOT_FOUND,
     );
+  }
+
+  // Prevent silent re-registration of explicitly revoked devices
+  const existing = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+  if (existing?.isRevoked) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "This device has been revoked and cannot be registered without re-authorization.",
+    );
+  }
+
+  // Prevent silent identity key replacement on active devices
+  if (existing && !existing.isRevoked && existing.publicKey) {
+    if (
+      existing.publicKey.x !== publicKey.x ||
+      existing.publicKey.y !== publicKey.y
+    ) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        "Device identity key cannot be replaced for an active device. Revoke the device first or re-link securely.",
+      );
+    }
   }
 
   const device = await deviceKeyRepository.upsertDeviceKey(userId, {
@@ -359,15 +424,40 @@ export const registerDevice = async (
 };
 
 /**
- * Retrieves all active registered devices for the authenticated user.
+ * Updates last active timestamp for an existing device.
  */
-export const getDevices = async (userId) => {
-  const devices = await deviceKeyRepository.findActiveDevicesForUser(userId);
+export const heartbeatDevice = async (userId, deviceId) => {
+  if (!deviceId || deviceId === "device-session-fallback") {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Valid device ID is required.");
+  }
+
+  const result = await deviceKeyRepository.updateDeviceActivity(userId, deviceId);
+  if (!result || result.matchedCount === 0) {
+    const existing = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+    if (existing?.isRevoked) {
+      throw new ApiError(StatusCodes.FORBIDDEN, "Device is revoked.");
+    }
+    return { active: false, registered: false, deviceId };
+  }
+
+  return { active: true, registered: true, deviceId, lastActiveAt: new Date() };
+};
+
+/**
+ * Retrieves registered devices for the authenticated user.
+ * Supports filtering active devices only (default) or including revoked devices.
+ */
+export const getDevices = async (userId, { includeRevoked = false } = {}) => {
+  const devices = includeRevoked
+    ? await deviceKeyRepository.findAllDevicesForUser(userId)
+    : await deviceKeyRepository.findActiveDevicesForUser(userId);
+
   return {
     devices: devices.map((d) => ({
       deviceId: d.deviceId,
       deviceName: d.deviceName,
       publicKey: d.publicKey,
+      isRevoked: Boolean(d.isRevoked),
       lastActiveAt: d.lastActiveAt,
       createdAt: d.createdAt,
     })),
@@ -376,15 +466,78 @@ export const getDevices = async (userId) => {
 
 /**
  * Revokes a device so it is no longer included in message key envelope wrapping.
+ * Emits real-time notification to the user's active devices.
  */
 export const revokeDevice = async (userId, deviceId) => {
   const updated = await deviceKeyRepository.revokeDevice(userId, deviceId);
   if (!updated) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Device not found.");
   }
+
+  try {
+    io.to(String(userId)).emit("e2ee:device:revoked", {
+      deviceId: updated.deviceId,
+      revokedAt: updated.lastActiveAt || new Date(),
+    });
+  } catch (err) {
+    console.warn("[e2ee] Failed to emit device:revoked socket event:", err?.message);
+  }
+
   return {
     revoked: true,
     deviceId: updated.deviceId,
+  };
+};
+
+/**
+ * Rotates an active device's public key securely.
+ */
+export const rotateDeviceKey = async (
+  userId,
+  { deviceId, newPublicKey, deviceName },
+) => {
+  if (!deviceId || deviceId === "device-session-fallback") {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Valid device ID is required.");
+  }
+
+  const existing = await deviceKeyRepository.findDeviceByUserAndId(userId, deviceId);
+  if (!existing) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Device not found.");
+  }
+  if (existing.isRevoked) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Cannot rotate keys for a revoked device.",
+    );
+  }
+
+  const updated = await deviceKeyRepository.upsertDeviceKey(userId, {
+    deviceId,
+    publicKey: {
+      kty: "EC",
+      crv: "P-256",
+      x: newPublicKey.x,
+      y: newPublicKey.y,
+    },
+    deviceName: deviceName || existing.deviceName,
+  });
+
+  try {
+    io.to(String(userId)).emit("e2ee:device:rotated", {
+      deviceId: updated.deviceId,
+      publicKey: updated.publicKey,
+      rotatedAt: updated.lastActiveAt,
+    });
+  } catch (err) {
+    console.warn("[e2ee] Failed to emit device:rotated socket event:", err?.message);
+  }
+
+  return {
+    rotated: true,
+    deviceId: updated.deviceId,
+    deviceName: updated.deviceName,
+    publicKey: updated.publicKey,
+    lastActiveAt: updated.lastActiveAt,
   };
 };
 
@@ -681,6 +834,7 @@ const e2eeService = {
   getPublicKey,
   getPublicKeysBatch,
   registerDevice,
+  heartbeatDevice,
   getDevices,
   revokeDevice,
   getDevicesPublicKeys,

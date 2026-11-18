@@ -31,9 +31,11 @@ export const isBase64 = (v, { min = 1, max = Infinity } = {}) =>
   B64_RE.test(v);
 
 export const assertValidIv = (iv) => {
+  const bufLen =
+    typeof iv === "string" ? Buffer.from(iv, DECODE_ENC).length : 0;
   if (
-    !isBase64(iv, { min: 16, max: 16 }) ||
-    Buffer.from(iv, DECODE_ENC).length !== IV_BYTES
+    !isBase64(iv, { min: 16, max: 24 }) ||
+    (bufLen !== IV_BYTES && bufLen !== 16)
   ) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid encryption IV.");
   }
@@ -90,4 +92,155 @@ export const parseKeyEntries = (raw, defaultVersion) => {
     });
   }
   return [...map.values()];
+};
+
+/**
+ * Validates, sanitizes, and deduplicates key envelopes for encrypted messages.
+ * Enforces cross-user isolation, device ID constraints, and envelope requirements.
+ *
+ * @param {Array|string} rawEnvelopes - Array or JSON string of key envelopes
+ * @param {object} options
+ * @param {string|mongoose.Types.ObjectId} [options.senderId] - Allowed sender ID
+ * @param {string|mongoose.Types.ObjectId} [options.receiverId] - Allowed receiver ID
+ * @param {Array<string|mongoose.Types.ObjectId>} [options.allowedUserIds] - Explicit allowed user IDs
+ * @param {boolean} [options.requireReceiverEnvelope=false] - Whether recipient envelope is required
+ * @returns {Array<{ deviceId: string, userId: mongoose.Types.ObjectId, wrappedKey: string, iv: string }>}
+ */
+export const sanitizeAndValidateEnvelopes = (
+  rawEnvelopes,
+  {
+    senderId = null,
+    receiverId = null,
+    allowedUserIds = null,
+    requireReceiverEnvelope = false,
+  } = {},
+) => {
+  let parsed = rawEnvelopes;
+  if (typeof rawEnvelopes === "string") {
+    try {
+      parsed = JSON.parse(rawEnvelopes);
+    } catch {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Invalid key envelopes format.",
+      );
+    }
+  }
+
+  if (!parsed) {
+    if (requireReceiverEnvelope) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Key envelopes are required for encrypted message.",
+      );
+    }
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Key envelopes must be an array.",
+    );
+  }
+
+  if (parsed.length === 0) {
+    if (requireReceiverEnvelope) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Key envelopes are required for encrypted message.",
+      );
+    }
+    return [];
+  }
+
+  if (parsed.length > MAX_KEY_ENTRIES) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Too many key envelopes.");
+  }
+
+  const allowedSet = new Set();
+  if (Array.isArray(allowedUserIds)) {
+    for (const uid of allowedUserIds) {
+      if (uid) allowedSet.add(String(uid));
+    }
+  }
+  if (senderId) allowedSet.add(String(senderId));
+  if (receiverId) allowedSet.add(String(receiverId));
+
+  const dedupeMap = new Map();
+  let hasReceiverEnvelope = false;
+  const targetReceiverStr = receiverId ? String(receiverId) : null;
+
+  for (const env of parsed) {
+    if (!env || typeof env !== "object") {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid key envelope item.");
+    }
+
+    const userIdStr = String(env.userId || "");
+    if (!mongoose.Types.ObjectId.isValid(userIdStr)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Invalid user ID in key envelope.",
+      );
+    }
+
+    if (allowedSet.size > 0 && !allowedSet.has(userIdStr)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Unauthorized user in key envelopes.",
+      );
+    }
+
+    const deviceId = String(env.deviceId || "").trim();
+    if (!deviceId || deviceId.length > 128) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Invalid device ID in key envelope.",
+      );
+    }
+
+    if (deviceId === "device-session-fallback") {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Static fallback device ID is not permitted in key envelopes.",
+      );
+    }
+
+    const wrappedKey = String(env.wrappedKey || env.encryptedKey || "").trim();
+    if (
+      !wrappedKey ||
+      wrappedKey.length > MAX_WRAPPED_KEY_LENGTH
+    ) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Invalid wrapped key in key envelope.",
+      );
+    }
+
+    const iv = String(env.iv || "");
+    assertValidIv(iv);
+
+    if (targetReceiverStr && userIdStr === targetReceiverStr) {
+      hasReceiverEnvelope = true;
+    }
+
+    const dedupeKey = `${userIdStr}:${deviceId}`;
+    if (!dedupeMap.has(dedupeKey)) {
+      dedupeMap.set(dedupeKey, {
+        deviceId,
+        userId: new mongoose.Types.ObjectId(userIdStr),
+        wrappedKey,
+        iv,
+      });
+    }
+  }
+
+  if (requireReceiverEnvelope && targetReceiverStr && !hasReceiverEnvelope) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Key envelope for recipient is required.",
+    );
+  }
+
+  return [...dedupeMap.values()];
 };
