@@ -1,4 +1,5 @@
-const isProd = process.env.NODE_ENV === "production";
+const isProd =
+  process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 
 export const PASSWORD_SALT_ROUNDS = 10;
 export const salt = PASSWORD_SALT_ROUNDS;

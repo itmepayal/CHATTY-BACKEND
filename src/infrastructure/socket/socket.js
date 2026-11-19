@@ -30,7 +30,11 @@ const io = new Server(server, {
   cors: {
     origin: corsOriginValidator,
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   },
+  transports: ["websocket", "polling"],
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 import {
@@ -136,43 +140,57 @@ export const disconnectOtherUserSessions = async (userId, keepSessionId) => {
   }
 };
 
-const parseCookies = (header = "") =>
-  Object.fromEntries(
-    header
-      .split(";")
-      .map((c) => {
-        const i = c.indexOf("=");
+const parseCookies = (header = "") => {
+  if (!header || typeof header !== "string") return {};
+  try {
+    return Object.fromEntries(
+      header
+        .split(";")
+        .map((c) => {
+          const i = c.indexOf("=");
 
-        if (i < 0) return null;
+          if (i < 0) return null;
 
-        return [
-          c.slice(0, i).trim(),
-          decodeURIComponent(c.slice(i + 1).trim()),
-        ];
-      })
-      .filter(Boolean),
-  );
+          const rawKey = c.slice(0, i).trim();
+          const rawVal = c.slice(i + 1).trim();
+          try {
+            return [rawKey, decodeURIComponent(rawVal)];
+          } catch {
+            return [rawKey, rawVal];
+          }
+        })
+        .filter(Boolean),
+    );
+  } catch {
+    return {};
+  }
+};
 
 io.use(async (socket, next) => {
   try {
-    const cookies = parseCookies(socket.handshake.headers.cookie);
-    const authHeader = socket.handshake.headers.authorization;
+    const cookies = parseCookies(socket.handshake.headers?.cookie);
+    const authHeader = socket.handshake.headers?.authorization;
     const token =
-      cookies.accessToken ||
       socket.handshake.auth?.token ||
-      (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : authHeader);
+      (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : authHeader) ||
+      cookies.accessToken ||
+      socket.handshake.query?.token;
 
     if (!token) {
-      console.log("[socket] rejected: no token");
-      return next(new Error("Unauthorized"));
+      console.error(
+        `[socket] Connection rejected: No auth token provided in handshake auth, headers, or cookies. Remote: ${socket.handshake.address}`,
+      );
+      return next(new Error("Unauthorized: No token provided"));
     }
 
     let decoded;
     try {
       decoded = jwt.verify(token, accessTokenSecret);
     } catch (err) {
-      console.log("[socket] rejected: invalid token:", err.message);
-      return next(new Error("Unauthorized"));
+      console.error(
+        `[socket] Connection rejected: Token verification failed (${err.message})`,
+      );
+      return next(new Error(`Unauthorized: Invalid token (${err.message})`));
     }
 
     if (decoded.sessionId) {
@@ -181,13 +199,17 @@ io.use(async (socket, next) => {
         .lean();
 
       if (!session || session.revoked || session.expiresAt < new Date()) {
-        console.log("[socket] rejected: session revoked or expired");
-        return next(new Error("Unauthorized: Session revoked"));
+        console.error(
+          `[socket] Connection rejected: Session ${decoded.sessionId} revoked or expired`,
+        );
+        return next(new Error("Unauthorized: Session revoked or expired"));
       }
 
       if (String(session.userId) !== String(decoded.id)) {
-        console.log("[socket] rejected: session owner mismatch");
-        return next(new Error("Unauthorized: Invalid session"));
+        console.error(
+          `[socket] Connection rejected: Session user mismatch (${session.userId} !== ${decoded.id})`,
+        );
+        return next(new Error("Unauthorized: Invalid session owner"));
       }
     }
 
@@ -196,26 +218,32 @@ io.use(async (socket, next) => {
       .lean();
 
     if (!user) {
-      console.log("[socket] rejected: user not found");
+      console.error(`[socket] Connection rejected: User ${decoded.id} not found`);
       return next(new Error("Unauthorized: User not found"));
     }
 
     if (user.status === "suspended") {
-      console.log("[socket] rejected: user account suspended");
+      console.error(
+        `[socket] Connection rejected: User ${decoded.id} account suspended`,
+      );
       return next(new Error("Forbidden: Account suspended"));
     }
 
     if (decoded.tokenVersion === undefined) {
-      console.log("[socket] rejected: missing token version");
-      return next(new Error("Unauthorized: Invalid token"));
+      console.error(
+        `[socket] Connection rejected: Missing tokenVersion in token for user ${decoded.id}`,
+      );
+      return next(new Error("Unauthorized: Missing token version"));
     }
 
     if (
       user.tokenVersion !== undefined &&
       decoded.tokenVersion < user.tokenVersion
     ) {
-      console.log("[socket] rejected: token version invalidated");
-      return next(new Error("Unauthorized: Token invalidated"));
+      console.error(
+        `[socket] Connection rejected: Token version invalidated for user ${decoded.id}`,
+      );
+      return next(new Error("Unauthorized: Token version invalidated"));
     }
 
     socket.data.userId = String(decoded.id);
@@ -224,8 +252,11 @@ io.use(async (socket, next) => {
 
     next();
   } catch (err) {
-    console.log("[socket] rejected:", err.message);
-    next(new Error("Unauthorized"));
+    console.error(
+      "[socket] Auth middleware unexpected error:",
+      err?.message || err,
+    );
+    return next(new Error(`Unauthorized: ${err?.message || "Server error"}`));
   }
 });
 
