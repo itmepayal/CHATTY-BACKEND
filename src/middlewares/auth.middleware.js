@@ -95,6 +95,7 @@ const authMiddleware = async (req, res, next) => {
 
     req.sessionId = decoded.sessionId || null;
     req.user = safeUser;
+    req.token = token;
     next();
   } catch (error) {
     next(error);

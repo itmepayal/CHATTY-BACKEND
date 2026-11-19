@@ -1,22 +1,34 @@
 export const port = process.env.PORT;
-export const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+export const clientUrl = (process.env.CLIENT_URL || "http://localhost:5173")
+  .trim()
+  .replace(/\/+$/, "");
 export const resendApiKey = process.env.RESEND_API_KEY;
 export const mongoUri = process.env.MONGO_URI;
 export const mongoDbName = process.env.MONGO_DB;
 export const serverUrl = process.env.SERVER_URL || `http://localhost:${port}`;
 export const appSchemeUrl = process.env.APP_SCHEME_URL || "chatty://";
 
+const clientUrls = (process.env.CLIENT_URL || "")
+  .split(",")
+  .map((u) => u.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
 export const ALLOWED_ORIGINS = Object.freeze(
-  [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://localhost:19006",
-    "https://chatty-app-sigma.vercel.app",
-    "https://chatty-backend-2l2t.onrender.com",
-    clientUrl,
-  ]
-    .filter(Boolean)
-    .map((url) => url.replace(/\/+$/, "")),
+  Array.from(
+    new Set(
+      [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:19006",
+        "https://chatty-app-sigma.vercel.app",
+        "https://chatty-backend-2l2t.onrender.com",
+        clientUrl,
+        ...clientUrls,
+      ]
+        .filter(Boolean)
+        .map((url) => url.trim().replace(/\/+$/, "")),
+    ),
+  ),
 );
 
 export const isAllowedOrigin = (origin) => {
@@ -29,6 +41,7 @@ export const corsOriginValidator = (origin, callback) => {
   if (isAllowedOrigin(origin)) {
     return callback(null, true);
   }
+  console.warn(`[CORS] Blocked request from origin: ${origin}`);
   return callback(new Error(`CORS blocked for origin: ${origin}`));
 };
 

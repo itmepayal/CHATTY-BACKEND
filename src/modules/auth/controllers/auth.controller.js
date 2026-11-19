@@ -97,7 +97,11 @@ export const checkAuth = asyncHandler(async (req, res) => {
   const { user, extras } = await authService.getAuthSession(req.user);
   return new ApiResponse(
     StatusCodes.OK,
-    buildAuthUserPayload(user, null, extras),
+    buildAuthUserPayload(
+      user,
+      req.token ? { accessToken: req.token } : null,
+      extras,
+    ),
     "Authenticated user fetched successfully",
   ).send(res);
 });

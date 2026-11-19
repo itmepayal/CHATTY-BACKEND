@@ -10,6 +10,14 @@ import {
 import { setupSwagger } from "../config/swagger.js";
 import { corsOriginValidator } from "../shared/constants/app.constants.js";
 
+// Trust reverse proxy (Render, Cloudflare, etc.)
+app.set("trust proxy", 1);
+
+// Lightweight health check endpoint for Render keep-alive and uptime monitoring
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 app.use(express.json());
 
 app.use(
@@ -22,6 +30,7 @@ app.use(
       "Authorization",
       "X-Refresh-Token",
       "x-refresh-token",
+      "X-Chat-Unlock-Token",
     ],
   }),
 );

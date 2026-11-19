@@ -27,11 +27,12 @@ export const startServer = async () => {
     startDisappearingSweeper();
     startLocationExpiryJob(io);
 
-    server.listen(port, "0.0.0.0", () => {
+    const listenPort = port || process.env.PORT || 5000;
+    server.listen(listenPort, "0.0.0.0", () => {
+      console.log(`Server listening on port ${listenPort}`);
       if (process.env.NODE_ENV !== "production") {
-        console.log(`Server running on http://0.0.0.0:${port}`);
-        console.log(`Local API: http://localhost:${port}/api/v1`);
-        console.log(`Swagger Docs API: http://localhost:${port}/api-docs`);
+        console.log(`Local API: http://localhost:${listenPort}/api/v1`);
+        console.log(`Swagger Docs API: http://localhost:${listenPort}/api-docs`);
       }
     });
   } catch (error) {
