@@ -92,6 +92,7 @@ export const resetPassword = async ({ token, password, confirmPassword }) => {
   user.passwordResetToken = undefined;
   user.passwordResetExpires = undefined;
   user.tokenVersion = (user.tokenVersion || 0) + 1;
+  user.lockEpoch = (user.lockEpoch || 0) + 1;
   await user.save();
 
   await sessionRepository.revokeAllForUser(user._id).catch(() => {});
@@ -115,7 +116,10 @@ export const changePassword = async ({
     confirmPassword,
   });
 
-  const user = await userRepository.findByIdSelect(userId, "+password");
+  const user = await userRepository.findByIdSelect(
+    userId,
+    "+password +lockEpoch +tokenVersion",
+  );
   if (!user) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.USER_NOT_FOUND);
   }
@@ -129,6 +133,8 @@ export const changePassword = async ({
   }
 
   user.password = newPassword;
+  user.tokenVersion = (user.tokenVersion || 0) + 1;
+  user.lockEpoch = (user.lockEpoch || 0) + 1;
   await user.save();
 
   if (currentSessionId) {

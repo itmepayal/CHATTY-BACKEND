@@ -334,24 +334,24 @@ export const deleteUserAccount = async ({
 
   const sessionOpt = useTransaction ? { session } : {};
 
-  try {
+  const performCleanup = async (opts) => {
     await groupMessageRepository.updateMany(
       { $or: [{ readBy: userId }, { silentReadBy: userId }] },
       { $pull: { readBy: userId, silentReadBy: userId } },
-      sessionOpt,
+      opts,
     );
 
-    await groupMessageRepository.deleteMany(groupCleanupFilter, sessionOpt);
+    await groupMessageRepository.deleteMany(groupCleanupFilter, opts);
 
     if (deletedGroupIds.length) {
-      await groupRepository.deleteManyByIds(deletedGroupIds, sessionOpt);
+      await groupRepository.deleteManyByIds(deletedGroupIds, opts);
     }
 
-    await messageRepository.deleteMany(dmFilter, sessionOpt);
+    await messageRepository.deleteMany(dmFilter, opts);
 
-    await sessionRepository.deleteAllForUser(userId, sessionOpt);
+    await sessionRepository.deleteAllForUser(userId, opts);
 
-    await contactRepository.deleteInvolvingUser(userId, sessionOpt);
+    await contactRepository.deleteInvolvingUser(userId, opts);
 
     await locationShareRepository.deleteMany(
       {
@@ -363,7 +363,7 @@ export const deleteUserAccount = async ({
             : []),
         ],
       },
-      sessionOpt,
+      opts,
     );
 
     await groupKeyRepository.deleteForUserOrGroups(
@@ -375,14 +375,14 @@ export const deleteUserAccount = async ({
             : []),
         ],
       },
-      sessionOpt,
+      opts,
     );
 
-    await scheduledMessageRepository.deleteForSender(userId, sessionOpt);
+    await scheduledMessageRepository.deleteForSender(userId, opts);
 
-    await callRepository.deleteForUser(userId, sessionOpt);
+    await callRepository.deleteForUser(userId, opts);
 
-    await chatSettingRepository.deleteArchivesForUser(userId, sessionOpt);
+    await chatSettingRepository.deleteArchivesForUser(userId, opts);
 
     await groupArchiveRepository.deleteMany(
       {
@@ -393,12 +393,23 @@ export const deleteUserAccount = async ({
             : []),
         ],
       },
-      sessionOpt,
+      opts,
     );
 
-    await userRepository.pullRelationFromAll(userId, sessionOpt);
+    await userRepository.pullRelationFromAll(userId, opts);
 
-    await userRepository.findByIdAndDelete(userId, sessionOpt);
+    const pullIds = [String(userId), ...deletedGroupIds.map(String)];
+    await userRepository.updateMany(
+      { lockedChats: { $in: pullIds } },
+      { $pull: { lockedChats: { $in: pullIds } } },
+      opts,
+    );
+
+    await userRepository.findByIdAndDelete(userId, opts);
+  };
+
+  try {
+    await performCleanup(sessionOpt);
 
     if (useTransaction) {
       await session.commitTransaction();
@@ -414,7 +425,20 @@ export const deleteUserAccount = async ({
           ),
         );
     }
-    throw err;
+
+    if (
+      useTransaction &&
+      (err?.code === 20 ||
+        err?.message?.includes("replica set member") ||
+        err?.errorResponse?.code === 20)
+    ) {
+      console.warn(
+        "[deleteAccount] Standalone MongoDB detected — retrying cleanup without transaction.",
+      );
+      await performCleanup({});
+    } else {
+      throw err;
+    }
   } finally {
     if (session) session.endSession().catch(() => {});
   }

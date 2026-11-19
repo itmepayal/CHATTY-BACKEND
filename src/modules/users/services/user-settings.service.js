@@ -21,6 +21,12 @@ import {
   PRIVACY_PROJECTION_FIELDS as PRIVACY_SELECT,
 } from "../../privacy/constants/privacy.constants.js";
 import { refreshPrivacy } from "../../../infrastructure/socket/socket.js";
+import {
+  verifyUnlockToken,
+  verifyPinHash,
+} from "../utils/lock-token.util.js";
+
+const MAX_LOCKED_CHATS = 100;
 
 const toStrList = (arr) => (Array.isArray(arr) ? arr.map(String) : []);
 
@@ -28,12 +34,14 @@ const formatPrivacy = (u) => {
   const onlineStatusVisibility =
     u.onlineStatusVisibility ??
     (u.showOnlineStatus === false ? "nobody" : "everyone");
+  const hasVerifier = Boolean(u.appLockPinHash || u.hasPinVerifier);
+  const appLockEnabled = Boolean(u.appLockEnabled && (hasVerifier || u.appLockPinHash === undefined));
   return {
     showOnlineStatus: onlineStatusVisibility !== "nobody",
     readReceipts: u.readReceipts !== false,
     typingIndicator: u.typingIndicator !== false,
     silenceUnknownCallers: Boolean(u.silenceUnknownCallers),
-    appLockEnabled: Boolean(u.appLockEnabled),
+    appLockEnabled,
     appLockTimeout: u.appLockTimeout || "immediately",
     lastSeenVisibility: u.lastSeenVisibility ?? "everyone",
     onlineStatusVisibility,
@@ -52,14 +60,23 @@ const formatPrivacy = (u) => {
 };
 
 export const getPrivacy = async (userId) => {
-  const user = await userRepository.findById(userId).select(PRIVACY_SELECT);
+  const user = await userRepository
+    .findById(userId)
+    .select(PRIVACY_SELECT + " +appLockPinHash");
   if (!user) {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
   }
   return formatPrivacy(user);
 };
 
-export const setPrivacy = async (userId, body = {}) => {
+export const setPrivacy = async (userId, body = {}, options = {}) => {
+  const existingUser = await userRepository
+    .findById(userId)
+    .select("+appLockPinHash +password +lockEpoch lockedChats appLockEnabled");
+  if (!existingUser) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+  }
+
   const $set = {};
   const unknown = [];
 
@@ -98,6 +115,12 @@ export const setPrivacy = async (userId, body = {}) => {
       }
       const rawIds = [...new Set(val.map(String))];
       if (key === "lockedChats") {
+        if (rawIds.length > MAX_LOCKED_CHATS) {
+          throw new ApiError(
+            StatusCodes.BAD_REQUEST,
+            `Cannot lock more than ${MAX_LOCKED_CHATS} chats.`,
+          );
+        }
         const validatedIds = [];
         for (const cid of rawIds) {
           if (!mongoose.Types.ObjectId.isValid(cid)) {
@@ -150,6 +173,9 @@ export const setPrivacy = async (userId, body = {}) => {
         );
       }
       $set[key] = val;
+    } else if (key === "pin" || key === "currentPin" || key === "password" || key === "accountPassword" || key === "unlockToken") {
+      // Step-up authentication credentials carried in body
+      continue;
     } else {
       unknown.push(rawKey);
     }
@@ -160,6 +186,74 @@ export const setPrivacy = async (userId, body = {}) => {
       StatusCodes.BAD_REQUEST,
       `Unknown field(s): ${unknown.join(", ")}`,
     );
+  }
+
+  // S1 Rule 1: Reject appLockEnabled: true unless valid PIN verifier exists or supplied in request
+  if ($set.appLockEnabled === true) {
+    const suppliedVerifier = typeof $set.appLockPinHash === "string" && $set.appLockPinHash.trim().length > 0;
+    const existingVerifier = typeof existingUser.appLockPinHash === "string" && existingUser.appLockPinHash.trim().length > 0;
+    if (!suppliedVerifier && !existingVerifier) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Cannot enable App Lock without configuring a PIN verifier.",
+      );
+    }
+  }
+
+  // S1 Rule 2: Step-up authentication required for disabling, PIN change, or removing locked chats
+  const isDisablingAppLock =
+    existingUser.appLockEnabled === true && $set.appLockEnabled === false;
+  const isChangingPin =
+    $set.appLockPinHash !== undefined &&
+    Boolean(existingUser.appLockPinHash) &&
+    $set.appLockPinHash !== existingUser.appLockPinHash;
+
+  let isRemovingLockedChat = false;
+  if ($set.lockedChats !== undefined) {
+    const currentLocked = (existingUser.lockedChats || []).map(String);
+    const newLockedSet = new Set($set.lockedChats.map(String));
+    isRemovingLockedChat = currentLocked.some((cid) => !newLockedSet.has(cid));
+  }
+
+  if (isDisablingAppLock || isChangingPin || isRemovingLockedChat) {
+    let authorized = false;
+    const tokenCandidate =
+      options.req?.headers?.["x-chat-unlock-token"] ||
+      options.req?.headers?.["x-unlock-token"] ||
+      body.unlockToken;
+
+    if (tokenCandidate) {
+      const decoded = verifyUnlockToken(tokenCandidate);
+      if (
+        decoded &&
+        decoded.userId === String(userId) &&
+        decoded.scope === "app" &&
+        decoded.lockEpoch >= (existingUser.lockEpoch || 0)
+      ) {
+        authorized = true;
+      }
+    }
+
+    if (!authorized && (body.pin || body.currentPin) && existingUser.appLockPinHash) {
+      authorized = await verifyPinHash(body.pin || body.currentPin, existingUser.appLockPinHash);
+    }
+
+    if (!authorized && (body.password || body.accountPassword) && existingUser.password) {
+      authorized = await existingUser.isPassword(body.password || body.accountPassword);
+    }
+
+    if (!authorized) {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "Step-up authentication (valid PIN, password, or app unlock token) is required to modify lock settings.",
+      );
+    }
+
+    if (isDisablingAppLock || isChangingPin) {
+      $set.lockEpoch = (existingUser.lockEpoch || 0) + 1;
+      $set.lockFailedAttempts = 0;
+      $set.lockoutUntil = null;
+    }
   }
 
   if ($set.onlineStatusVisibility) {
@@ -174,7 +268,7 @@ export const setPrivacy = async (userId, body = {}) => {
 
   const updated = await userRepository
     .findByIdAndUpdate(userId, { $set }, { new: true, runValidators: true })
-    .select(PRIVACY_SELECT);
+    .select(PRIVACY_SELECT + " +appLockPinHash");
 
   if (!updated) {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");

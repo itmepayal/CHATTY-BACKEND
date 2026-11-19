@@ -13,6 +13,7 @@ import {
 } from "../../utils/message-helpers.js";
 import { assertValidId } from "../../../../shared/utils/validators.js";
 import { isBlockedEitherWay } from "../../../privacy/services/privacy.service.js";
+import { getOrFetchPrivacy } from "../../../../infrastructure/socket/socket-state.js";
 import User from "../../../users/models/users.model.js";
 
 export const deliverMessage = async ({ senderId, receiverId, data }) => {
@@ -49,7 +50,27 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
     `[delivery] message ${message._id} saved (status: ${message.status}). Broadcasting to receiver ${receiverId} and sender ${senderId}`,
   );
 
-  io.to(receiverId.toString()).emit("newMessage", payload);
+  const receiverPrivacy = await getOrFetchPrivacy(receiverId);
+  const isReceiverLocked = (receiverPrivacy?.lockedChats || []).includes(
+    String(senderId),
+  );
+
+  if (isReceiverLocked) {
+    const redactedPayload = {
+      id: payload.id,
+      _id: payload.id,
+      senderId: payload.senderId,
+      receiverId: payload.receiverId,
+      isLocked: true,
+      status: payload.status,
+      createdAt: payload.createdAt,
+      updatedAt: payload.updatedAt,
+    };
+    io.to(receiverId.toString()).emit("newMessage", redactedPayload);
+  } else {
+    io.to(receiverId.toString()).emit("newMessage", payload);
+  }
+
   if (senderId.toString() !== receiverId.toString()) {
     io.to(senderId.toString()).emit("newMessage", payload);
   }

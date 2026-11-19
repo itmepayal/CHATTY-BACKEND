@@ -3,6 +3,7 @@ import groupController from "../controllers/group.controller.js";
 import * as groupInviteController from "../controllers/group-invite.controller.js";
 import messageController from "../../messaging/controllers/messages.controller.js";
 import authMiddleware from "../../../middlewares/auth.middleware.js";
+import requireChatUnlocked from "../../../middlewares/chat-lock.middleware.js";
 import upload, {
   enforceTypeSizeLimit,
   autoCleanupMulterOnFailure,
@@ -68,6 +69,7 @@ router
   .get(
     validateGroupIdParam,
     validatePaginationQuery,
+    requireChatUnlocked("id"),
     groupController.getGroupMessages,
   )
   .post(

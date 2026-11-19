@@ -1,15 +1,41 @@
 import express from "express";
 import authMiddleware from "../../../middlewares/auth.middleware.js";
 import usersController from "../controllers/users.controller.js";
+import userLockController from "../controllers/user-lock.controller.js";
 import notificationSettingsController from "../../notifications/controllers/notification-settings.controller.js";
 import upload, {
   autoCleanupMulterOnFailure,
 } from "../../../middlewares/multer.middleware.js";
-import { settingsLimiter } from "../../../middlewares/rateLimit/index.js";
+import { settingsLimiter, lockLimiter } from "../../../middlewares/rateLimit/index.js";
+import { validate } from "../../../middlewares/validation/validate.middleware.js";
+import {
+  verifyLockPinSchema,
+  setupLockPinSchema,
+  disableLockPinSchema,
+} from "../validations/user-lock.validation.js";
 
 const router = express.Router();
 
 router.use(authMiddleware);
+
+router.post(
+  "/lock/verify",
+  lockLimiter,
+  validate(verifyLockPinSchema),
+  userLockController.verifyLockPin,
+);
+router.post(
+  "/lock/setup",
+  settingsLimiter,
+  validate(setupLockPinSchema),
+  userLockController.setupLockPin,
+);
+router.post(
+  "/lock/disable",
+  settingsLimiter,
+  validate(disableLockPinSchema),
+  userLockController.disableLockPin,
+);
 
 router.get("/me", usersController.getCurrentUser);
 router.patch("/profile", usersController.updateProfile);

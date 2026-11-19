@@ -15,9 +15,12 @@ import {
 } from "../services/index.js";
 
 export const getUsersForSidebar = asyncHandler(async (req, res) => {
+  const unlockToken =
+    req.header("X-Chat-Unlock-Token") || req.header("x-chat-unlock-token");
   const { response, message } = await sidebarService.getUsersForSidebar(
     req.user._id,
     req.query,
+    { unlockToken, sessionId: req.sessionId },
   );
 
   return new ApiResponse(StatusCodes.OK, response, message).send(res);

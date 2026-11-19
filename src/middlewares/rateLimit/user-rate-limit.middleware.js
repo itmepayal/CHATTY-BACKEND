@@ -39,3 +39,10 @@ export const settingsLimiter = createRateLimiter({
   keyGenerator: defaultUserKeyGenerator,
 });
 
+export const lockLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: "Too many lock verification attempts. Please try again later.",
+  keyGenerator: defaultUserKeyGenerator,
+});
+

@@ -323,6 +323,24 @@ const UserSchema = new mongoose.Schema(
       select: false,
     },
 
+    lockFailedAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+
+    lockoutUntil: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+
+    lockEpoch: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+
     lockedChats: [
       {
         type: String,
@@ -452,6 +470,10 @@ const UserSchema = new mongoose.Schema(
         delete ret.encryptedPrivateKey;
         delete ret.e2eeBackupVersion;
         delete ret.e2eeBackupUpdatedAt;
+        delete ret.appLockPinHash;
+        delete ret.lockFailedAttempts;
+        delete ret.lockoutUntil;
+        delete ret.lockEpoch;
         return ret;
       },
     },
@@ -471,6 +493,10 @@ const UserSchema = new mongoose.Schema(
         delete ret.encryptedPrivateKey;
         delete ret.e2eeBackupVersion;
         delete ret.e2eeBackupUpdatedAt;
+        delete ret.appLockPinHash;
+        delete ret.lockFailedAttempts;
+        delete ret.lockoutUntil;
+        delete ret.lockEpoch;
         return ret;
       },
     },
