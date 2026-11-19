@@ -24,6 +24,8 @@ import {
   canViewSync,
   canViewProfilePhoto,
 } from "../../privacy/services/privacy-visibility.service.js";
+import { isUnlockTokenValid } from "../../users/utils/lock-token.util.js";
+import { getOrFetchPrivacy } from "../../../infrastructure/socket/socket-state.js";
 import {
   getBlockedByMe,
   getBlockersOf,
@@ -171,6 +173,7 @@ export const formatGroup = (
     unreadCount: 0,
     lastMessage: null,
     archived: false,
+    isLocked: !!extra.isLocked,
     e2ee: false,
     keyVersion: 0,
     keyRotationPending: !!group.keyRotationPending,
@@ -472,16 +475,35 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
       );
     }
 
-    const memberPayload = canSeePhoto
-      ? basePayload
-      : {
-          ...basePayload,
-          sender: basePayload.sender
-            ? { ...basePayload.sender, avatar: "" }
-            : null,
-        };
+    let isMemberLocked = false;
+    if (!isSelf) {
+      const memberPrivacy = await getOrFetchPrivacy(id);
+      isMemberLocked = (memberPrivacy?.lockedChats || []).includes(String(group._id));
+    }
 
-    emitToUser(id, GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE, memberPayload);
+    if (isMemberLocked) {
+      const redactedGroupPayload = {
+        id: basePayload.id,
+        _id: basePayload.id,
+        groupId: basePayload.groupId,
+        senderId: basePayload.senderId,
+        isLocked: true,
+        createdAt: basePayload.createdAt,
+        updatedAt: basePayload.updatedAt,
+      };
+      emitToUser(id, GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE, redactedGroupPayload);
+    } else {
+      const memberPayload = canSeePhoto
+        ? basePayload
+        : {
+            ...basePayload,
+            sender: basePayload.sender
+              ? { ...basePayload.sender, avatar: "" }
+              : null,
+          };
+
+      emitToUser(id, GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE, memberPayload);
+    }
   }
 
   console.log(
@@ -706,14 +728,31 @@ export const unarchiveGroupService = async (group, me) => {
   });
 };
 
-export const getMyGroupsList = async (me) => {
-  const [groups, blocked, archivedSet] = await Promise.all([
+export const getMyGroupsList = async (me, options = {}) => {
+  const [groups, blocked, archivedSet, meDoc] = await Promise.all([
     groupRepository
       .find({ "members.userId": me })
       .populate("members.userId", "fullName avatar profilePhotoVisibility profilePhotoExceptions"),
     getBlockedByMe(me),
     getArchivedGroupSet(me),
+    userRepository.findById(me).select("lockedChats +lockEpoch").lean(),
   ]);
+
+  const myLockedSet = new Set((meDoc?.lockedChats || []).map(String));
+  let isAppUnlocked = false;
+  if (options?.unlockToken && meDoc) {
+    if (
+      isUnlockTokenValid(
+        options.unlockToken,
+        me,
+        options.sessionId,
+        "app",
+        meDoc.lockEpoch,
+      )
+    ) {
+      isAppUnlocked = true;
+    }
+  }
 
   const versions = await getLatestVersions(groups.map((g) => g._id));
   const allMemberIds = [
@@ -750,6 +789,22 @@ export const getMyGroupsList = async (me) => {
       const unreadCount = await getUnread(g._id, me, joinedAt, blocked);
       const last = await getLast(g._id, joinedAt, blocked);
 
+      const isLocked = myLockedSet.has(String(g._id));
+      let isUnlocked = isAppUnlocked;
+      if (isLocked && !isUnlocked && options?.unlockToken && meDoc) {
+        if (
+          isUnlockTokenValid(
+            options.unlockToken,
+            me,
+            options.sessionId,
+            String(g._id),
+            meDoc.lockEpoch,
+          )
+        ) {
+          isUnlocked = true;
+        }
+      }
+
       let formattedLast = null;
       if (last) {
         formattedLast = formatGroupMessage(last);
@@ -764,6 +819,18 @@ export const getMyGroupsList = async (me) => {
         }
       }
 
+      if (isLocked && !isUnlocked && formattedLast) {
+        formattedLast = {
+          id: formattedLast.id,
+          _id: formattedLast.id,
+          groupId: formattedLast.groupId,
+          senderId: formattedLast.senderId,
+          isLocked: true,
+          createdAt: formattedLast.createdAt,
+          updatedAt: formattedLast.updatedAt,
+        };
+      }
+
       return formatGroup(
         g,
         {
@@ -771,6 +838,7 @@ export const getMyGroupsList = async (me) => {
           lastMessage: formattedLast,
           lastMessageAt: last?.createdAt ?? g.lastMessageAt ?? g.createdAt,
           archived: archivedSet.has(g._id.toString()),
+          isLocked,
           e2ee: v > 0,
           keyVersion: v,
         },

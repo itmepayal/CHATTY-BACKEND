@@ -133,7 +133,10 @@ export const getPrivacySettings = asyncHandler(async (req, res) => {
 });
 
 export const updatePrivacySettings = asyncHandler(async (req, res) => {
-  const data = await userSettingsService.setPrivacy(req.user._id, req.body);
+  const data = await userSettingsService.setPrivacy(req.user._id, req.body, {
+    req,
+    sessionId: req.sessionId,
+  });
 
   return new ApiResponse(
     StatusCodes.OK,

@@ -26,7 +26,12 @@ export const createGroup = asyncHandler(async (req, res) => {
 });
 
 export const getMyGroups = asyncHandler(async (req, res) => {
-  const result = await groupService.getMyGroupsList(req.user._id);
+  const unlockToken =
+    req.header("X-Chat-Unlock-Token") || req.header("x-chat-unlock-token");
+  const result = await groupService.getMyGroupsList(req.user._id, {
+    unlockToken,
+    sessionId: req.sessionId,
+  });
 
   return new ApiResponse(
     StatusCodes.OK,

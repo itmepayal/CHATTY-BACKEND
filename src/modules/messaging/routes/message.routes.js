@@ -2,6 +2,7 @@ import express from "express";
 
 import messageController from "../controllers/messages.controller.js";
 import authMiddleware from "../../../middlewares/auth.middleware.js";
+import requireChatUnlocked from "../../../middlewares/chat-lock.middleware.js";
 
 import upload, {
   enforceTypeSizeLimit,
@@ -32,11 +33,11 @@ router.patch(
 router.get("/location/active", messageController.getActiveShares);
 
 router.get("/scheduled", messageController.getScheduled);
-router.get("/search/:id", messageController.searchMessages);
-router.get("/pinned/:id", messageController.getPinned);
-router.get("/disappearing/:id", messageController.getDisappearing);
+router.get("/search/:id", requireChatUnlocked("id"), messageController.searchMessages);
+router.get("/pinned/:id", requireChatUnlocked("id"), messageController.getPinned);
+router.get("/disappearing/:id", requireChatUnlocked("id"), messageController.getDisappearing);
 
-router.get("/:id", messageController.getMessage);
+router.get("/:id", requireChatUnlocked("id"), messageController.getMessage);
 
 router.post(
   "/send/:id",

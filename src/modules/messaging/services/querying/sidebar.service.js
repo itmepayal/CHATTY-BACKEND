@@ -12,8 +12,9 @@ import {
   formatMessage,
 } from "../../utils/message-helpers.js";
 import { canViewSync } from "../../../privacy/services/privacy-visibility.service.js";
+import { isUnlockTokenValid } from "../../../users/utils/lock-token.util.js";
 
-export const getUsersForSidebar = async (userId, query = {}) => {
+export const getUsersForSidebar = async (userId, query = {}, options = {}) => {
   assertValidId(userId, "User ID");
 
   const uid = toObjectId(userId);
@@ -22,11 +23,30 @@ export const getUsersForSidebar = async (userId, query = {}) => {
   const limit = Math.min(Math.max(1, Number(query.limit) || 50), 100);
 
   const [me, archivedSet] = await Promise.all([
-    userRepository.findById(userId).select("blockedUsers readReceipts").lean(),
+    userRepository
+      .findById(userId)
+      .select("blockedUsers readReceipts lockedChats +lockEpoch")
+      .lean(),
     getArchivedSet(userId),
   ]);
 
   const myBlockedSet = new Set((me?.blockedUsers || []).map(String));
+  const myLockedSet = new Set((me?.lockedChats || []).map(String));
+
+  let isAppUnlocked = false;
+  if (options?.unlockToken && me) {
+    if (
+      isUnlockTokenValid(
+        options.unlockToken,
+        userId,
+        options.sessionId,
+        "app",
+        me.lockEpoch,
+      )
+    ) {
+      isAppUnlocked = true;
+    }
+  }
 
   const convoAgg = await messageRepository.aggregate([
     {
@@ -196,9 +216,38 @@ export const getUsersForSidebar = async (userId, query = {}) => {
         me?.readReceipts !== false &&
         user.readReceipts !== false;
 
+      const isChatLocked = myLockedSet.has(otherId);
+      let isUnlocked = isAppUnlocked;
+      if (isChatLocked && !isUnlocked && options?.unlockToken && me) {
+        if (
+          isUnlockTokenValid(
+            options.unlockToken,
+            userId,
+            options.sessionId,
+            otherId,
+            me.lockEpoch,
+          )
+        ) {
+          isUnlocked = true;
+        }
+      }
+
       let lastMsg = c?.lastMessage ? formatMessage(c.lastMessage) : null;
       if (lastMsg && !canReceipt && lastMsg.status === "seen") {
         lastMsg = { ...lastMsg, status: "delivered", seenAt: null };
+      }
+
+      if (isChatLocked && !isUnlocked && lastMsg) {
+        lastMsg = {
+          id: lastMsg.id || lastMsg._id,
+          _id: lastMsg.id || lastMsg._id,
+          senderId: lastMsg.senderId,
+          receiverId: lastMsg.receiverId,
+          isLocked: true,
+          status: lastMsg.status,
+          createdAt: lastMsg.createdAt,
+          updatedAt: lastMsg.updatedAt,
+        };
       }
 
       return {
@@ -218,6 +267,7 @@ export const getUsersForSidebar = async (userId, query = {}) => {
         isOnlineRestricted: !showOnline,
         canAddToGroup,
         isBlocked: isBlockedByMe,
+        isLocked: isChatLocked,
         isArchived: archivedSet.has(otherId),
         hasPublicKey: Boolean(user.publicKey),
         unreadCount: isBlockedEither ? 0 : c?.unreadCount || 0,

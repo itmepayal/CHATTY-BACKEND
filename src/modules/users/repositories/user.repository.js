@@ -172,7 +172,7 @@ export const findByResetToken = (hashedToken, options = {}) => {
   const query = User.findOne({
     passwordResetToken: hashedToken,
     passwordResetExpires: { $gt: new Date() },
-  }).select("+passwordResetToken +passwordResetExpires +tokenVersion");
+  }).select("+passwordResetToken +passwordResetExpires +tokenVersion +lockEpoch");
 
   if (options.session) query.session(options.session);
 
