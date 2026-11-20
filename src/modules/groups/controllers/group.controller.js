@@ -59,6 +59,7 @@ export const updateGroup = asyncHandler(async (req, res) => {
     me: req.user._id,
     name: req.body.name,
     file: req.file,
+    whoCanPin: req.body.whoCanPin,
   });
 
   return new ApiResponse(
@@ -270,6 +271,61 @@ export const deleteGroupMessage = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const deleteGroupMessageForMe = asyncHandler(async (req, res) => {
+  const payload = await groupMessageService.deleteGroupMessageForMeForRequest({
+    groupId: req.params.id,
+    me: req.user._id,
+    messageId: req.params.messageId,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    payload,
+    "Message deleted for you.",
+  ).send(res);
+});
+
+export const getPinnedGroupMessages = asyncHandler(async (req, res) => {
+  const payload = await groupMessageService.getPinnedGroupMessagesForRequest({
+    groupId: req.params.id,
+    me: req.user._id,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    payload,
+    "Pinned messages fetched successfully",
+  ).send(res);
+});
+
+export const togglePinGroupMessage = asyncHandler(async (req, res) => {
+  const payload = await groupMessageService.togglePinGroupMessageForRequest({
+    groupId: req.params.id,
+    me: req.user._id,
+    messageId: req.params.messageId,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    payload,
+    payload.isPinned ? "Message pinned." : "Message unpinned.",
+  ).send(res);
+});
+
+export const toggleStarGroupMessage = asyncHandler(async (req, res) => {
+  const payload = await groupMessageService.toggleStarGroupMessageForRequest({
+    groupId: req.params.id,
+    me: req.user._id,
+    messageId: req.params.messageId,
+  });
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    payload,
+    payload.isStarred ? "Message starred." : "Message unstarred.",
+  ).send(res);
+});
+
 export const markGroupSeen = asyncHandler(async (req, res) => {
   const result = await groupMessageService.markGroupSeenForRequest({
     groupId: req.params.id,
@@ -370,9 +426,13 @@ const groupController = {
   getPendingKeyMembers,
   setGroupKeys,
   getGroupMessages,
+  getPinnedGroupMessages,
   sendGroupMessage,
   editGroupMessage,
   deleteGroupMessage,
+  deleteGroupMessageForMe,
+  togglePinGroupMessage,
+  toggleStarGroupMessage,
   markGroupSeen,
   startGroupShare,
   updateGroupShare,

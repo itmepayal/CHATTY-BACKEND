@@ -82,14 +82,108 @@ const formatReply = (r) => {
   };
 };
 
+export const formatPollHelper = (poll) => {
+  if (!poll || !poll.question) return null;
+  const isClosed = Boolean(poll.isClosed || poll.isEnded);
+  const rawOptions = Array.isArray(poll.options) ? poll.options : [];
+  const options = rawOptions.map((opt) => {
+    const rawVotes = Array.isArray(opt.votes) ? opt.votes : [];
+    const voteCount = rawVotes.length;
+    return {
+      _id: String(opt._id || opt.id || opt.text),
+      text: opt.text,
+      votes: rawVotes.map((v) =>
+        typeof v === "object" && v !== null && (v._id || v.id)
+          ? {
+              id: String(v._id || v.id),
+              fullName: v.fullName || "",
+              username: v.username || "",
+              avatar:
+                v.avatar?.url ||
+                (typeof v.avatar === "string" ? v.avatar : "") ||
+                v.profilePic ||
+                "",
+            }
+          : String(v)
+      ),
+      voteCount,
+    };
+  });
+
+  const totalVotes = options.reduce((sum, o) => sum + o.voteCount, 0);
+
+  return {
+    question: poll.question,
+    type: poll.type || (poll.allowMultipleAnswers ? "multiple" : "single"),
+    options,
+    isAnonymous: Boolean(poll.isAnonymous),
+    allowMultipleAnswers: Boolean(poll.allowMultipleAnswers),
+    canChangeVote: poll.canChangeVote !== false,
+    isClosed,
+    isEnded: isClosed,
+    closedBy: poll.closedBy
+      ? String(poll.closedBy._id || poll.closedBy.id || poll.closedBy)
+      : null,
+    closedAt: poll.closedAt || poll.endedAt || null,
+    endedAt: poll.endedAt || poll.closedAt || null,
+    createdBy: poll.createdBy
+      ? String(poll.createdBy._id || poll.createdBy.id || poll.createdBy)
+      : null,
+    expiresAt: poll.expiresAt || null,
+    totalVotes,
+  };
+};
+
 export const formatMessage = (msg) => {
   const deleted = Boolean(msg.isDeleted);
   const isEncrypted = !deleted && Boolean(msg.e2ee);
 
+  const senderId = msg.senderId?._id
+    ? String(msg.senderId._id)
+    : msg.senderId?.id
+      ? String(msg.senderId.id)
+      : String(msg.senderId);
+
+  const receiverId = msg.receiverId?._id
+    ? String(msg.receiverId._id)
+    : msg.receiverId?.id
+      ? String(msg.receiverId.id)
+      : String(msg.receiverId);
+
+  const sender =
+    msg.senderId && typeof msg.senderId === "object" && (msg.senderId._id || msg.senderId.id)
+      ? {
+          id: String(msg.senderId._id || msg.senderId.id),
+          fullName: msg.senderId.fullName || "",
+          username: msg.senderId.username || "",
+          avatar:
+            msg.senderId.avatar?.url ||
+            (typeof msg.senderId.avatar === "string" ? msg.senderId.avatar : "") ||
+            msg.senderId.profilePic ||
+            "",
+        }
+      : undefined;
+
+  const receiver =
+    msg.receiverId && typeof msg.receiverId === "object" && (msg.receiverId._id || msg.receiverId.id)
+      ? {
+          id: String(msg.receiverId._id || msg.receiverId.id),
+          fullName: msg.receiverId.fullName || "",
+          username: msg.receiverId.username || "",
+          avatar:
+            msg.receiverId.avatar?.url ||
+            (typeof msg.receiverId.avatar === "string" ? msg.receiverId.avatar : "") ||
+            msg.receiverId.profilePic ||
+            "",
+        }
+      : undefined;
+
   return {
     id: String(msg._id),
-    senderId: String(msg.senderId),
-    receiverId: String(msg.receiverId),
+    senderId,
+    receiverId,
+    sender,
+    receiver,
     text: deleted ? "" : msg.text,
     encrypted: isEncrypted,
     iv: isEncrypted ? msg.iv || null : null,
@@ -114,12 +208,28 @@ export const formatMessage = (msg) => {
     reactions: deleted
       ? []
       : (msg.reactions || []).map((r) => ({
-          userId: String(r.userId),
+          userId: String(r.userId?._id || r.userId),
           emoji: r.emoji,
+          createdAt: r.createdAt,
         })),
+    parentMessageId: msg.parentMessageId ? String(msg.parentMessageId) : null,
+    threadReplyCount: msg.threadReplyCount || 0,
+    threadLastReplyAt: msg.threadLastReplyAt || null,
+    threadParticipants: Array.isArray(msg.threadParticipants)
+      ? msg.threadParticipants.map((p) => String(p._id || p))
+      : [],
+    poll: deleted ? null : formatPollHelper(msg.poll),
+    isViewOnce: Boolean(msg.isViewOnce),
+    viewOnceViewedBy: Array.isArray(msg.viewOnceViewedBy)
+      ? msg.viewOnceViewedBy.map((u) => String(u._id || u))
+      : [],
+    viewOnceExpired: Boolean(msg.viewOnceExpired),
+    expiresAt: msg.expiresAt || null,
     replyTo: deleted ? null : formatReply(msg.replyTo),
     isForwarded: Boolean(msg.isForwarded),
     isPinned: deleted ? false : Boolean(msg.isPinned),
+    isStarred: Boolean(msg.starredBy && msg.starredBy.length > 0),
+    starredBy: Array.isArray(msg.starredBy) ? msg.starredBy.map(String) : [],
     isEdited: Boolean(msg.isEdited),
     editedAt: msg.editedAt,
     linkPreview:

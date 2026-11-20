@@ -59,6 +59,16 @@ export const updateOne = (filter, update, options = {}) =>
 export const updateMany = (filter, update, options = {}) =>
   Message.updateMany(filter, update, options);
 
+export const updateById = async (id, update, options = { new: true }) => {
+  const query = Message.findByIdAndUpdate(toObjectId(id), update, {
+    new: true,
+    runValidators: true,
+    ...options,
+  });
+  if (options.session) query.session(options.session);
+  return options.lean === false ? query : query.lean();
+};
+
 export const deleteOne = (filter, options = {}) =>
   Message.deleteOne(filter, options);
 
@@ -89,6 +99,7 @@ const messageRepository = Object.freeze({
   distinct,
   updateOne,
   updateMany,
+  updateById,
   deleteOne,
   deleteMany,
   aggregate,

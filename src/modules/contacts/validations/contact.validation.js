@@ -86,6 +86,16 @@ export const validateOtherUserIdParam = (req, _res, next) => {
   next();
 };
 
+export const validateRequestIdParam = (req, _res, next) => {
+  if (!isValidObjectId(req.params.requestId)) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Invalid request ID.",
+    );
+  }
+  next();
+};
+
 export const validateAddContactBody = (req, _res, next) => {
   const { nickname } = req.body || {};
   if (nickname !== undefined && nickname !== null) {

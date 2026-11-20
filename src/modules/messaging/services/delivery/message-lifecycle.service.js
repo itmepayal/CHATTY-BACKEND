@@ -22,13 +22,17 @@ import {
 } from "../../constants/messages.constants.js";
 import { wipeMessage } from "../../utils/message-cleanup.js";
 import { attachLinkPreview } from "../../../../shared/utils/link-preview.js";
+import Message from "../../models/message.model.js";
 import {
   emitConversationUpdate,
   isParticipantOf,
   getOtherUserId,
   emitToPair,
   isExpired,
+  formatMessage,
+  REPLY_SELECT,
 } from "../../utils/message-helpers.js";
+import * as notificationService from "../../../notifications/services/notification.service.js";
 
 export const editMessage = async (
   userId,
@@ -199,6 +203,24 @@ export const togglePin = async (userId, messageId) => {
 
   emitToPair(userId, otherId, "messagePinned", payload);
 
+  if (message.isPinned && String(otherId) !== String(userId)) {
+    notificationService
+      .dispatchNotification({
+        recipientId: otherId,
+        senderId: userId,
+        category: "message",
+        type: "message_pinned",
+        title: "Message Pinned",
+        body: "Pinned a message in your chat",
+        data: {
+          conversationId: String(userId),
+          peerId: String(userId),
+          messageId: String(message._id),
+        },
+      })
+      .catch(() => {});
+  }
+
   return { payload, message: "Pin updated." };
 };
 
@@ -257,6 +279,25 @@ export const reactMessage = async (userId, messageId, rawEmoji) => {
 
   emitToPair(otherUserId, userId, "messageReaction", payload);
 
+  if (existingIndex === -1 && String(message.senderId) !== String(userId)) {
+    notificationService
+      .dispatchNotification({
+        recipientId: message.senderId,
+        senderId: userId,
+        category: "message",
+        type: "message_reaction",
+        title: "New Reaction",
+        body: `Reacted ${emoji} to your message`,
+        data: {
+          conversationId: String(userId),
+          peerId: String(userId),
+          messageId: String(message._id),
+          emoji,
+        },
+      })
+      .catch(() => {});
+  }
+
   return { payload, message: "Reaction updated successfully." };
 };
 
@@ -313,6 +354,27 @@ export const deleteMessageForEveryone = async (userId, messageId) => {
 
   await wipeMessage(message);
 
+  if (message.parentMessageId) {
+    const updatedParent = await messageRepository.updateById(
+      message.parentMessageId,
+      { $inc: { threadReplyCount: -1 } },
+      { new: true },
+    );
+    const count = Math.max(0, updatedParent?.threadReplyCount || 0);
+    io.to(String(message.receiverId))
+      .to(String(message.senderId))
+      .emit("threadUpdated", {
+        parentMessageId: String(message.parentMessageId),
+        threadReplyCount: count,
+      });
+    io.to(String(message.receiverId))
+      .to(String(message.senderId))
+      .emit("threadReplyDeleted", {
+        parentMessageId: String(message.parentMessageId),
+        replyId: String(message._id),
+      });
+  }
+
   const payload = { messageId: message._id };
 
   emitToPair(message.receiverId, message.senderId, "messageDeleted", payload);
@@ -329,9 +391,76 @@ export const deleteMessageForEveryone = async (userId, messageId) => {
   };
 };
 
+export const toggleStar = async (userId, messageId) => {
+  assertValidId(messageId, "message ID");
+
+  const message = await messageRepository.findById(messageId);
+  if (!message || message.isDeleted || isExpired(message)) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Message not found.");
+  }
+  if (!isParticipantOf(message, userId)) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "You cannot star this message.");
+  }
+
+  const uIdStr = String(userId);
+  const starredBy = Array.isArray(message.starredBy) ? message.starredBy : [];
+  const idx = starredBy.findIndex((id) => String(id) === uIdStr);
+  let isStarred = false;
+
+  if (idx === -1) {
+    message.starredBy.push(userId);
+    isStarred = true;
+  } else {
+    message.starredBy.splice(idx, 1);
+    isStarred = false;
+  }
+
+  await message.save();
+
+  const payload = {
+    messageId: String(message._id),
+    isStarred,
+    userId: uIdStr,
+  };
+
+  io.to(uIdStr).emit("messageStarred", payload);
+
+  return {
+    payload,
+    message: isStarred ? "Message starred." : "Message unstarred.",
+  };
+};
+
+export const getStarredMessages = async (userId, chatUserId) => {
+  assertValidId(userId, "user ID");
+  const query = {
+    starredBy: toObjectId(userId),
+    isDeleted: { $ne: true },
+    deletedFor: { $ne: toObjectId(userId) },
+  };
+
+  if (chatUserId && isValidObjectId(chatUserId)) {
+    const cId = toObjectId(chatUserId);
+    const uId = toObjectId(userId);
+    query.$or = [
+      { senderId: uId, receiverId: cId },
+      { senderId: cId, receiverId: uId },
+    ];
+  }
+
+  const messages = await Message.find(query)
+    .populate("replyTo", REPLY_SELECT)
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return messages.map(formatMessage);
+};
+
 const messageLifecycleService = {
   editMessage,
   togglePin,
+  toggleStar,
+  getStarredMessages,
   reactMessage,
   deleteMessageForMe,
   deleteMessageForEveryone,

@@ -3,6 +3,7 @@
  * Manages per-chat configuration including disappearing message timers and archiving.
  */
 
+import User from "../../../users/models/users.model.js";
 import { StatusCodes } from "http-status-codes";
 import * as userRepository from "../../../users/repositories/user.repository.js";
 import * as chatSettingRepository from "../../repositories/chat-setting.repository.js";
@@ -92,10 +93,80 @@ export const setArchive = async (userId, otherId, rawArchived) => {
   };
 };
 
+export const setPinChat = async (userId, otherId, rawPinned) => {
+  assertValidId(otherId, "user ID");
+  if (otherId.toString() === userId.toString()) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user.");
+  }
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+  }
+
+  const pinnedList = user.pinnedChats || [];
+  const otherStr = otherId.toString();
+  const exists = pinnedList.some((id) => id.toString() === otherStr);
+  const pinned = rawPinned !== undefined ? Boolean(rawPinned) : !exists;
+
+  if (pinned && !exists) {
+    user.pinnedChats.push(otherId);
+  } else if (!pinned && exists) {
+    user.pinnedChats = pinnedList.filter((id) => id.toString() !== otherStr);
+  }
+  await user.save();
+
+  io.to(userId.toString()).emit("chatPinned", {
+    userId: otherStr,
+    pinned,
+  });
+
+  return {
+    userId: otherStr,
+    pinned,
+    message: pinned ? "Chat pinned." : "Chat unpinned.",
+  };
+};
+
+export const setMuteChat = async (userId, otherId, rawMuted) => {
+  assertValidId(otherId, "user ID");
+  if (otherId.toString() === userId.toString()) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid user.");
+  }
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+  }
+
+  const mutedList = user.mutedChats || [];
+  const otherStr = otherId.toString();
+  const exists = mutedList.some((id) => id.toString() === otherStr);
+  const muted = rawMuted !== undefined ? Boolean(rawMuted) : !exists;
+
+  if (muted && !exists) {
+    user.mutedChats.push(otherId);
+  } else if (!muted && exists) {
+    user.mutedChats = mutedList.filter((id) => id.toString() !== otherStr);
+  }
+  await user.save();
+
+  io.to(userId.toString()).emit("chatMuted", {
+    userId: otherStr,
+    muted,
+  });
+
+  return {
+    userId: otherStr,
+    muted,
+    message: muted ? "Chat muted." : "Chat unmuted.",
+  };
+};
+
 const chatSettingService = {
   getDisappearing,
   setDisappearing,
   setArchive,
+  setPinChat,
+  setMuteChat,
 };
 
 export default chatSettingService;

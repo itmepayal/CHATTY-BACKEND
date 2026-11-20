@@ -12,6 +12,7 @@ import {
   E2EE_RESET_CONFIRM_KEYWORD,
   MAX_BATCH_PUBLIC_KEYS,
 } from "../constants/e2ee.constants.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
 
 export const getStatus = async (userId) => {
   const user = await userKeyRepository.findE2EEStatus(userId);
@@ -528,6 +529,18 @@ export const revokeDevice = async (userId, deviceId) => {
     );
   }
 
+  notificationService
+    .dispatchNotification({
+      recipientId: userId,
+      category: "security",
+      type: "security_device_unlinked",
+      title: "Device Unlinked",
+      body: `Device ${updated.deviceName || updated.deviceId} was unlinked`,
+      priority: "normal",
+      data: { deviceId: updated.deviceId },
+    })
+    .catch(() => {});
+
   return {
     revoked: true,
     deviceId: updated.deviceId,
@@ -1036,6 +1049,21 @@ export const approveDeviceLink = async (
       err?.message,
     );
   }
+
+  notificationService
+    .dispatchNotification({
+      recipientId: userId,
+      category: "security",
+      type: "security_device_linked",
+      title: "New E2EE Device Linked",
+      body: `Device ${session.newDeviceName || session.newDeviceId} was linked`,
+      priority: "critical",
+      data: {
+        deviceId: session.newDeviceId,
+        deviceName: session.newDeviceName,
+      },
+    })
+    .catch(() => {});
 
   return {
     success: true,

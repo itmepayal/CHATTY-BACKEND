@@ -37,6 +37,9 @@ export const sendMessage = async (
     encrypted,
     e2ee,
     keyEnvelopes,
+    isViewOnce,
+    expiresAt,
+    parentMessageId,
   } = {},
   file,
 ) => {
@@ -153,6 +156,13 @@ export const sendMessage = async (
     requireReceiverEnvelope: wantsE2EE && Boolean(keyEnvelopes),
   });
 
+  const isViewOnceReq = parseBool(isViewOnce);
+  let explicitExpiry = null;
+  if (expiresAt) {
+    const exp = new Date(expiresAt);
+    if (!isNaN(exp.getTime())) explicitExpiry = exp;
+  }
+
   let result;
   try {
     result = await deliverMessage({
@@ -166,6 +176,9 @@ export const sendMessage = async (
         audio: uploadedAudio || undefined,
         video: uploadedVideo || undefined,
         replyTo,
+        ...(isViewOnceReq ? { isViewOnce: true } : {}),
+        ...(explicitExpiry ? { expiresAt: explicitExpiry } : {}),
+        ...(parentMessageId ? { parentMessageId } : {}),
         ...(wantsE2EE
           ? {
               e2ee: true,

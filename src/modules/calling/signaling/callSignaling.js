@@ -19,6 +19,7 @@ import {
   validateMediaPayload,
 } from "./webrtc-validator.js";
 import { createCallRecord } from "../services/call.service.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
 
 const RING_TIMEOUT_MS = CALL_RING_TIMEOUT_MS || CALL_LIMITS.RING_TIMEOUT_MS;
 
@@ -108,6 +109,35 @@ async function finishCall(io, callId, { status, endedBy = null, reason = "" }) {
 
   io.to(call.callerId).emit(CALL_SOCKET_EVENTS.CALL_ENDED, payload);
   io.to(call.receiverId).emit(CALL_SOCKET_EVENTS.CALL_ENDED, payload);
+
+  if (!call.answeredAt) {
+    try {
+      User.findById(call.callerId)
+        .select("fullName username")
+        .lean()
+        .then((callerUser) => {
+          const callerName =
+            callerUser?.fullName || callerUser?.username || "Someone";
+          const isVideo = call.type === "video";
+          notificationService
+            .dispatchNotification({
+              recipientId: call.receiverId,
+              senderId: call.callerId,
+              category: "call",
+              type: isVideo ? "call_missed_video" : "call_missed_voice",
+              title: isVideo ? "Missed video call" : "Missed voice call",
+              body: `${callerName} called you`,
+              data: {
+                callId: call.callId,
+                callerId: String(call.callerId),
+                callType: call.type,
+              },
+            })
+            .catch(() => {});
+        })
+        .catch(() => {});
+    } catch (_e) {}
+  }
 }
 
 export function registerCallHandlers(

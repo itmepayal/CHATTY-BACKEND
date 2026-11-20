@@ -1,9 +1,17 @@
 import fs from "fs/promises";
+import mongoose from "mongoose";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../shared/errors/api-error.js";
+import { io } from "../../../infrastructure/socket/socket.js";
 import * as groupMessageRepository from "../repositories/group-message.repository.js";
 import * as contactRepository from "../../contacts/repositories/contact.repository.js";
-import { readClientId } from "../../../shared/utils/validators.js";
+import User from "../../users/models/users.model.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
+import {
+  NOTIFICATION_TYPES,
+  NOTIFICATION_CATEGORIES,
+} from "../../notifications/models/notification.model.js";
+import { readClientId, assertValidId } from "../../../shared/utils/validators.js";
 import { parseBool, assertValidCipher } from "../../messaging/utils/e2ee.js";
 import { canViewSync } from "../../privacy/services/privacy-visibility.service.js";
 import { getBlockedByMe, getGroupAndMember } from "../helpers/group.member.helpers.js";
@@ -17,6 +25,7 @@ import {
   broadcastGroupMessageEdited,
   broadcastGroupMessageDeleted,
   emitToGroupRoom,
+  emitToUser,
 } from "../events/group.events.js";
 import {
   EDIT_WINDOW_MS,
@@ -75,12 +84,16 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
   const msgs = await groupMessageRepository
     .find({
       groupId: group._id,
+      parentMessageId: { $in: [null, undefined] },
       createdAt,
       senderId: { $nin: blocked },
+      deletedFor: { $ne: me },
     })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
+    .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions")
+    .populate("replyTo", "senderId text image file audio video location isDeleted e2ee iv")
+    .populate("mentions.userId", "fullName avatar username");
 
   const senderIds = [
     ...new Set(msgs.map((m) => m.senderId?._id || m.senderId).filter(Boolean)),
@@ -101,7 +114,7 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
   const myReceipts = getPrivacy(String(me)).readReceipts !== false;
 
   return msgs.reverse().map((m) => {
-    const formatted = formatGroupMessage(m);
+    const formatted = formatGroupMessage(m, me);
     const sender = m.senderId;
     if (sender) {
       const sId = sid(sender);
@@ -162,6 +175,61 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
       });
     }
 
+    let replyTo = null;
+    if (body.replyTo) {
+      assertValidId(body.replyTo, "reply ID");
+      const orig = await groupMessageRepository.findOne({
+        _id: body.replyTo,
+        groupId: group._id,
+        isDeleted: { $ne: true },
+      });
+      if (orig) replyTo = orig._id;
+    }
+    const isForwarded = parseBool(body.isForwarded);
+    const isViewOnce = parseBool(body.isViewOnce);
+
+    let expiresAt = null;
+    if (body.expiresAt) {
+      const exp = new Date(body.expiresAt);
+      if (!isNaN(exp.getTime())) expiresAt = exp;
+    } else if (group.disappearAfter && group.disappearAfter > 0) {
+      expiresAt = new Date(Date.now() + group.disappearAfter * 1000);
+    }
+
+    // Parse and validate mentions
+    let mentions = [];
+    if (body.mentions) {
+      try {
+        const raw =
+          typeof body.mentions === "string"
+            ? JSON.parse(body.mentions)
+            : body.mentions;
+        if (Array.isArray(raw)) {
+          const groupMemberIds = new Set(
+            group.members.map((m) => String(m.userId?._id || m.userId)),
+          );
+          const seen = new Set();
+          for (const item of raw) {
+            const uid = String(item.userId || item.id || "");
+            if (
+              mongoose.Types.ObjectId.isValid(uid) &&
+              groupMemberIds.has(uid) &&
+              uid !== String(me) &&
+              !seen.has(uid)
+            ) {
+              seen.add(uid);
+              mentions.push({
+                userId: new mongoose.Types.ObjectId(uid),
+                startIndex:
+                  typeof item.startIndex === "number" ? item.startIndex : 0,
+                length: typeof item.length === "number" ? item.length : 0,
+              });
+            }
+          }
+        }
+      } catch (_e) {}
+    }
+
     const message = await groupMessageRepository.create({
       groupId: group._id,
       senderId: me,
@@ -169,8 +237,21 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
       ...attachment,
       ...cipher,
       clientId,
+      replyTo,
+      isForwarded,
+      isViewOnce,
+      mentions,
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(body.parentMessageId ? { parentMessageId: body.parentMessageId } : {}),
       readBy: [me],
     });
+
+    if (replyTo) {
+      await message.populate(
+        "replyTo",
+        "senderId text image file audio video location isDeleted e2ee iv",
+      );
+    }
 
     const payload = await broadcastGroupMessage(group, message, me);
     return { isDuplicate: false, payload };
@@ -223,6 +304,40 @@ export const editGroupMessageService = async ({
 
   const cutoff = new Date(Date.now() - EDIT_WINDOW_MS);
 
+  let mentions = undefined;
+  if (body.mentions) {
+    try {
+      const raw =
+        typeof body.mentions === "string"
+          ? JSON.parse(body.mentions)
+          : body.mentions;
+      if (Array.isArray(raw)) {
+        const groupMemberIds = new Set(
+          group.members.map((m) => String(m.userId?._id || m.userId)),
+        );
+        const seen = new Set();
+        mentions = [];
+        for (const item of raw) {
+          const uid = String(item.userId || item.id || "");
+          if (
+            mongoose.Types.ObjectId.isValid(uid) &&
+            groupMemberIds.has(uid) &&
+            uid !== String(me) &&
+            !seen.has(uid)
+          ) {
+            seen.add(uid);
+            mentions.push({
+              userId: new mongoose.Types.ObjectId(uid),
+              startIndex:
+                typeof item.startIndex === "number" ? item.startIndex : 0,
+              length: typeof item.length === "number" ? item.length : 0,
+            });
+          }
+        }
+      }
+    } catch (_e) {}
+  }
+
   const updatedMessage = await groupMessageRepository
     .findOneAndUpdate(
       {
@@ -242,13 +357,21 @@ export const editGroupMessageService = async ({
         $set: {
           text,
           ...(wantsE2EE ? { iv } : {}),
+          ...(mentions !== undefined ? { mentions } : {}),
           isEdited: true,
           editedAt: new Date(),
         },
       },
       { new: true },
     )
-    .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
+    .populate([
+      {
+        path: "senderId",
+        select:
+          "fullName avatar profilePhotoVisibility profilePhotoExceptions",
+      },
+      { path: "mentions.userId", select: "fullName avatar username" },
+    ]);
 
   if (!updatedMessage) {
     const msg = await groupMessageRepository.findOne({
@@ -306,6 +429,14 @@ export const deleteGroupMessageService = async ({
 
   canDeleteMessage({ group, member, message, actorId: me });
 
+  if (message.isDeleted) {
+    return {
+      groupId: String(group._id),
+      messageId: String(messageId),
+      alreadyDeleted: true,
+    };
+  }
+
   if (message.location?.shareId) {
     await endShare(
       group,
@@ -314,9 +445,39 @@ export const deleteGroupMessageService = async ({
     );
   }
 
-  await groupMessageRepository.deleteOne({ _id: messageId });
-
   await Promise.allSettled(deleteMedia(message));
+
+  message.isDeleted = true;
+  message.deletedAt = new Date();
+  message.text = "";
+  message.image = undefined;
+  message.file = undefined;
+  message.audio = undefined;
+  message.video = undefined;
+  message.location = undefined;
+  message.isPinned = false;
+  message.pinnedBy = undefined;
+  message.pinnedAt = undefined;
+  await message.save();
+
+  if (message.parentMessageId) {
+    const updatedParent = await groupMessageRepository.updateById(
+      message.parentMessageId,
+      { $inc: { threadReplyCount: -1 } },
+      { new: true },
+    );
+    const count = Math.max(0, updatedParent?.threadReplyCount || 0);
+    io.to(String(group._id)).emit("threadUpdated", {
+      groupId: String(group._id),
+      parentMessageId: String(message.parentMessageId),
+      threadReplyCount: count,
+    });
+    io.to(String(group._id)).emit("groupThreadReplyDeleted", {
+      groupId: String(group._id),
+      parentMessageId: String(message.parentMessageId),
+      replyId: String(message._id),
+    });
+  }
 
   const payload = {
     groupId: String(group._id),
@@ -325,6 +486,266 @@ export const deleteGroupMessageService = async ({
 
   broadcastGroupMessageDeleted(group, payload);
   await emitGroupConversation(group);
+
+  return payload;
+};
+
+export const deleteGroupMessageForMeService = async ({
+  group,
+  me,
+  messageId,
+}) => {
+  const message = await groupMessageRepository.findOne({
+    _id: messageId,
+    groupId: group._id,
+  });
+  if (!message) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      GROUP_ERROR_MESSAGES.MESSAGE_NOT_FOUND,
+    );
+  }
+
+  await groupMessageRepository.updateOne(
+    { _id: messageId, groupId: group._id },
+    { $addToSet: { deletedFor: me } },
+  );
+
+  emitToUser(me, GROUP_SOCKET_EVENTS.GROUP_MESSAGE_DELETED_FOR_ME, {
+    groupId: String(group._id),
+    messageId: String(messageId),
+  });
+
+  return {
+    groupId: String(group._id),
+    messageId: String(messageId),
+    message: "Message deleted for you.",
+  };
+};
+
+export const getPinnedGroupMessagesList = async ({ group, member, me }) => {
+  const blocked = await getBlockedByMe(me);
+  const msgs = await groupMessageRepository
+    .find({
+      groupId: group._id,
+      parentMessageId: { $in: [null, undefined] },
+      isPinned: true,
+      isDeleted: { $ne: true },
+      senderId: { $nin: blocked },
+      deletedFor: { $ne: me },
+    })
+    .sort({ pinnedAt: -1 })
+    .populate(
+      "senderId",
+      "fullName avatar profilePhotoVisibility profilePhotoExceptions",
+    )
+    .populate("pinnedBy", "fullName avatar")
+    .populate(
+      "replyTo",
+      "senderId text image file audio video location isDeleted e2ee iv",
+    );
+
+  const senderIds = [
+    ...new Set(msgs.map((m) => m.senderId?._id || m.senderId).filter(Boolean)),
+  ];
+
+  const contactsWhoSavedMe = await contactRepository
+    .find({
+      ownerId: { $in: senderIds },
+      contactId: me,
+    })
+    .select("ownerId")
+    .lean();
+
+  const targetSavedMeSet = new Set(
+    contactsWhoSavedMe.map((c) => String(c.ownerId)),
+  );
+
+  return msgs.map((m) => {
+    const formatted = formatGroupMessage(m, me);
+    const sender = m.senderId;
+    if (sender) {
+      const sId = sid(sender);
+      if (sId !== String(me)) {
+        const vis = sender.profilePhotoVisibility ?? "everyone";
+        const canSeePhoto = canViewSync(
+          vis,
+          sId,
+          me,
+          targetSavedMeSet,
+          sender.profilePhotoExceptions || [],
+        );
+        if (!canSeePhoto && formatted.sender) {
+          formatted.sender.avatar = "";
+        }
+      }
+    }
+    return formatted;
+  });
+};
+
+export const getPinnedGroupMessagesForRequest = async ({ groupId, me }) => {
+  const { group, member } = await getGroupAndMember(groupId, me);
+  return getPinnedGroupMessagesList({ group, member, me });
+};
+
+export const togglePinGroupMessageService = async ({
+  group,
+  member,
+  me,
+  messageId,
+}) => {
+  const message = await groupMessageRepository.findOne({
+    _id: messageId,
+    groupId: group._id,
+  });
+  if (!message || message.isDeleted) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      GROUP_ERROR_MESSAGES.MESSAGE_NOT_FOUND,
+    );
+  }
+
+  const actor = String(me);
+  const isAdminOrOwner =
+    member?.role === "admin" || String(group.owner) === actor;
+  const whoCanPin = group.whoCanPin || "all";
+
+  if (whoCanPin === "admins" && !isAdminOrOwner) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only group admins can pin or unpin messages in this group.",
+    );
+  }
+
+  if (!message.isPinned) {
+    const pinCount = await groupMessageRepository.countDocuments({
+      groupId: group._id,
+      isPinned: true,
+      isDeleted: { $ne: true },
+    });
+    if (pinCount >= 5) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "You can pin up to 5 messages in this group.",
+      );
+    }
+    message.isPinned = true;
+    message.pinnedBy = me;
+    message.pinnedAt = new Date();
+  } else {
+    message.isPinned = false;
+    message.pinnedBy = undefined;
+    message.pinnedAt = undefined;
+  }
+
+  await message.save();
+
+  // Populate senderId and pinnedBy for rich payload
+  await message.populate([
+    {
+      path: "senderId",
+      select: "fullName avatar profilePhotoVisibility profilePhotoExceptions",
+    },
+    {
+      path: "pinnedBy",
+      select: "fullName avatar",
+    },
+  ]);
+
+  const formattedMsg = formatGroupMessage(message, me);
+
+  const payload = {
+    groupId: String(group._id),
+    messageId: String(message._id),
+    isPinned: message.isPinned,
+    pinnedBy: message.pinnedBy
+      ? String(message.pinnedBy._id || message.pinnedBy)
+      : null,
+    pinnedByUser: message.pinnedBy?._id
+      ? {
+          id: String(message.pinnedBy._id),
+          _id: String(message.pinnedBy._id),
+          fullName: message.pinnedBy.fullName,
+          avatar: message.pinnedBy.avatar?.url || "",
+        }
+      : null,
+    pinnedAt: message.pinnedAt || null,
+    message: formattedMsg,
+  };
+
+  emitToGroupRoom(group._id, GROUP_SOCKET_EVENTS.GROUP_MESSAGE_PINNED, payload);
+
+  // Centralized real-time notification to group members
+  if (message.isPinned) {
+    const actorName = message.pinnedBy?.fullName || "A member";
+    const notifPromises = [];
+    for (const m of group.members || []) {
+      const recipientId = String(m.userId?._id || m.userId);
+      if (recipientId && recipientId !== actor) {
+        notifPromises.push(
+          notificationService.dispatchNotification({
+            recipientId,
+            senderId: actor,
+            category: NOTIFICATION_CATEGORIES.GROUP,
+            type: NOTIFICATION_TYPES.GROUP_MESSAGE_PINNED,
+            title: `Pinned message in ${group.name}`,
+            body: `${actorName} pinned a message: ${formattedMsg.text ? formattedMsg.text.slice(0, 50) : "Media"}`,
+            data: {
+              groupId: String(group._id),
+              messageId: String(message._id),
+            },
+          }),
+        );
+      }
+    }
+    if (notifPromises.length > 0) {
+      await Promise.allSettled(notifPromises);
+    }
+  }
+
+  return payload;
+};
+
+export const toggleStarGroupMessageService = async ({
+  group,
+  me,
+  messageId,
+}) => {
+  const message = await groupMessageRepository.findOne({
+    _id: messageId,
+    groupId: group._id,
+  });
+  if (!message || message.isDeleted) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      GROUP_ERROR_MESSAGES.MESSAGE_NOT_FOUND,
+    );
+  }
+
+  const uIdStr = String(me);
+  const starredBy = Array.isArray(message.starredBy) ? message.starredBy : [];
+  const idx = starredBy.findIndex((id) => String(id) === uIdStr);
+  let isStarred = false;
+
+  if (idx === -1) {
+    message.starredBy.push(me);
+    isStarred = true;
+  } else {
+    message.starredBy.splice(idx, 1);
+    isStarred = false;
+  }
+
+  await message.save();
+
+  const payload = {
+    groupId: String(group._id),
+    messageId: String(message._id),
+    isStarred,
+    userId: uIdStr,
+  };
+
+  emitToUser(me, GROUP_SOCKET_EVENTS.GROUP_MESSAGE_STARRED, payload);
 
   return payload;
 };
@@ -430,6 +851,33 @@ export const deleteGroupMessageForRequest = async ({
   return deleteGroupMessageService({ group, member, me, messageId });
 };
 
+export const deleteGroupMessageForMeForRequest = async ({
+  groupId,
+  me,
+  messageId,
+}) => {
+  const { group } = await getGroupAndMember(groupId, me);
+  return deleteGroupMessageForMeService({ group, me, messageId });
+};
+
+export const togglePinGroupMessageForRequest = async ({
+  groupId,
+  me,
+  messageId,
+}) => {
+  const { group, member } = await getGroupAndMember(groupId, me);
+  return togglePinGroupMessageService({ group, member, me, messageId });
+};
+
+export const toggleStarGroupMessageForRequest = async ({
+  groupId,
+  me,
+  messageId,
+}) => {
+  const { group } = await getGroupAndMember(groupId, me);
+  return toggleStarGroupMessageService({ group, me, messageId });
+};
+
 export const markGroupSeenForRequest = async ({ groupId, me }) => {
   const { group, member } = await getGroupAndMember(groupId, me);
   const privacy = getPrivacy(String(me)) || {};
@@ -439,13 +887,21 @@ export const markGroupSeenForRequest = async ({ groupId, me }) => {
 
 const groupMessageService = {
   getGroupMessagesList,
+  getPinnedGroupMessagesList,
   sendGroupMessageService,
   editGroupMessageService,
   deleteGroupMessageService,
+  deleteGroupMessageForMeService,
+  togglePinGroupMessageService,
+  toggleStarGroupMessageService,
   markGroupSeenService,
+  getPinnedGroupMessagesForRequest,
   sendGroupMessageForRequest,
   editGroupMessageForRequest,
   deleteGroupMessageForRequest,
+  deleteGroupMessageForMeForRequest,
+  togglePinGroupMessageForRequest,
+  toggleStarGroupMessageForRequest,
   markGroupSeenForRequest,
 };
 

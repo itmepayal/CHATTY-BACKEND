@@ -34,6 +34,14 @@ const GroupSchema = new mongoose.Schema(
     members: { type: [MemberSchema], default: [] },
     lastMessageAt: { type: Date },
 
+    disappearAfter: { type: Number, default: 0 },
+
+    whoCanPin: {
+      type: String,
+      enum: ["all", "admins"],
+      default: "all",
+    },
+
     keyRotationPending: { type: Boolean, default: false },
     keyVersion: { type: Number, default: 0 },
   },

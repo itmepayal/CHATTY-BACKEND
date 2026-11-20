@@ -643,8 +643,17 @@ io.on("connection", (socket) => {
 
   socket.on(
     "chat:open",
-    safeHandler("chat:open", (otherUserId) => {
-      socket.data.activeChatId = isObjectId(otherUserId) ? otherUserId : null;
+    safeHandler("chat:open", async (otherUserId) => {
+      if (!isObjectId(otherUserId)) {
+        socket.data.activeChatId = null;
+        return;
+      }
+      const isMutual = await Contact.isMutualContact(userId, otherUserId);
+      if (!isMutual) {
+        socket.data.activeChatId = null;
+        return;
+      }
+      socket.data.activeChatId = otherUserId;
       console.log(`[socket] user ${userId} opened chat with ${otherUserId}`);
     }),
   );
@@ -690,6 +699,8 @@ io.on("connection", (socket) => {
       if (targetPrivacy?.typingIndicator === false) return;
 
       if (await isBlockedEitherWay(userId, to)) return;
+
+      if (!(await Contact.isMutualContact(userId, to))) return;
 
       const isTyping = Boolean(payload.isTyping);
 

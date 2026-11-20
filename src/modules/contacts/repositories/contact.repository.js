@@ -322,6 +322,7 @@ export const searchDiscoverableUsers = async (
       { fullName: nameOrUsernameRegex },
       { username: nameOrUsernameRegex },
       { email: exactEmail },
+      { phone: nameOrUsernameRegex },
     ],
   })
     .select(SEARCH_USER_FIELDS)
@@ -342,7 +343,12 @@ export const searchUsers = async (
   const q = User.find({
     _id: { $ne: toObjectId(excludeUserId) },
     status: { $ne: USER_STATUS.SUSPENDED },
-    $or: [{ fullName: regex }, { username: regex }, { email: regex }],
+    $or: [
+      { fullName: regex },
+      { username: regex },
+      { email: regex },
+      { phone: regex },
+    ],
   })
     .select(SEARCH_USER_FIELDS)
     .limit(limit);

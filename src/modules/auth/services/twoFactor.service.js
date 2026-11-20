@@ -22,6 +22,7 @@ import {
   validateTotpCodeInput,
 } from "../validations/two-factor.validation.js";
 import { AUTH_MESSAGES } from "../constants/auth.constants.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
 
 export const setup2FA = async (userId) => {
   const user = await userRepository.findById(userId).select(
@@ -85,6 +86,18 @@ export const enable2FA = async ({ userId, code }) => {
   user.twoFactorEnabled = true;
   user.recoveryCodes = hashes;
   await user.save({ validateBeforeSave: false });
+
+  notificationService
+    .dispatchNotification({
+      recipientId: userId,
+      category: "security",
+      type: "security_2fa_enabled",
+      title: "Two-Factor Authentication Enabled",
+      body: "2FA protection is now active on your account.",
+      priority: "critical",
+      data: { timestamp: new Date().toISOString() },
+    })
+    .catch(() => {});
 
   return {
     recoveryCodes: codes,
@@ -191,6 +204,18 @@ export const disable2FA = async ({ userId, code }) => {
   user.twoFactorSecret = undefined;
   user.recoveryCodes = [];
   await user.save({ validateBeforeSave: false });
+
+  notificationService
+    .dispatchNotification({
+      recipientId: userId,
+      category: "security",
+      type: "security_2fa_disabled",
+      title: "Two-Factor Authentication Disabled",
+      body: "2FA protection was disabled for your account.",
+      priority: "critical",
+      data: { timestamp: new Date().toISOString() },
+    })
+    .catch(() => {});
 };
 
 export const regenerateRecoveryCodes = async ({ userId, code }) => {

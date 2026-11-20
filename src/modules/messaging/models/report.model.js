@@ -15,7 +15,17 @@ const ReportSchema = new mongoose.Schema(
     messageId: { type: mongoose.Schema.Types.ObjectId, ref: "Message" },
     reason: {
       type: String,
-      enum: ["spam", "harassment", "inappropriate", "impersonation", "other"],
+      enum: [
+        "spam",
+        "harassment",
+        "fake_account",
+        "inappropriate",
+        "inappropriate_profile",
+        "inappropriate_content",
+        "impersonation",
+        "hate_speech",
+        "other",
+      ],
       required: true,
     },
     details: { type: String, maxlength: 500 },

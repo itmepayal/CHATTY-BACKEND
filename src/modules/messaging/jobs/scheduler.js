@@ -10,6 +10,48 @@ import { io } from "../../../infrastructure/socket/socket.js";
 const STRANDED_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_JOB_RETRIES = 3;
 
+export const computeNextOccurrence = (scheduledFor, recurrence) => {
+  if (!recurrence || !recurrence.type || recurrence.type === "none") return null;
+  const current = new Date(scheduledFor);
+  const interval = Math.max(1, recurrence.interval || 1);
+  let next = new Date(current);
+
+  if (recurrence.type === "daily") {
+    next.setDate(next.getDate() + interval);
+  } else if (recurrence.type === "weekly") {
+    next.setDate(next.getDate() + 7 * interval);
+  } else if (recurrence.type === "monthly") {
+    next.setMonth(next.getMonth() + interval);
+  } else if (recurrence.type === "custom") {
+    if (Array.isArray(recurrence.daysOfWeek) && recurrence.daysOfWeek.length > 0) {
+      const days = [...recurrence.daysOfWeek].sort((a, b) => a - b);
+      let found = false;
+      for (let i = 1; i <= 7; i++) {
+        const candidate = new Date(current);
+        candidate.setDate(candidate.getDate() + i);
+        if (days.includes(candidate.getDay())) {
+          next = candidate;
+          found = true;
+          break;
+        }
+      }
+      if (!found) next.setDate(next.getDate() + interval);
+    } else {
+      next.setDate(next.getDate() + interval);
+    }
+  }
+
+  if (recurrence.endDate && next > new Date(recurrence.endDate)) {
+    return null;
+  }
+  const nextOccur = (recurrence.currentOccurrence || 1) + 1;
+  if (recurrence.maxOccurrences && nextOccur > recurrence.maxOccurrences) {
+    return null;
+  }
+
+  return { nextDate: next, currentOccurrence: nextOccur };
+};
+
 export const recoverStrandedJobs = async () => {
   try {
     const threshold = new Date(Date.now() - STRANDED_TIMEOUT_MS);
@@ -107,6 +149,32 @@ export const startScheduler = () => {
               { status: "sent", sentMessageId: sentId },
             );
 
+            if (claimed.recurrence && claimed.recurrence.type && claimed.recurrence.type !== "none") {
+              const nextPlan = computeNextOccurrence(claimed.scheduledFor, claimed.recurrence);
+              if (nextPlan) {
+                await ScheduledMessage.create({
+                  senderId: claimed.senderId,
+                  groupId: claimed.groupId,
+                  messageType: "group",
+                  text: claimed.text,
+                  image: claimed.image,
+                  file: claimed.file,
+                  audio: claimed.audio,
+                  video: claimed.video,
+                  e2ee: claimed.e2ee,
+                  iv: claimed.iv,
+                  groupKeyVersion: claimed.groupKeyVersion,
+                  scheduledFor: nextPlan.nextDate,
+                  timezone: claimed.timezone || "UTC",
+                  recurrence: {
+                    ...(claimed.recurrence.toObject ? claimed.recurrence.toObject() : claimed.recurrence),
+                    currentOccurrence: nextPlan.currentOccurrence,
+                  },
+                  status: "pending",
+                });
+              }
+            }
+
             try {
               io.to(claimed.senderId.toString()).emit("scheduled:sent", {
                 scheduleId: claimed._id,
@@ -123,6 +191,10 @@ export const startScheduler = () => {
               receiverId: claimed.receiverId,
               data: {
                 text: claimed.text,
+                image: claimed.image,
+                file: claimed.file,
+                audio: claimed.audio,
+                video: claimed.video,
                 e2ee: Boolean(claimed.e2ee),
                 ...(claimed.iv ? { iv: claimed.iv } : {}),
                 ...(claimed.e2ee &&
@@ -139,6 +211,32 @@ export const startScheduler = () => {
               { _id: claimed._id },
               { status: "sent", sentMessageId: message._id },
             );
+
+            if (claimed.recurrence && claimed.recurrence.type && claimed.recurrence.type !== "none") {
+              const nextPlan = computeNextOccurrence(claimed.scheduledFor, claimed.recurrence);
+              if (nextPlan) {
+                await ScheduledMessage.create({
+                  senderId: claimed.senderId,
+                  receiverId: claimed.receiverId,
+                  messageType: "direct",
+                  text: claimed.text,
+                  image: claimed.image,
+                  file: claimed.file,
+                  audio: claimed.audio,
+                  video: claimed.video,
+                  e2ee: claimed.e2ee,
+                  iv: claimed.iv,
+                  keyEnvelopes: claimed.keyEnvelopes,
+                  scheduledFor: nextPlan.nextDate,
+                  timezone: claimed.timezone || "UTC",
+                  recurrence: {
+                    ...(claimed.recurrence.toObject ? claimed.recurrence.toObject() : claimed.recurrence),
+                    currentOccurrence: nextPlan.currentOccurrence,
+                  },
+                  status: "pending",
+                });
+              }
+            }
 
             try {
               io.to(claimed.senderId.toString()).emit("scheduled:sent", {

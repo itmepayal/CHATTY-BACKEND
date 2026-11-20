@@ -29,6 +29,7 @@ import {
   validateResetPasswordInput,
   validateChangePasswordInput,
 } from "../validations/auth.validation.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
 
 export const requestPasswordReset = async ({ email, platform }) => {
   const normalised = normalizeEmail(email);
@@ -147,6 +148,18 @@ export const changePassword = async ({
     });
     await disconnectOtherUserSessions(user._id, currentSessionId);
   }
+
+  notificationService
+    .dispatchNotification({
+      recipientId: user._id,
+      category: "security",
+      type: "security_password_changed",
+      title: "Password Changed",
+      body: "Your account password was successfully updated.",
+      priority: "critical",
+      data: { timestamp: new Date().toISOString() },
+    })
+    .catch(() => {});
 
   return { message: AUTH_MESSAGES.PASSWORD_CHANGED };
 };

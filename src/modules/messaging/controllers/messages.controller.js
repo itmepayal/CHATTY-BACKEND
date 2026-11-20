@@ -87,6 +87,48 @@ export const togglePin = asyncHandler(async (req, res) => {
   return new ApiResponse(StatusCodes.OK, payload, message).send(res);
 });
 
+export const toggleStar = asyncHandler(async (req, res) => {
+  const { payload, message } = await lifecycleService.toggleStar(
+    req.user._id,
+    req.params.messageId,
+  );
+
+  return new ApiResponse(StatusCodes.OK, payload, message).send(res);
+});
+
+export const getStarred = asyncHandler(async (req, res) => {
+  const messages = await lifecycleService.getStarredMessages(
+    req.user._id,
+    req.params.id,
+  );
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    messages,
+    "Starred messages retrieved.",
+  ).send(res);
+});
+
+export const setPinChat = asyncHandler(async (req, res) => {
+  const { userId, pinned, message } = await chatSettingService.setPinChat(
+    req.user._id,
+    req.params.id,
+    req.body.pinned,
+  );
+
+  return new ApiResponse(StatusCodes.OK, { userId, pinned }, message).send(res);
+});
+
+export const setMuteChat = asyncHandler(async (req, res) => {
+  const { userId, muted, message } = await chatSettingService.setMuteChat(
+    req.user._id,
+    req.params.id,
+    req.body.muted,
+  );
+
+  return new ApiResponse(StatusCodes.OK, { userId, muted }, message).send(res);
+});
+
 export const getPinned = asyncHandler(async (req, res) => {
   const { pinned, message } = await queryService.getPinned(
     req.user._id,
@@ -276,6 +318,10 @@ const messageController = {
   forwardMessage,
   editMessage,
   togglePin,
+  toggleStar,
+  getStarred,
+  setPinChat,
+  setMuteChat,
   getPinned,
   searchMessages,
   scheduleMessage,

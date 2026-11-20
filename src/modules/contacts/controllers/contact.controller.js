@@ -128,6 +128,82 @@ export const bulkAddContacts = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const sendContactRequest = asyncHandler(async (req, res) => {
+  const result = await contactService.sendContactRequest(
+    req.user._id,
+    req.params.userId,
+    req.body?.note,
+  );
+
+  return new ApiResponse(
+    StatusCodes.CREATED,
+    result,
+    result.message || CONTACT_SUCCESS_MESSAGES.REQUEST_SENT,
+  ).send(res);
+});
+
+export const getContactRequests = asyncHandler(async (req, res) => {
+  const result = await contactService.getContactRequests(req.user._id);
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    CONTACT_SUCCESS_MESSAGES.REQUESTS_FETCHED,
+  ).send(res);
+});
+
+export const acceptContactRequest = asyncHandler(async (req, res) => {
+  const result = await contactService.acceptContactRequest(
+    req.user._id,
+    req.params.requestId,
+  );
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    CONTACT_SUCCESS_MESSAGES.REQUEST_ACCEPTED,
+  ).send(res);
+});
+
+export const rejectContactRequest = asyncHandler(async (req, res) => {
+  const result = await contactService.rejectContactRequest(
+    req.user._id,
+    req.params.requestId,
+  );
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    CONTACT_SUCCESS_MESSAGES.REQUEST_REJECTED,
+  ).send(res);
+});
+
+export const cancelContactRequest = asyncHandler(async (req, res) => {
+  const result = await contactService.cancelContactRequest(
+    req.user._id,
+    req.params.requestId,
+  );
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    CONTACT_SUCCESS_MESSAGES.REQUEST_CANCELLED,
+  ).send(res);
+});
+
+export const getRequestHistory = asyncHandler(async (req, res) => {
+  const result = await contactService.getRequestHistory(
+    req.user._id,
+    req.query,
+  );
+
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    "Contact request history retrieved successfully.",
+  ).send(res);
+});
+
 const contactController = {
   searchUsers,
   getContacts,
@@ -139,6 +215,12 @@ const contactController = {
   getMutualContacts,
   getContactCount,
   bulkAddContacts,
+  sendContactRequest,
+  getContactRequests,
+  acceptContactRequest,
+  rejectContactRequest,
+  cancelContactRequest,
+  getRequestHistory,
 };
 
 export default contactController;

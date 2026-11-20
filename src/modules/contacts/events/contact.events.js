@@ -4,6 +4,13 @@ import {
   CONTACT_REMOVED,
   CONTACT_UPDATED,
   CONTACTS_BULK_ADDED,
+  CONTACT_REQUEST_RECEIVED,
+  CONTACT_REQUEST_SENT,
+  CONTACT_REQUEST_ACCEPTED,
+  CONTACT_REQUEST_REJECTED,
+  CONTACT_REQUEST_CANCELLED,
+  CONTACT_BLOCKED,
+  CONTACT_UNBLOCKED,
 } from "../../../shared/constants/socket-events.constants.js";
 
 export const syncPrivacy = async (userIds) => {
@@ -38,4 +45,32 @@ export const emitContactUpdated = (ownerId, payload) => {
 
 export const emitContactsBulkAdded = (ownerId, payload) => {
   io.to(String(ownerId)).emit(CONTACTS_BULK_ADDED, payload);
+};
+
+export const emitContactRequestReceived = (recipientId, payload) => {
+  io.to(String(recipientId)).emit(CONTACT_REQUEST_RECEIVED, payload);
+};
+
+export const emitContactRequestAccepted = (senderId, payload) => {
+  io.to(String(senderId)).emit(CONTACT_REQUEST_ACCEPTED, payload);
+};
+
+export const emitContactRequestRejected = (senderId, payload) => {
+  io.to(String(senderId)).emit(CONTACT_REQUEST_REJECTED, payload);
+};
+
+export const emitContactRequestSent = (senderId, payload) => {
+  io.to(String(senderId)).emit(CONTACT_REQUEST_SENT, payload);
+};
+
+export const emitContactRequestCancelled = (recipientId, payload) => {
+  io.to(String(recipientId)).emit(CONTACT_REQUEST_CANCELLED, payload);
+};
+
+export const emitContactBlocked = (userId, payload) => {
+  io.to(String(userId)).emit(CONTACT_BLOCKED, payload);
+};
+
+export const emitContactUnblocked = (userId, payload) => {
+  io.to(String(userId)).emit(CONTACT_UNBLOCKED, payload);
 };

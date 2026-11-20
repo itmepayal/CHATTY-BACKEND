@@ -30,6 +30,40 @@ const ScheduledMessageSchema = new mongoose.Schema(
       },
     },
     text: { type: String, required: true, maxlength: MAX_CIPHERTEXT_LENGTH },
+    image: {
+      public_id: { type: String },
+      url: { type: String },
+    },
+    file: {
+      public_id: { type: String },
+      url: { type: String },
+      name: { type: String },
+      size: { type: Number },
+      mimeType: { type: String },
+    },
+    audio: {
+      public_id: { type: String },
+      url: { type: String },
+      duration: { type: Number },
+    },
+    video: {
+      public_id: { type: String },
+      url: { type: String },
+      duration: { type: Number },
+    },
+    recurrence: {
+      type: {
+        type: String,
+        enum: ["none", "daily", "weekly", "monthly", "custom"],
+        default: "none",
+      },
+      interval: { type: Number, default: 1 },
+      daysOfWeek: [{ type: Number }],
+      endDate: { type: Date, default: null },
+      maxOccurrences: { type: Number, default: null },
+      currentOccurrence: { type: Number, default: 0 },
+    },
+    timezone: { type: String, default: "UTC" },
     e2ee: { type: Boolean, default: false },
     iv: { type: String, default: null },
     keyEnvelopes: [

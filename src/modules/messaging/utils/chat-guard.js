@@ -1,5 +1,6 @@
 import { StatusCodes } from "http-status-codes";
 import User from "../../users/models/users.model.js";
+import Contact from "../../contacts/models/contact.model.js";
 import ApiError from "../../../shared/errors/api-error.js";
 
 const hasBlocked = (user, otherId) =>
@@ -24,5 +25,15 @@ export const assertCanMessage = async (senderId, receiverId) => {
 
   if (hasBlocked(receiver, senderId)) {
     throw new ApiError(StatusCodes.FORBIDDEN, "You can't message this user.");
+  }
+
+  const isMutual = await Contact.isMutualContact(senderId, receiverId);
+  if (!isMutual) {
+    const err = new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You must become contacts before sending messages.",
+    );
+    err.code = "CONTACT_NOT_ACCEPTED";
+    throw err;
   }
 };

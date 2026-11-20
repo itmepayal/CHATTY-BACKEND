@@ -49,7 +49,11 @@ export const MESSAGE_STATUS = Object.freeze({
 export const REPORT_REASONS = Object.freeze([
   "spam",
   "harassment",
+  "fake_account",
+  "inappropriate",
+  "inappropriate_profile",
   "inappropriate_content",
+  "impersonation",
   "hate_speech",
   "other",
 ]);
