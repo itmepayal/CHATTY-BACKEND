@@ -7,7 +7,7 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-// Matches /api/settings/notifications or /api/v1/settings/notifications
+// Core notification settings (sound, volume, desktop, preview)
 router
   .route("/notifications")
   .get(notificationSettingsController.getNotificationSettings)
@@ -18,5 +18,23 @@ router
   .route("/")
   .get(notificationSettingsController.getNotificationSettings)
   .patch(settingsLimiter, notificationSettingsController.updateNotificationSettings);
+
+// Extended notification preferences (categories, DND)
+router
+  .route("/notifications/preferences")
+  .get(notificationSettingsController.getNotificationSettings)
+  .patch(settingsLimiter, notificationSettingsController.updateNotificationPreferences);
+
+// Per-conversation / per-group mute
+router
+  .route("/notifications/mute")
+  .post(notificationSettingsController.muteChat)
+  .delete(notificationSettingsController.unmuteChat);
+
+// Push subscription management
+router
+  .route("/notifications/push-subscription")
+  .post(notificationSettingsController.savePushSubscription)
+  .delete(notificationSettingsController.removePushSubscription);
 
 export default router;

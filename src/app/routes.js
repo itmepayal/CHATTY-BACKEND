@@ -10,6 +10,9 @@ import groupCallRoutes from "../modules/calling/routes/group-call.routes.js";
 import contactRoutes from "../modules/contacts/routes/contact.routes.js";
 import { e2eeRoutes, e2eeMessageRoutes } from "../modules/e2ee/index.js";
 import settingsRoutes from "../modules/notifications/routes/notification-settings.routes.js";
+import notificationRoutes from "../modules/notifications/routes/notification.routes.js";
+import savedMessageRoutes from "../modules/messaging/routes/saved-message.routes.js";
+import advancedMessagingRoutes from "../modules/messaging/routes/advanced-messaging.routes.js";
 
 const router = Router();
 
@@ -20,8 +23,11 @@ router.get("/health", (req, res) => {
 router.use("/auth", authRoutes);
 router.use("/users", userRoutes);
 router.use("/settings", settingsRoutes);
+router.use("/notifications", notificationRoutes);
+router.use("/saved-messages", savedMessageRoutes);
 router.use("/e2ee", e2eeRoutes);
 router.use("/messages/e2ee", e2eeMessageRoutes);
+router.use("/messages", advancedMessagingRoutes);
 router.use("/messages", messageRoutes);
 router.use("/scheduled", scheduledRoutes);
 router.use("/groups", groupRoutes);

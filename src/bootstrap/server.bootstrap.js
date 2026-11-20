@@ -1,6 +1,10 @@
 import "../config/env.config.js";
 import connectDB from "../infrastructure/database/db.config.js";
-import { port, mongoUri, mongoDbName } from "../shared/constants/app.constants.js";
+import {
+  port,
+  mongoUri,
+  mongoDbName,
+} from "../shared/constants/app.constants.js";
 import { server, io } from "../infrastructure/socket/socket.js";
 import "../app/app.js";
 import { startScheduler } from "../modules/messaging/jobs/scheduler.js";
@@ -32,7 +36,9 @@ export const startServer = async () => {
       console.log(`Server listening on port ${listenPort}`);
       if (process.env.NODE_ENV !== "production") {
         console.log(`Local API: http://localhost:${listenPort}/api/v1`);
-        console.log(`Swagger Docs API: http://localhost:${listenPort}/api-docs`);
+        console.log(
+          `Swagger Docs API: http://localhost:${listenPort}/api-docs`,
+        );
       }
     });
   } catch (error) {

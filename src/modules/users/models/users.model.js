@@ -113,6 +113,22 @@ const UserSchema = new mongoose.Schema(
       },
     ],
 
+    pinnedChats: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
+
+    mutedChats: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
+
     timezone: {
       type: String,
       trim: true,
@@ -382,6 +398,45 @@ const UserSchema = new mongoose.Schema(
         type: Boolean,
         default: true,
       },
+    },
+
+    notificationPreferences: {
+      messagesPersonal: { type: Boolean, default: true },
+      messagesGroup: { type: Boolean, default: true },
+      messageReplies: { type: Boolean, default: true },
+      messageMentions: { type: Boolean, default: true },
+      messageReactions: { type: Boolean, default: true },
+      mediaNotifications: { type: Boolean, default: true },
+      callsVoice: { type: Boolean, default: true },
+      callsVideo: { type: Boolean, default: true },
+      callsMissed: { type: Boolean, default: true },
+      callsGroup: { type: Boolean, default: true },
+      contactRequests: { type: Boolean, default: true },
+      contactAcceptance: { type: Boolean, default: true },
+      groupInvitations: { type: Boolean, default: true },
+      groupMembershipEvents: { type: Boolean, default: true },
+      securityNewDevice: { type: Boolean, default: true },
+      securityDeviceLinking: { type: Boolean, default: true },
+      securityCredentialChanges: { type: Boolean, default: true },
+      securityE2EEAlerts: { type: Boolean, default: true },
+      systemAnnouncements: { type: Boolean, default: true },
+      systemMaintenance: { type: Boolean, default: true },
+      systemAlerts: { type: Boolean, default: true },
+      dndEnabled: { type: Boolean, default: false },
+      dndUntil: { type: Date, default: null },
+      mutedConversations: [{ type: String, default: [] }],
+      mutedGroups: [{ type: String, default: [] }],
+      pushSubscriptions: [
+        {
+          endpoint: { type: String, required: true },
+          keys: {
+            p256dh: { type: String, required: true },
+            auth: { type: String, required: true },
+          },
+          userAgent: { type: String, default: "" },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
     },
 
     theme: {

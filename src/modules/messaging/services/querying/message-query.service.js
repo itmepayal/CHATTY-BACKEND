@@ -9,9 +9,11 @@ import {
   formatMessage,
 } from "../../utils/message-helpers.js";
 import { canSendReadReceipt } from "../../../privacy/services/privacy.service.js";
+import { assertCanMessage } from "../../utils/chat-guard.js";
 
 export const getMessages = async (userId, otherId) => {
   assertValidId(otherId, "User ID");
+  await assertCanMessage(userId, otherId);
 
   const [messages, canReceipt] = await Promise.all([
     messageRepository
@@ -25,6 +27,7 @@ export const getMessages = async (userId, otherId) => {
           },
           notExpired(),
         ],
+        parentMessageId: { $in: [null, undefined] },
         deletedFor: { $ne: userId },
       })
       .sort({ createdAt: 1 })
@@ -47,6 +50,7 @@ export const getMessages = async (userId, otherId) => {
 
 export const getPinned = async (userId, otherId) => {
   assertValidId(otherId, "user ID");
+  await assertCanMessage(userId, otherId);
 
   const [pinned, canReceipt] = await Promise.all([
     messageRepository
@@ -60,6 +64,7 @@ export const getPinned = async (userId, otherId) => {
           },
           notExpired(),
         ],
+        parentMessageId: { $in: [null, undefined] },
         isPinned: true,
         isDeleted: { $ne: true },
         deletedFor: { $ne: userId },
@@ -91,6 +96,7 @@ export const searchMessages = async (
   const limit = Math.min(Number(rawLimit) || 30, 50);
 
   assertValidId(otherId, "user ID");
+  await assertCanMessage(userId, otherId);
 
   if (q.length < 2) {
     return {

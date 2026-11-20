@@ -45,6 +45,7 @@ import {
   broadcastGroupKeysNeeded,
   emitGroupConversationUpdate,
 } from "../events/group.events.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
 
 export const safeUnlink = async (filePath) => {
   if (!filePath) return;
@@ -123,7 +124,7 @@ export const notifyKeysNeeded = async (group, newIds) => {
 export const loadGroup = (id) =>
   groupRepository
     .findById(id)
-    .populate("members.userId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
+    .populate("members.userId", "fullName avatar username profilePhotoVisibility profilePhotoExceptions");
 
 export const formatGroup = (
   group,
@@ -163,6 +164,7 @@ export const formatGroup = (
       return {
         id: uid,
         fullName: u?.fullName || "",
+        username: u?.username || "",
         avatar: showPhoto ? u?.avatar?.url || "" : "",
         role: m.role,
         joinedAt: m.joinedAt,
@@ -177,6 +179,8 @@ export const formatGroup = (
     e2ee: false,
     keyVersion: 0,
     keyRotationPending: !!group.keyRotationPending,
+    disappearAfter: group.disappearAfter || 0,
+    whoCanPin: group.whoCanPin || "all",
     ...extra,
   };
 };
@@ -217,52 +221,100 @@ export const presentGroup = async (group, extra = {}, viewerId = null) => {
   );
 };
 
-export const formatGroupMessage = (msg) => {
+const formatGroupReply = (r) => {
+  if (!r || typeof r !== "object" || !r.senderId) return null;
+  if (r.isDeleted) return { id: String(r._id), isDeleted: true };
+
+  const isEncrypted = Boolean(r.e2ee);
+  const hasLocation =
+    Number.isFinite(r.location?.lat) && Number.isFinite(r.location?.lng);
+  return {
+    id: String(r._id),
+    senderId: String(r.senderId?._id || r.senderId),
+    text: isEncrypted ? "" : (r.text || "").slice(0, 120),
+    encrypted: isEncrypted,
+    e2ee: isEncrypted,
+    type: r.image?.url
+      ? "image"
+      : r.video?.url
+        ? "video"
+        : r.audio?.url
+          ? "audio"
+          : r.file?.url
+            ? "file"
+            : hasLocation
+              ? "location"
+              : "text",
+    image: r.image?.url ? { url: r.image.url } : null,
+    file: r.file?.url ? { name: r.file.name } : null,
+    audio: r.audio?.url
+      ? { url: r.audio.url, duration: r.audio.duration || 0 }
+      : null,
+    video: r.video?.url
+      ? { url: r.video.url, duration: r.video.duration || 0 }
+      : null,
+    location: hasLocation ? { lat: r.location.lat, lng: r.location.lng } : null,
+    isDeleted: false,
+  };
+};
+
+export const formatGroupMessage = (msg, viewerId = null) => {
+  const isDeleted = Boolean(msg.isDeleted);
   const sender = msg.senderId?._id ? msg.senderId : null;
   const hasLocation =
+    !isDeleted &&
     Number.isFinite(msg.location?.lat) && Number.isFinite(msg.location?.lng);
 
   return {
-    id: msg._id,
+    id: String(msg._id),
     groupId: sid(msg.groupId),
     senderId: sid(msg.senderId),
     sender: sender
       ? {
           id: sid(sender),
-          fullName: sender.fullName,
-          avatar: sender.avatar?.url || "",
+          fullName: sender.fullName || "",
+          username: sender.username || "",
+          avatar:
+            sender.avatar?.url ||
+            (typeof sender.avatar === "string" ? sender.avatar : "") ||
+            sender.profilePic ||
+            "",
         }
       : null,
-    text: msg.text || "",
-    e2ee: !!msg.e2ee,
-    encrypted: !!msg.e2ee,
-    iv: msg.e2ee ? msg.iv || null : null,
-    keyVersion: msg.e2ee ? (msg.keyVersion ?? null) : null,
-    image: msg.image?.url
-      ? { url: msg.image.url, public_id: msg.image.public_id }
-      : null,
-    file: msg.file?.url
-      ? {
-          url: msg.file.url,
-          name: msg.file.name,
-          size: msg.file.size,
-          mimeType: msg.file.mimeType,
-        }
-      : null,
-    audio: msg.audio?.url
-      ? {
-          url: msg.audio.url,
-          duration: msg.audio.duration || 0,
-          mimeType: msg.audio.mimeType || "audio/mp4",
-        }
-      : null,
-    video: msg.video?.url
-      ? {
-          url: msg.video.url,
-          duration: msg.video.duration || 0,
-          mimeType: msg.video.mimeType,
-        }
-      : null,
+    text: isDeleted ? "" : (msg.text || ""),
+    e2ee: isDeleted ? false : !!msg.e2ee,
+    encrypted: isDeleted ? false : !!msg.e2ee,
+    iv: isDeleted ? null : (msg.e2ee ? msg.iv || null : null),
+    keyVersion: isDeleted ? null : (msg.e2ee ? (msg.keyVersion ?? null) : null),
+    image:
+      !isDeleted && msg.image?.url
+        ? { url: msg.image.url, public_id: msg.image.public_id }
+        : null,
+    file:
+      !isDeleted && msg.file?.url
+        ? {
+            url: msg.file.url,
+            name: msg.file.name,
+            size: msg.file.size,
+            mimeType: msg.file.mimeType,
+          }
+        : null,
+    audio:
+      !isDeleted && msg.audio?.url
+        ? {
+            url: msg.audio.url,
+            duration: msg.audio.duration || 0,
+            mimeType: msg.audio.mimeType || "audio/mp4",
+          }
+        : null,
+    video:
+      !isDeleted && msg.video?.url
+        ? {
+            url: msg.video.url,
+            duration: msg.video.duration || 0,
+            mimeType: msg.video.mimeType,
+          }
+        : null,
     location: hasLocation
       ? {
           lat: msg.location.lat,
@@ -275,6 +327,70 @@ export const formatGroupMessage = (msg) => {
     clientId: msg.clientId,
     readBy: (msg.readBy || []).map(String),
     silentReadBy: (msg.silentReadBy || []).map(String),
+    reactions: isDeleted
+      ? []
+      : (msg.reactions || []).map((r) => ({
+          userId: String(r.userId?._id || r.userId),
+          emoji: r.emoji,
+          createdAt: r.createdAt,
+        })),
+    parentMessageId: msg.parentMessageId ? String(msg.parentMessageId) : null,
+    threadReplyCount: msg.threadReplyCount || 0,
+    threadLastReplyAt: msg.threadLastReplyAt || null,
+    threadParticipants: Array.isArray(msg.threadParticipants)
+      ? msg.threadParticipants.map((p) => String(p._id || p))
+      : [],
+    poll: msg.poll?.question ? msg.poll : null,
+    isViewOnce: Boolean(msg.isViewOnce),
+    viewOnceViewedBy: Array.isArray(msg.viewOnceViewedBy)
+      ? msg.viewOnceViewedBy.map((u) => String(u._id || u))
+      : [],
+    viewOnceExpired: Boolean(msg.viewOnceExpired),
+    expiresAt: msg.expiresAt || null,
+    replyTo: isDeleted ? null : formatGroupReply(msg.replyTo),
+    isForwarded: Boolean(msg.isForwarded),
+    isPinned: isDeleted ? false : Boolean(msg.isPinned),
+    pinnedBy:
+      !isDeleted && msg.pinnedBy
+        ? String(msg.pinnedBy?._id || msg.pinnedBy)
+        : null,
+    pinnedByUser:
+      !isDeleted && msg.pinnedBy?._id
+        ? {
+            id: String(msg.pinnedBy._id),
+            _id: String(msg.pinnedBy._id),
+            fullName: msg.pinnedBy.fullName,
+            avatar: msg.pinnedBy.avatar?.url || "",
+          }
+        : null,
+    pinnedAt: !isDeleted && msg.pinnedAt ? msg.pinnedAt : null,
+    isStarred: Boolean(
+      viewerId &&
+        Array.isArray(msg.starredBy) &&
+        msg.starredBy.some((id) => String(id) === String(viewerId)),
+    ),
+    starredBy: Array.isArray(msg.starredBy) ? msg.starredBy.map(String) : [],
+    mentions: Array.isArray(msg.mentions)
+      ? msg.mentions.map((m) => {
+          const u = m.userId?._id ? m.userId : null;
+          return {
+            userId: String(u ? u._id : m.userId),
+            user: u
+              ? {
+                  id: String(u._id),
+                  _id: String(u._id),
+                  fullName: u.fullName,
+                  avatar: u.avatar?.url || "",
+                  username: u.username || "",
+                }
+              : null,
+            startIndex: typeof m.startIndex === "number" ? m.startIndex : 0,
+            length: typeof m.length === "number" ? m.length : 0,
+          };
+        })
+      : [],
+    isDeleted: isDeleted,
+    deletedAt: msg.deletedAt || null,
     isEdited: Boolean(msg.isEdited),
     editedAt: msg.editedAt || null,
     createdAt: msg.createdAt,
@@ -431,7 +547,13 @@ export const emitGroupConversation = async (group) => {
 };
 
 export const broadcastGroupMessage = async (group, message, senderId) => {
-  await message.populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions");
+  await message.populate([
+    {
+      path: "senderId",
+      select: "fullName avatar profilePhotoVisibility profilePhotoExceptions",
+    },
+    { path: "mentions.userId", select: "fullName avatar username" },
+  ]);
   await groupRepository.updateOne(
     { _id: group._id },
     { lastMessageAt: message.createdAt },
@@ -503,6 +625,76 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
           };
 
       emitToUser(id, GROUP_SOCKET_EVENTS.GROUP_NEW_MESSAGE, memberPayload);
+    }
+
+    if (!isSelf) {
+      const isMentioned =
+        Array.isArray(message.mentions) &&
+        message.mentions.some(
+          (m) => String(m.userId?._id || m.userId) === id,
+        );
+
+      let groupNotifType = "group_message_received";
+      let groupNotifTitle = group.name || "Group";
+      let groupNotifBody = "New message";
+
+      if (isMentioned) {
+        groupNotifType = "group_mention";
+        groupNotifTitle = "You were mentioned";
+        groupNotifBody = `${sender?.fullName || "Someone"} mentioned you in ${group.name}`;
+      } else if (message.replyTo && String(message.replyTo.senderId) === id) {
+        groupNotifType = "group_reply";
+        groupNotifTitle = `${sender?.fullName || "Someone"} replied in ${group.name}`;
+      } else if (
+        message.text &&
+        (message.text.includes("@everyone") || message.text.includes("@all"))
+      ) {
+        groupNotifType = "group_mention_everyone";
+        groupNotifTitle = `${sender?.fullName || "Someone"} mentioned @everyone in ${group.name}`;
+      }
+
+      if (message.image?.url) {
+        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a photo`;
+      } else if (message.video?.url) {
+        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a video`;
+      } else if (message.audio?.url) {
+        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a voice message`;
+      } else if (message.file?.url) {
+        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a document`;
+      } else if (message.location?.lat != null) {
+        groupNotifBody = `${sender?.fullName || "Someone"}: Shared location`;
+      } else if (message.e2ee) {
+        groupNotifBody = isMentioned
+          ? `${sender?.fullName || "Someone"} mentioned you in ${group.name}`
+          : `${sender?.fullName || "Someone"}: New encrypted message`;
+      } else if (message.text) {
+        const preview =
+          message.text.length > 60
+            ? `${message.text.slice(0, 60)}…`
+            : message.text;
+        groupNotifBody = isMentioned
+          ? `${sender?.fullName || "Someone"} mentioned you in ${group.name}: ${preview}`
+          : `${sender?.fullName || "Someone"}: ${preview}`;
+      }
+
+      notificationService
+        .dispatchNotification({
+          recipientId: id,
+          senderId: sId,
+          category: "group",
+          type: groupNotifType,
+          title: groupNotifTitle,
+          body: groupNotifBody,
+          data: {
+            groupId: String(group._id),
+            messageId: String(message._id),
+            senderId: sId,
+            mentionedUserId: isMentioned ? id : undefined,
+            groupName: group.name,
+          },
+          dedupKey: isMentioned ? `group_mention:${message._id}:${id}` : null,
+        })
+        .catch(() => {});
     }
   }
 
@@ -651,7 +843,7 @@ export const getGroupDetails = async (groupId, me) => {
   return presentGroup(group, { archived }, me);
 };
 
-export const updateGroupService = async ({ group, me, name, file }) => {
+export const updateGroupService = async ({ group, me, name, file, whoCanPin }) => {
   let changed = false;
   let oldPublicId = null;
   let newAvatar = null;
@@ -660,6 +852,13 @@ export const updateGroupService = async ({ group, me, name, file }) => {
     const trimmed = typeof name === "string" ? name.trim() : "";
     if (trimmed && trimmed !== group.name) {
       group.name = trimmed;
+      changed = true;
+    }
+  }
+
+  if (whoCanPin !== undefined && ["all", "admins"].includes(whoCanPin)) {
+    if (group.whoCanPin !== whoCanPin) {
+      group.whoCanPin = whoCanPin;
       changed = true;
     }
   }
@@ -951,10 +1150,16 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
   return { text, cipher, wantsE2EE, isVoice, isVideo };
 };
 
-export const updateGroupForRequest = async ({ groupId, me, name, file }) => {
+export const updateGroupForRequest = async ({
+  groupId,
+  me,
+  name,
+  file,
+  whoCanPin,
+}) => {
   const { group, member } = await getGroupAndMember(groupId, me);
   assertAdmin(member);
-  return updateGroupService({ group, me, name, file });
+  return updateGroupService({ group, me, name, file, whoCanPin });
 };
 
 export const deleteGroupForRequest = async ({ groupId, me }) => {

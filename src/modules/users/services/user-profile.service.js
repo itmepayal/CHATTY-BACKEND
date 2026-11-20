@@ -10,6 +10,7 @@ import formatUser from "../utils/format-user.js";
 import { RULES } from "../utils/profile-rules.js";
 import { EDITABLE_FIELDS } from "../../privacy/constants/privacy.constants.js";
 import { io } from "../../../infrastructure/socket/socket.js";
+import { isValidObjectId } from "../../../shared/utils/object-id.util.js";
 
 const emitProfileUpdated = (userId) => {
   io.emit("user:profile-updated", { userId: String(userId) });
@@ -168,7 +169,17 @@ export const fetchCurrentUser = async (userId) => {
 };
 
 export const fetchUserProfileForViewer = async (targetId, viewerId) => {
-  const safe = await getVisibleUserProfile(viewerId, targetId);
+  let resolvedId = targetId;
+  if (!isValidObjectId(targetId)) {
+    const user = await userRepository.findByUsername(
+      String(targetId).toLowerCase().replace(/^@/, ""),
+    );
+    if (!user) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "User not found.");
+    }
+    resolvedId = user._id;
+  }
+  const safe = await getVisibleUserProfile(viewerId, resolvedId);
   return { user: safe };
 };
 

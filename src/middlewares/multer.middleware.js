@@ -9,7 +9,15 @@ import {
   UPLOAD_DIR as UPLOAD_DIR_CONST,
 } from "../modules/messaging/constants/messages.constants.js";
 
-const UPLOAD_DIR = path.resolve(UPLOAD_DIR_CONST);
+const getUploadDir = () => {
+  const cwd = process.cwd();
+  if (fs.existsSync(path.resolve(cwd, "src/middlewares/multer.middleware.js"))) {
+    return path.resolve(cwd, "public/upload");
+  }
+  return path.resolve(cwd, "server/public/upload");
+};
+
+const UPLOAD_DIR = getUploadDir();
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 

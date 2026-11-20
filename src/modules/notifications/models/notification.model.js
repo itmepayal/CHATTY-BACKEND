@@ -1,0 +1,210 @@
+import mongoose from "mongoose";
+
+export const NOTIFICATION_CATEGORIES = Object.freeze({
+  MESSAGE: "message",
+  GROUP: "group",
+  CALL: "call",
+  CONTACT: "contact",
+  SECURITY: "security",
+  SYSTEM: "system",
+});
+
+export const NOTIFICATION_TYPES = Object.freeze({
+  // Contact
+  CONTACT_REQUEST_RECEIVED: "contact_request_received",
+  CONTACT_REQUEST_ACCEPTED: "contact_request_accepted",
+  CONTACT_REQUEST_REJECTED: "contact_request_rejected",
+  CONTACT_REQUEST_CANCELLED: "contact_request_cancelled",
+  CONTACT_ADDED: "contact_added",
+  CONTACT_REMOVED: "contact_removed",
+
+  // Personal Messages
+  MESSAGE_RECEIVED: "message_received",
+  MESSAGE_REPLY: "message_reply",
+  MESSAGE_MENTION: "message_mention",
+  MESSAGE_REACTION: "message_reaction",
+  MESSAGE_FORWARDED: "message_forwarded",
+  MESSAGE_PINNED: "message_pinned",
+  MEDIA_RECEIVED: "media_received",
+  LOCATION_SHARED: "location_shared",
+
+  // Group Messages & Events
+  GROUP_MESSAGE_RECEIVED: "group_message_received",
+  GROUP_MENTION: "group_mention",
+  GROUP_MENTION_EVERYONE: "group_mention_everyone",
+  GROUP_REPLY: "group_reply",
+  GROUP_REACTION: "group_reaction",
+  GROUP_MEMBER_ADDED: "group_member_added",
+  GROUP_MEMBER_JOINED: "group_member_joined",
+  GROUP_MEMBER_LEFT: "group_member_left",
+  GROUP_MEMBER_REMOVED: "group_member_removed",
+  GROUP_ROLE_CHANGED: "group_role_changed",
+  GROUP_OWNERSHIP_TRANSFERRED: "group_ownership_transferred",
+  GROUP_INVITE_RECEIVED: "group_invite_received",
+  GROUP_INVITE_ACCEPTED: "group_invite_accepted",
+  GROUP_INVITE_DECLINED: "group_invite_declined",
+  GROUP_INFO_UPDATED: "group_info_updated",
+  GROUP_MESSAGE_PINNED: "group_message_pinned",
+
+  // Calls
+  CALL_INCOMING_VOICE: "call_incoming_voice",
+  CALL_INCOMING_VIDEO: "call_incoming_video",
+  CALL_MISSED_VOICE: "call_missed_voice",
+  CALL_MISSED_VIDEO: "call_missed_video",
+  GROUP_CALL_STARTED: "group_call_started",
+  GROUP_CALL_INVITED: "group_call_invited",
+  GROUP_CALL_MISSED: "group_call_missed",
+
+  // Security
+  SECURITY_NEW_DEVICE: "security_new_device",
+  SECURITY_DEVICE_LINKED: "security_device_linked",
+  SECURITY_DEVICE_REMOVED: "security_device_removed",
+  SECURITY_DEVICE_UNLINKED: "security_device_unlinked",
+  SECURITY_SESSION_REVOKED: "security_session_revoked",
+  SECURITY_PASSWORD_CHANGED: "security_password_changed",
+  SECURITY_2FA_ENABLED: "security_2fa_enabled",
+  SECURITY_2FA_DISABLED: "security_2fa_disabled",
+  SECURITY_E2EE_ALERT: "security_e2ee_alert",
+  SECURITY_ACCOUNT_RESTRICTED: "security_account_restricted",
+
+  // System
+  SYSTEM_ANNOUNCEMENT: "system_announcement",
+  SYSTEM_MAINTENANCE: "system_maintenance",
+  SYSTEM_ALERT: "system_alert",
+});
+
+/**
+ * Maps each notification type to its canonical category.
+ */
+export const TYPE_CATEGORY_MAP = Object.freeze({
+  [NOTIFICATION_TYPES.CONTACT_REQUEST_RECEIVED]: NOTIFICATION_CATEGORIES.CONTACT,
+  [NOTIFICATION_TYPES.CONTACT_REQUEST_ACCEPTED]: NOTIFICATION_CATEGORIES.CONTACT,
+  [NOTIFICATION_TYPES.CONTACT_REQUEST_REJECTED]: NOTIFICATION_CATEGORIES.CONTACT,
+  [NOTIFICATION_TYPES.CONTACT_REQUEST_CANCELLED]: NOTIFICATION_CATEGORIES.CONTACT,
+  [NOTIFICATION_TYPES.CONTACT_ADDED]: NOTIFICATION_CATEGORIES.CONTACT,
+  [NOTIFICATION_TYPES.CONTACT_REMOVED]: NOTIFICATION_CATEGORIES.CONTACT,
+
+  [NOTIFICATION_TYPES.MESSAGE_RECEIVED]: NOTIFICATION_CATEGORIES.MESSAGE,
+  [NOTIFICATION_TYPES.MESSAGE_REPLY]: NOTIFICATION_CATEGORIES.MESSAGE,
+  [NOTIFICATION_TYPES.MESSAGE_MENTION]: NOTIFICATION_CATEGORIES.MESSAGE,
+  [NOTIFICATION_TYPES.MESSAGE_REACTION]: NOTIFICATION_CATEGORIES.MESSAGE,
+  [NOTIFICATION_TYPES.MESSAGE_FORWARDED]: NOTIFICATION_CATEGORIES.MESSAGE,
+  [NOTIFICATION_TYPES.MESSAGE_PINNED]: NOTIFICATION_CATEGORIES.MESSAGE,
+  [NOTIFICATION_TYPES.MEDIA_RECEIVED]: NOTIFICATION_CATEGORIES.MESSAGE,
+  [NOTIFICATION_TYPES.LOCATION_SHARED]: NOTIFICATION_CATEGORIES.MESSAGE,
+
+  [NOTIFICATION_TYPES.GROUP_MESSAGE_RECEIVED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_MENTION]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_MENTION_EVERYONE]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_REPLY]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_REACTION]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_MEMBER_ADDED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_MEMBER_JOINED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_MEMBER_LEFT]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_MEMBER_REMOVED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_ROLE_CHANGED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_OWNERSHIP_TRANSFERRED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_INVITE_RECEIVED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_INVITE_ACCEPTED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_INVITE_DECLINED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_INFO_UPDATED]: NOTIFICATION_CATEGORIES.GROUP,
+  [NOTIFICATION_TYPES.GROUP_MESSAGE_PINNED]: NOTIFICATION_CATEGORIES.GROUP,
+
+  [NOTIFICATION_TYPES.CALL_INCOMING_VOICE]: NOTIFICATION_CATEGORIES.CALL,
+  [NOTIFICATION_TYPES.CALL_INCOMING_VIDEO]: NOTIFICATION_CATEGORIES.CALL,
+  [NOTIFICATION_TYPES.CALL_MISSED_VOICE]: NOTIFICATION_CATEGORIES.CALL,
+  [NOTIFICATION_TYPES.CALL_MISSED_VIDEO]: NOTIFICATION_CATEGORIES.CALL,
+  [NOTIFICATION_TYPES.GROUP_CALL_STARTED]: NOTIFICATION_CATEGORIES.CALL,
+  [NOTIFICATION_TYPES.GROUP_CALL_INVITED]: NOTIFICATION_CATEGORIES.CALL,
+  [NOTIFICATION_TYPES.GROUP_CALL_MISSED]: NOTIFICATION_CATEGORIES.CALL,
+
+  [NOTIFICATION_TYPES.SECURITY_NEW_DEVICE]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_DEVICE_LINKED]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_DEVICE_REMOVED]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_DEVICE_UNLINKED]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_SESSION_REVOKED]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_PASSWORD_CHANGED]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_2FA_ENABLED]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_2FA_DISABLED]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_E2EE_ALERT]: NOTIFICATION_CATEGORIES.SECURITY,
+  [NOTIFICATION_TYPES.SECURITY_ACCOUNT_RESTRICTED]: NOTIFICATION_CATEGORIES.SECURITY,
+
+  [NOTIFICATION_TYPES.SYSTEM_ANNOUNCEMENT]: NOTIFICATION_CATEGORIES.SYSTEM,
+  [NOTIFICATION_TYPES.SYSTEM_MAINTENANCE]: NOTIFICATION_CATEGORIES.SYSTEM,
+  [NOTIFICATION_TYPES.SYSTEM_ALERT]: NOTIFICATION_CATEGORIES.SYSTEM,
+});
+
+const NotificationSchema = new mongoose.Schema(
+  {
+    recipientId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    senderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+    category: {
+      type: String,
+      enum: Object.values(NOTIFICATION_CATEGORIES),
+      default: NOTIFICATION_CATEGORIES.SYSTEM,
+      required: true,
+      index: true,
+    },
+    type: {
+      type: String,
+      enum: Object.values(NOTIFICATION_TYPES),
+      required: true,
+      index: true,
+    },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 160,
+    },
+    body: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: "",
+    },
+    data: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({}),
+    },
+    isRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    readAt: {
+      type: Date,
+      default: null,
+    },
+    expiresAt: {
+      type: Date,
+      default: null,
+    },
+    dedupKey: {
+      type: String,
+      default: null,
+    },
+  },
+  {
+    timestamps: true,
+  },
+);
+
+NotificationSchema.index({ recipientId: 1, createdAt: -1 });
+NotificationSchema.index({ recipientId: 1, isRead: 1, createdAt: -1 });
+NotificationSchema.index({ recipientId: 1, category: 1, createdAt: -1 });
+NotificationSchema.index({ dedupKey: 1 }, { sparse: true });
+NotificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0, sparse: true });
+
+const Notification = mongoose.model("Notification", NotificationSchema);
+export default Notification;

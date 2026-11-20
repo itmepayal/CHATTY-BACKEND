@@ -26,6 +26,9 @@ export const CONTACT_ERROR_MESSAGES = Object.freeze({
   INVALID_NICKNAME: `Nickname cannot exceed ${MAX_NICKNAME_LENGTH} characters.`,
   SEARCH_MIN_LENGTH: `Type at least ${SEARCH_MIN_LENGTH} characters.`,
   OWNER_REQUIRED: "Owner ID is required.",
+  REQUEST_ALREADY_SENT: "Contact request already sent.",
+  ALREADY_CONTACTS: "User is already in your contacts.",
+  REQUEST_NOT_FOUND: "Contact request not found.",
 });
 
 export const CONTACT_SUCCESS_MESSAGES = Object.freeze({
@@ -39,4 +42,9 @@ export const CONTACT_SUCCESS_MESSAGES = Object.freeze({
   BULK_PROCESSED: "Bulk contacts processed.",
   CHAT_LIST_FETCHED: "Chat list fetched successfully.",
   USERS_FETCHED: "Users fetched successfully.",
+  REQUEST_SENT: "Contact request sent successfully.",
+  REQUEST_ACCEPTED: "Contact request accepted.",
+  REQUEST_REJECTED: "Contact request rejected.",
+  REQUEST_CANCELLED: "Contact request cancelled.",
+  REQUESTS_FETCHED: "Contact requests fetched successfully.",
 });

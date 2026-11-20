@@ -4,6 +4,7 @@ import contactController from "../controllers/contact.controller.js";
 import {
   validateUserIdParam,
   validateOtherUserIdParam,
+  validateRequestIdParam,
   validatePaginationQuery,
   validateAddContactBody,
   validateUpdateNicknameBody,
@@ -21,6 +22,33 @@ router.get(
   "/mutual/:otherUserId",
   validateOtherUserIdParam,
   contactController.getMutualContacts,
+);
+router.get("/requests", contactController.getContactRequests);
+router.get("/requests/history", contactController.getRequestHistory);
+router.post(
+  "/requests/:userId",
+  validateUserIdParam,
+  contactController.sendContactRequest,
+);
+router.post(
+  "/requests/:requestId/accept",
+  validateRequestIdParam,
+  contactController.acceptContactRequest,
+);
+router.post(
+  "/requests/:requestId/reject",
+  validateRequestIdParam,
+  contactController.rejectContactRequest,
+);
+router.post(
+  "/requests/:requestId/cancel",
+  validateRequestIdParam,
+  contactController.cancelContactRequest,
+);
+router.delete(
+  "/requests/:requestId",
+  validateRequestIdParam,
+  contactController.cancelContactRequest,
 );
 router.post("/bulk", validateBulkAddBody, contactController.bulkAddContacts);
 router.get("/", validatePaginationQuery, contactController.getContacts);

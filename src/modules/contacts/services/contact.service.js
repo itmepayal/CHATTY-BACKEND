@@ -19,8 +19,13 @@ import {
 } from "../constants/contact.constants.js";
 import { CHAT_LIST_USER_FIELDS } from "../../users/constants/user-fields.constants.js";
 import * as contactRepo from "../repositories/contact.repository.js";
+import * as contactRequestRepo from "../repositories/contact-request.repository.js";
+import ContactRequest, { CONTACT_REQUEST_STATUS } from "../models/contact-request.model.js";
 import * as contactEvents from "../events/contact.events.js";
 import { filterUsersForViewer } from "../../privacy/services/privacy-visibility.service.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
+import { NOTIFICATION_TYPES } from "../../notifications/models/notification.model.js";
+import * as userRepository from "../../users/repositories/user.repository.js";
 
 export const addContact = async (ownerId, contactId, nickname) => {
   assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
@@ -77,11 +82,27 @@ export const removeContact = async (ownerId, contactId) => {
   assertValidObjectId(ownerId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
   assertValidObjectId(contactId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
 
-  const result = await contactRepo.deleteContact(ownerId, contactId);
+  const [res1, res2] = await Promise.all([
+    contactRepo.deleteContact(ownerId, contactId),
+    contactRepo.deleteContact(contactId, ownerId),
+  ]);
 
-  if (result.deletedCount > 0) {
+  if (res1.deletedCount > 0 || res2.deletedCount > 0) {
     await contactEvents.syncPrivacy([ownerId, contactId]);
     contactEvents.emitContactRemoved(ownerId, { contactId: String(contactId) });
+    contactEvents.emitContactRemoved(contactId, { contactId: String(ownerId) });
+
+    try {
+      const owner = await contactRepo.findUserById(ownerId, "fullName");
+      await notificationService.sendNotification({
+        userId: contactId,
+        senderId: ownerId,
+        type: NOTIFICATION_TYPES.CONTACT_REMOVED,
+        title: "Contact Removed",
+        body: `${owner?.fullName || "A contact"} removed you from contacts.`,
+        data: { contactId: String(ownerId) },
+      });
+    } catch {}
   }
 
   return {
@@ -395,11 +416,58 @@ export const searchUsers = async (currentUserId, rawQuery) => {
 
   const myContactIds = new Set(await contactRepo.findContactIds(currentUserId));
   const safeUsers = await filterUsersForViewer(users, currentUserId);
+  const safeUserIds = safeUsers.map((u) => u._id || u.id);
 
-  const resultUsers = safeUsers.map((u) => ({
-    ...u,
-    isContact: myContactIds.has(String(u._id || u.id)),
-  }));
+  const activeRequests = await ContactRequest.find({
+    status: CONTACT_REQUEST_STATUS.PENDING,
+    $or: [
+      { senderId: currentUserId, recipientId: { $in: safeUserIds } },
+      { senderId: { $in: safeUserIds }, recipientId: currentUserId },
+    ],
+  }).lean();
+
+  const me = await userRepository.findByIdLeanSelect(currentUserId, "blockedUsers");
+  const blockedSet = new Set((me?.blockedUsers || []).map(String));
+
+  const resultUsers = await Promise.all(
+    safeUsers.map(async (u) => {
+      const uid = String(u._id || u.id);
+      const isContact = myContactIds.has(uid);
+      const isBlocked = blockedSet.has(uid);
+
+      const sentReq = activeRequests.find(
+        (r) => String(r.senderId) === String(currentUserId) && String(r.recipientId) === uid,
+      );
+      const incomingReq = activeRequests.find(
+        (r) => String(r.recipientId) === String(currentUserId) && String(r.senderId) === uid,
+      );
+
+      let relationship = "none";
+      let requestId = null;
+      if (isBlocked) {
+        relationship = "blocked";
+      } else if (isContact) {
+        relationship = "connected";
+      } else if (sentReq) {
+        relationship = "request_sent";
+        requestId = String(sentReq._id);
+      } else if (incomingReq) {
+        relationship = "incoming_request";
+        requestId = String(incomingReq._id);
+      }
+
+      const mutualCount = (await contactRepo.findMutualContactIds(currentUserId, uid)).length;
+
+      return {
+        ...u,
+        isContact,
+        isBlocked,
+        relationship,
+        requestId,
+        mutualCount,
+      };
+    }),
+  );
 
   return {
     users: resultUsers,
@@ -460,6 +528,386 @@ export const getChatList = async (currentUserId) => {
   return { chats, totalContacts: ids.length };
 };
 
+export const sendContactRequest = async (senderId, recipientId, note = "") => {
+  assertValidObjectId(senderId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(recipientId, CONTACT_ERROR_MESSAGES.INVALID_USER_ID);
+
+  if (String(senderId) === String(recipientId)) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      CONTACT_ERROR_MESSAGES.CANNOT_ADD_SELF,
+    );
+  }
+
+  const recipient = await contactRepo.findUserById(recipientId);
+  if (!recipient || recipient.status === USER_STATUS.SUSPENDED) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.USER_NOT_FOUND,
+    );
+  }
+
+  const isBlocked = await contactRepo.isBlockedBidirectional(
+    senderId,
+    recipientId,
+  );
+  if (isBlocked) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      CONTACT_ERROR_MESSAGES.CANNOT_ADD_BLOCKED,
+    );
+  }
+
+  const alreadyContact = await contactRepo.existsContact(senderId, recipientId);
+  if (alreadyContact) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      CONTACT_ERROR_MESSAGES.ALREADY_CONTACTS,
+    );
+  }
+
+  const existingPending = await contactRequestRepo.findActiveRequestBetween(
+    senderId,
+    recipientId,
+  );
+  if (existingPending) {
+    if (String(existingPending.senderId) === String(senderId)) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        CONTACT_ERROR_MESSAGES.REQUEST_ALREADY_SENT,
+      );
+    } else {
+      return acceptContactRequest(senderId, existingPending._id);
+    }
+  }
+
+  const sanitizedNote =
+    typeof note === "string" ? note.trim().slice(0, 200) : "";
+  const request = await contactRequestRepo.createRequest(
+    senderId,
+    recipientId,
+    sanitizedNote,
+  );
+
+  const sender = await contactRepo.findUserById(
+    senderId,
+    "fullName username avatar profilePic bio phone",
+  );
+  contactEvents.emitContactRequestReceived(recipientId, {
+    id: String(request._id),
+    _id: String(request._id),
+    requestId: String(request._id),
+    sender: sender
+      ? { ...sender, id: String(sender._id), _id: String(sender._id) }
+      : { id: String(senderId), _id: String(senderId) },
+    note: sanitizedNote,
+    createdAt: request.createdAt,
+  });
+
+  contactEvents.emitContactRequestSent(senderId, {
+    id: String(request._id),
+    _id: String(request._id),
+    requestId: String(request._id),
+    recipientId: String(recipientId),
+    note: sanitizedNote,
+    createdAt: request.createdAt,
+  });
+
+  try {
+    await notificationService.sendNotification({
+      userId: recipientId,
+      senderId,
+      type: NOTIFICATION_TYPES.CONTACT_REQUEST_RECEIVED,
+      title: "New Contact Request",
+      body: `${sender?.fullName || "A user"} sent you a contact request.`,
+      data: { requestId: String(request._id), senderId: String(senderId) },
+    });
+  } catch {}
+
+  return {
+    id: String(request._id),
+    _id: String(request._id),
+    requestId: String(request._id),
+    recipientId: String(recipientId),
+    status: CONTACT_REQUEST_STATUS.PENDING,
+    message: CONTACT_SUCCESS_MESSAGES.REQUEST_SENT,
+  };
+};
+
+export const getContactRequests = async (userId) => {
+  assertValidObjectId(userId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+
+  const [incoming, outgoing] = await Promise.all([
+    contactRequestRepo.findIncomingRequests(userId),
+    contactRequestRepo.findOutgoingRequests(userId),
+  ]);
+
+  const safeIncoming = [];
+  for (const req of incoming) {
+    if (!req.senderId) continue;
+    const [safeSender] = await filterUsersForViewer([req.senderId], userId);
+    if (!safeSender) continue;
+    const mutualCount = (
+      await contactRepo.findMutualContactIds(userId, req.senderId._id)
+    ).length;
+    safeIncoming.push({
+      id: String(req._id),
+      _id: String(req._id),
+      requestId: String(req._id),
+      sender: {
+        ...safeSender,
+        id: String(safeSender._id || safeSender.id),
+        _id: String(safeSender._id || safeSender.id),
+      },
+      note: req.note || "",
+      mutualCount,
+      createdAt: req.createdAt,
+    });
+  }
+
+  const safeOutgoing = [];
+  for (const req of outgoing) {
+    if (!req.recipientId) continue;
+    const [safeRecipient] = await filterUsersForViewer(
+      [req.recipientId],
+      userId,
+    );
+    if (!safeRecipient) continue;
+    safeOutgoing.push({
+      id: String(req._id),
+      _id: String(req._id),
+      requestId: String(req._id),
+      recipient: {
+        ...safeRecipient,
+        id: String(safeRecipient._id || safeRecipient.id),
+        _id: String(safeRecipient._id || safeRecipient.id),
+      },
+      note: req.note || "",
+      createdAt: req.createdAt,
+    });
+  }
+
+  return { incoming: safeIncoming, outgoing: safeOutgoing };
+};
+
+export const acceptContactRequest = async (recipientId, requestId) => {
+  assertValidObjectId(recipientId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(requestId, "Invalid request ID.");
+
+  let request = await contactRequestRepo.findRequestById(requestId);
+  if (!request) {
+    request = await contactRequestRepo.findActiveRequestBetween(
+      requestId,
+      recipientId,
+    );
+  }
+
+  if (
+    !request ||
+    String(request.recipientId) !== String(recipientId) ||
+    request.status !== CONTACT_REQUEST_STATUS.PENDING
+  ) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.REQUEST_NOT_FOUND,
+    );
+  }
+
+  const resolvedReqId = request._id;
+  await contactRequestRepo.updateRequestStatus(
+    resolvedReqId,
+    CONTACT_REQUEST_STATUS.ACCEPTED,
+  );
+
+  const senderId = String(request.senderId);
+
+  await Promise.all([
+    contactRepo.upsertContact(recipientId, senderId),
+    contactRepo.upsertContact(senderId, recipientId),
+  ]);
+
+  await contactEvents.syncPrivacy([recipientId, senderId]);
+
+  contactEvents.emitContactAdded(recipientId, { contactId: senderId });
+  contactEvents.emitContactAdded(senderId, { contactId: String(recipientId) });
+
+  contactEvents.emitContactRequestAccepted(senderId, {
+    requestId: String(resolvedReqId),
+    acceptedBy: String(recipientId),
+  });
+
+  try {
+    const recipient = await contactRepo.findUserById(recipientId, "fullName");
+    await notificationService.sendNotification({
+      userId: senderId,
+      senderId: recipientId,
+      type: NOTIFICATION_TYPES.CONTACT_REQUEST_ACCEPTED,
+      title: "Contact Request Accepted",
+      body: `${recipient?.fullName || "A user"} accepted your contact request.`,
+      data: { requestId: String(resolvedReqId), contactId: String(recipientId) },
+    });
+  } catch {}
+
+  return {
+    id: String(resolvedReqId),
+    _id: String(resolvedReqId),
+    requestId: String(resolvedReqId),
+    contactId: senderId,
+    status: CONTACT_REQUEST_STATUS.ACCEPTED,
+  };
+};
+
+export const rejectContactRequest = async (recipientId, requestId) => {
+  assertValidObjectId(recipientId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(requestId, "Invalid request ID.");
+
+  let request = await contactRequestRepo.findRequestById(requestId);
+  if (!request) {
+    request = await contactRequestRepo.findActiveRequestBetween(
+      requestId,
+      recipientId,
+    );
+  }
+
+  if (
+    !request ||
+    String(request.recipientId) !== String(recipientId) ||
+    request.status !== CONTACT_REQUEST_STATUS.PENDING
+  ) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.REQUEST_NOT_FOUND,
+    );
+  }
+
+  const resolvedReqId = request._id;
+  await contactRequestRepo.updateRequestStatus(
+    resolvedReqId,
+    CONTACT_REQUEST_STATUS.REJECTED,
+  );
+
+  contactEvents.emitContactRequestRejected(String(request.senderId), {
+    requestId: String(resolvedReqId),
+    rejectedBy: String(recipientId),
+  });
+
+  try {
+    await notificationService.sendNotification({
+      userId: request.senderId,
+      senderId: recipientId,
+      type: NOTIFICATION_TYPES.CONTACT_REQUEST_REJECTED,
+      title: "Contact Request Declined",
+      body: "Your contact request was declined.",
+      data: { requestId: String(resolvedReqId) },
+    });
+  } catch {}
+
+  return {
+    id: String(resolvedReqId),
+    _id: String(resolvedReqId),
+    requestId: String(resolvedReqId),
+    status: CONTACT_REQUEST_STATUS.REJECTED,
+  };
+};
+
+export const cancelContactRequest = async (senderId, requestId) => {
+  assertValidObjectId(senderId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  assertValidObjectId(requestId, "Invalid request ID.");
+
+  let request = await contactRequestRepo.findRequestById(requestId);
+  if (!request) {
+    request = await contactRequestRepo.findActiveRequestBetween(
+      senderId,
+      requestId,
+    );
+  }
+
+  if (
+    !request ||
+    String(request.senderId) !== String(senderId) ||
+    request.status !== CONTACT_REQUEST_STATUS.PENDING
+  ) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      CONTACT_ERROR_MESSAGES.REQUEST_NOT_FOUND,
+    );
+  }
+
+  const resolvedReqId = request._id;
+  await contactRequestRepo.updateRequestStatus(
+    resolvedReqId,
+    CONTACT_REQUEST_STATUS.CANCELLED,
+  );
+
+  contactEvents.emitContactRequestCancelled(String(request.recipientId), {
+    requestId: String(resolvedReqId),
+    cancelledBy: String(senderId),
+  });
+
+  try {
+    await notificationService.sendNotification({
+      userId: request.recipientId,
+      senderId,
+      type: NOTIFICATION_TYPES.CONTACT_REQUEST_CANCELLED,
+      title: "Contact Request Cancelled",
+      body: "A contact request was cancelled.",
+      data: { requestId: String(resolvedReqId) },
+    });
+  } catch {}
+
+  return {
+    id: String(resolvedReqId),
+    _id: String(resolvedReqId),
+    requestId: String(resolvedReqId),
+    status: CONTACT_REQUEST_STATUS.CANCELLED,
+  };
+};
+
+export const getRequestHistory = async (userId, query = {}) => {
+  assertValidObjectId(userId, CONTACT_ERROR_MESSAGES.OWNER_REQUIRED);
+  const { status, page = 1, limit = 20 } = query;
+  const skip = (Math.max(1, parseInt(page, 10)) - 1) * Math.min(50, Math.max(1, parseInt(limit, 10)));
+  const { items, total } = await contactRequestRepo.findRequestHistory(userId, {
+    status,
+    skip,
+    limit: Math.min(50, Math.max(1, parseInt(limit, 10))),
+  });
+
+  const formattedItems = [];
+  for (const r of items) {
+    let safeSender = r.senderId;
+    let safeRecipient = r.recipientId;
+    if (safeSender && typeof safeSender === "object") {
+      const [fSender] = await filterUsersForViewer([safeSender], userId);
+      safeSender = fSender || safeSender;
+    }
+    if (safeRecipient && typeof safeRecipient === "object") {
+      const [fRecipient] = await filterUsersForViewer([safeRecipient], userId);
+      safeRecipient = fRecipient || safeRecipient;
+    }
+    formattedItems.push({
+      id: String(r._id),
+      _id: r._id,
+      senderId: r.senderId?._id ? String(r.senderId._id) : String(r.senderId),
+      sender: safeSender,
+      recipientId: r.recipientId?._id ? String(r.recipientId._id) : String(r.recipientId),
+      recipient: safeRecipient,
+      status: r.status,
+      note: r.note || "",
+      createdAt: r.createdAt,
+      respondedAt: r.respondedAt,
+    });
+  }
+
+  return {
+    items: formattedItems,
+    total,
+    page: parseInt(page, 10) || 1,
+    limit: parseInt(limit, 10) || 20,
+    totalPages: Math.ceil(total / (parseInt(limit, 10) || 20)),
+  };
+};
+
 const contactService = {
   addContact,
   removeContact,
@@ -471,6 +919,12 @@ const contactService = {
   searchUsers,
   getContactCount,
   getChatList,
+  sendContactRequest,
+  getContactRequests,
+  acceptContactRequest,
+  rejectContactRequest,
+  cancelContactRequest,
+  getRequestHistory,
 };
 
 export default contactService;

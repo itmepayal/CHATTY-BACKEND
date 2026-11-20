@@ -46,6 +46,7 @@ import {
   destroyGroup,
   safeUnlink,
 } from "./group.service.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
 
 export const createGroupWithMembers = async ({
   me,
@@ -177,6 +178,22 @@ export const addMembersToGroup = async ({ group, me, rawMemberIds }) => {
 
   await notifyKeysNeeded(full, newIds);
 
+  for (const id of newIds) {
+    if (String(id) !== meId) {
+      notificationService
+        .dispatchNotification({
+          recipientId: id,
+          senderId: meId,
+          category: "group",
+          type: "group_member_added",
+          title: "Added to group",
+          body: `You were added to ${group.name}`,
+          data: { groupId: String(group._id) },
+        })
+        .catch(() => {});
+    }
+  }
+
   return presentGroup(full, {}, meId);
 };
 
@@ -222,6 +239,20 @@ export const removeMemberFromGroup = async ({ group, me, targetId }) => {
 
   await requestKeyRotation(group, "member_removed");
 
+  if (tId !== meId) {
+    notificationService
+      .dispatchNotification({
+        recipientId: tId,
+        senderId: meId,
+        category: "group",
+        type: "group_member_removed",
+        title: "Removed from group",
+        body: `You were removed from ${group.name}`,
+        data: { groupId: String(group._id) },
+      })
+      .catch(() => {});
+  }
+
   return presentGroup(full, {}, meId);
 };
 
@@ -251,6 +282,20 @@ export const changeMemberRole = async ({ group, me, targetId, role }) => {
 
   const full = await loadGroup(group._id);
   await emitGroupToMembers(full, GROUP_SOCKET_EVENTS.GROUP_UPDATED);
+
+  if (tId !== meId) {
+    notificationService
+      .dispatchNotification({
+        recipientId: tId,
+        senderId: meId,
+        category: "group",
+        type: "group_role_changed",
+        title: "Role updated",
+        body: `Your role in ${group.name} was changed to ${role}`,
+        data: { groupId: String(group._id), role },
+      })
+      .catch(() => {});
+  }
 
   return presentGroup(full, {}, meId);
 };

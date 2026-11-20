@@ -59,17 +59,107 @@ const GroupMessageSchema = new mongoose.Schema(
     readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     silentReadBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
 
+    reactions: [
+      {
+        _id: false,
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        emoji: { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupMessage",
+      default: null,
+    },
+    parentMessageId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupMessage",
+      default: null,
+      index: true,
+    },
+    threadReplyCount: { type: Number, default: 0 },
+    threadLastReplyAt: { type: Date, default: null },
+    threadParticipants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    poll: {
+      question: { type: String },
+      type: { type: String, enum: ["single", "multiple"], default: "single" },
+      options: [
+        {
+          _id: {
+            type: mongoose.Schema.Types.ObjectId,
+            default: () => new mongoose.Types.ObjectId(),
+          },
+          text: { type: String, required: true },
+          votes: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+        },
+      ],
+      isAnonymous: { type: Boolean, default: false },
+      allowMultipleAnswers: { type: Boolean, default: false },
+      canChangeVote: { type: Boolean, default: true },
+      isClosed: { type: Boolean, default: false },
+      isEnded: { type: Boolean, default: false },
+      closedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      closedAt: { type: Date },
+      endedAt: { type: Date },
+      createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      expiresAt: { type: Date, default: null },
+    },
+
+    isViewOnce: { type: Boolean, default: false },
+    viewOnceViewedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    viewOnceExpired: { type: Boolean, default: false },
+    expiresAt: { type: Date, default: null },
+
     e2ee: { type: Boolean, default: false },
     iv: { type: String },
     keyVersion: { type: Number },
 
     isEdited: { type: Boolean, default: false },
     editedAt: { type: Date },
+
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupMessage",
+      default: null,
+    },
+    isForwarded: { type: Boolean, default: false },
+
+    isPinned: { type: Boolean, default: false },
+    pinnedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    pinnedAt: { type: Date },
+
+    starredBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    mentions: [
+      {
+        _id: false,
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        startIndex: { type: Number, default: 0 },
+        length: { type: Number, default: 0 },
+      },
+    ],
+
+    deletedFor: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
   },
   { timestamps: true },
 );
 
 GroupMessageSchema.pre("validate", function (next) {
+  if (this.isDeleted) return next();
+
   const hasLocation =
     Number.isFinite(this.location?.lat) && Number.isFinite(this.location?.lng);
 
@@ -79,7 +169,8 @@ GroupMessageSchema.pre("validate", function (next) {
     !this.file?.url &&
     !this.audio?.url &&
     !this.video?.url &&
-    !hasLocation
+    !hasLocation &&
+    !this.poll?.question
   ) {
     return next(
       new Error("Message must have text, an attachment or a location."),
@@ -90,6 +181,8 @@ GroupMessageSchema.pre("validate", function (next) {
 
 GroupMessageSchema.index({ groupId: 1, createdAt: -1 });
 GroupMessageSchema.index({ groupId: 1, senderId: 1, readBy: 1 });
+GroupMessageSchema.index({ groupId: 1, isPinned: 1, pinnedAt: -1 });
+GroupMessageSchema.index({ "mentions.userId": 1, groupId: 1 });
 GroupMessageSchema.index({ "location.shareId": 1 }, { sparse: true });
 
 GroupMessageSchema.index(

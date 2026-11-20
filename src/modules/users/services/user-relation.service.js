@@ -12,6 +12,9 @@ import {
   toObjectId,
 } from "../../../shared/utils/object-id.util.js";
 import { io, refreshPrivacy } from "../../../infrastructure/socket/socket.js";
+import * as contactRepo from "../../contacts/repositories/contact.repository.js";
+import * as contactRequestRepo from "../../contacts/repositories/contact-request.repository.js";
+import * as contactEvents from "../../contacts/events/contact.events.js";
 
 export const getBlockedUsers = async (userId) => {
   const me = await userRepository.findByIdLeanSelect(userId, "blockedUsers");
@@ -84,6 +87,27 @@ export const applyRelation = async (myId, targetId, field, action, message) => {
   });
 
   if (field === "blockedUsers") {
+    if (action === "add") {
+      try {
+        await Promise.allSettled([
+          contactRepo.deleteContact(myId, targetId),
+          contactRepo.deleteContact(targetId, myId),
+          contactRequestRepo.invalidateRequestsBetween(myId, targetId),
+        ]);
+        contactEvents.emitContactRemoved(myId, { contactId: String(targetId) });
+        contactEvents.emitContactRemoved(targetId, { contactId: String(myId) });
+        contactEvents.emitContactBlocked(myId, { userId: String(targetId) });
+      } catch (e) {
+        console.error("[user-relation] block cleanup error:", e?.message || e);
+      }
+    } else if (action === "remove") {
+      try {
+        contactEvents.emitContactUnblocked(myId, { userId: String(targetId) });
+      } catch (e) {
+        console.error("[user-relation] unblock emit error:", e?.message || e);
+      }
+    }
+
     try {
       await refreshPrivacy(myId);
       await refreshPrivacy(targetId);

@@ -49,6 +49,7 @@ const MessageSchema = mongoose.Schema(
           required: true,
         },
         emoji: { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
       },
     ],
 
@@ -57,11 +58,51 @@ const MessageSchema = mongoose.Schema(
       ref: "Message",
       default: null,
     },
+    parentMessageId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
+      default: null,
+      index: true,
+    },
+    threadReplyCount: { type: Number, default: 0 },
+    threadLastReplyAt: { type: Date, default: null },
+    threadParticipants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    poll: {
+      question: { type: String },
+      type: { type: String, enum: ["single", "multiple"], default: "single" },
+      options: [
+        {
+          _id: {
+            type: mongoose.Schema.Types.ObjectId,
+            default: () => new mongoose.Types.ObjectId(),
+          },
+          text: { type: String, required: true },
+          votes: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+        },
+      ],
+      isAnonymous: { type: Boolean, default: false },
+      allowMultipleAnswers: { type: Boolean, default: false },
+      canChangeVote: { type: Boolean, default: true },
+      isClosed: { type: Boolean, default: false },
+      isEnded: { type: Boolean, default: false },
+      closedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      closedAt: { type: Date },
+      endedAt: { type: Date },
+      createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      expiresAt: { type: Date, default: null },
+    },
+
+    isViewOnce: { type: Boolean, default: false },
+    viewOnceViewedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    viewOnceExpired: { type: Boolean, default: false },
     isForwarded: { type: Boolean, default: false },
 
     isPinned: { type: Boolean, default: false },
     pinnedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     pinnedAt: { type: Date },
+
+    starredBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
 
     isEdited: { type: Boolean, default: false },
     editedAt: { type: Date },

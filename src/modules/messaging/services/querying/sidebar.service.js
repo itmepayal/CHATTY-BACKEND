@@ -52,6 +52,7 @@ export const getUsersForSidebar = async (userId, query = {}, options = {}) => {
     {
       $match: {
         $and: [{ $or: [{ senderId: uid }, { receiverId: uid }] }, notExpired()],
+        parentMessageId: { $in: [null, undefined] },
         deletedFor: { $ne: uid },
       },
     },

@@ -2,6 +2,7 @@ import { Router } from "express";
 import groupController from "../controllers/group.controller.js";
 import * as groupInviteController from "../controllers/group-invite.controller.js";
 import messageController from "../../messaging/controllers/messages.controller.js";
+import * as advancedController from "../../messaging/controllers/advanced-messaging.controller.js";
 import authMiddleware from "../../../middlewares/auth.middleware.js";
 import requireChatUnlocked from "../../../middlewares/chat-lock.middleware.js";
 import upload, {
@@ -81,6 +82,18 @@ router
     groupController.sendGroupMessage,
   );
 
+router.get(
+  "/:id/messages/pinned",
+  validateGroupIdParam,
+  groupController.getPinnedGroupMessages,
+);
+
+router.delete(
+  "/:id/messages/:messageId/me",
+  validateMessageParams,
+  groupController.deleteGroupMessageForMe,
+);
+
 router.delete(
   "/:id/messages/:messageId",
   validateMessageParams,
@@ -88,10 +101,115 @@ router.delete(
 );
 
 router.patch(
+  "/:id/messages/:messageId/pin",
+  validateMessageParams,
+  groupController.togglePinGroupMessage,
+);
+
+router.patch(
+  "/:id/messages/:messageId/star",
+  validateMessageParams,
+  groupController.toggleStarGroupMessage,
+);
+
+router.patch(
   "/:id/messages/:messageId",
   sendMessageLimiter,
   validateMessageParams,
   groupController.editGroupMessage,
+);
+
+// Advanced Messaging: Group Reactions
+router.post(
+  "/:id/messages/:messageId/reactions",
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.toggleReaction(req, res, next);
+  },
+);
+router.get(
+  "/:id/messages/:messageId/reactions",
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.getReactionDetails(req, res, next);
+  },
+);
+
+// Advanced Messaging: Group Threads
+router.get(
+  "/:id/messages/:messageId/thread",
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.getThread(req, res, next);
+  },
+);
+router.post(
+  "/:id/messages/:messageId/thread",
+  sendMessageLimiter,
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.sendThreadReply(req, res, next);
+  },
+);
+
+// Advanced Messaging: Group Polls
+router.post(
+  "/:id/polls",
+  sendMessageLimiter,
+  validateGroupIdParam,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.createPoll(req, res, next);
+  },
+);
+router.post(
+  "/:id/messages/:messageId/poll/vote",
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.castVote(req, res, next);
+  },
+);
+router.post(
+  "/:id/messages/:messageId/poll/close",
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.closePoll(req, res, next);
+  },
+);
+router.get(
+  "/:id/messages/:messageId/poll",
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.getPollDetails(req, res, next);
+  },
+);
+
+// Advanced Messaging: Group Disappearing Messages
+router.patch(
+  "/:id/disappearing",
+  settingsLimiter,
+  validateGroupIdParam,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.setGroupDisappearing(req, res, next);
+  },
+);
+
+// Advanced Messaging: Group View-Once
+router.post(
+  "/:id/messages/:messageId/view-once/open",
+  validateMessageParams,
+  (req, res, next) => {
+    req.params.groupId = req.params.id;
+    return advancedController.markViewOnceOpened(req, res, next);
+  },
 );
 
 // Read receipts route

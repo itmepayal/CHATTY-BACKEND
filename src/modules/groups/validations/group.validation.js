@@ -62,6 +62,7 @@ export const updateGroupBodySchema = z
       .max(GROUP_NAME_MAX, GROUP_ERROR_MESSAGES.INVALID_NAME)
       .optional(),
     description: z.string().max(500).optional(),
+    whoCanPin: z.enum(["all", "admins"]).optional(),
   })
   .passthrough();
 

@@ -49,13 +49,27 @@ export const scheduleMessage = async (
     groupId: explicitGroupId,
     receiverId: explicitReceiverId,
     messageType: explicitMessageType,
+    image,
+    file,
+    audio,
+    video,
+    recurrence,
+    timezone,
   } = {},
 ) => {
-  const text = rawText?.trim();
+  const text = rawText?.trim() || "";
   const wantsE2EE = parseBool(encrypted ?? e2ee);
   const when = new Date(scheduledFor);
 
   validateScheduleTime(when);
+
+  const hasMedia = Boolean(image?.url || file?.url || audio?.url || video?.url);
+  if (!text && !hasMedia) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Message must have text or an attachment.",
+    );
+  }
 
   // Determine if direct or group
   const isGroup =
@@ -154,6 +168,12 @@ export const scheduleMessage = async (
     ...(finalReceiverId ? { receiverId: finalReceiverId } : {}),
     ...(finalGroupId ? { groupId: finalGroupId } : {}),
     text,
+    image,
+    file,
+    audio,
+    video,
+    timezone: timezone || "UTC",
+    ...(recurrence ? { recurrence } : {}),
     scheduledFor: when,
     clientRequestId: clientRequestId ? String(clientRequestId) : undefined,
     ...(wantsE2EE

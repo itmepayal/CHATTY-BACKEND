@@ -2,11 +2,13 @@ import request from "supertest";
 import bcrypt from "bcryptjs";
 import { io as ioClient } from "socket.io-client";
 import User from "../src/modules/users/models/users.model.js";
+import Contact from "../src/modules/contacts/models/contact.model.js";
 
 export const TEST_PASSWORD = "Password123!";
 
-export async function createAndLoginUsers(app, port) {
+export async function createAndLoginUsers(app, port, options = {}) {
   await User.deleteMany({});
+  await Contact.deleteMany({});
 
   const userConfigs = [
     {
@@ -69,6 +71,25 @@ export async function createAndLoginUsers(app, port) {
     { _id: userMap["alice@test.com"]._id },
     { $set: { blockedUsers: [userMap["david@test.com"]._id] } },
   );
+
+  if (options.makeContacts !== false) {
+    const aId = userMap["alice@test.com"]._id;
+    const bId = userMap["bob@test.com"]._id;
+    const cId = userMap["charlie@test.com"]._id;
+    const dId = userMap["david@test.com"]._id;
+    await Contact.insertMany([
+      { ownerId: aId, contactId: bId },
+      { ownerId: bId, contactId: aId },
+      { ownerId: aId, contactId: cId },
+      { ownerId: cId, contactId: aId },
+      { ownerId: bId, contactId: cId },
+      { ownerId: cId, contactId: bId },
+      { ownerId: bId, contactId: dId },
+      { ownerId: dId, contactId: bId },
+      { ownerId: aId, contactId: dId },
+      { ownerId: dId, contactId: aId },
+    ]);
+  }
 
   const sessions = {};
 

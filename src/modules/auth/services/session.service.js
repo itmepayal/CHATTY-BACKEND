@@ -15,6 +15,7 @@ import {
   disconnectOtherUserSessions,
 } from "../../../infrastructure/socket/socket.js";
 import { formatDistanceToNow } from "../../../shared/utils/time-utils.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
 
 export const createLoginSession = async (user, { userAgent, ip } = {}) => {
   const deviceInfo = parseDevice(userAgent);
@@ -44,6 +45,22 @@ export const createLoginSession = async (user, { userAgent, ip } = {}) => {
       time,
     }).catch(() => {});
   }
+
+  notificationService
+    .dispatchNotification({
+      recipientId: user._id,
+      category: "security",
+      type: "security_new_device",
+      title: "New Device Login",
+      body: `Logged in from ${deviceInfo.label || "a new device"}`,
+      priority: "critical",
+      data: {
+        sessionId: String(session._id),
+        device: deviceInfo.label,
+        ip: sanitizeIp(rawIp),
+      },
+    })
+    .catch(() => {});
 
   return { accessToken, refreshToken, deviceInfo };
 };
@@ -90,6 +107,18 @@ export const revokeUserSession = async ({ userId, sessionId }) => {
     sessionId: String(session._id),
   });
   await disconnectUserSession(userId, session._id);
+
+  notificationService
+    .dispatchNotification({
+      recipientId: userId,
+      category: "security",
+      type: "security_session_revoked",
+      title: "Session Revoked",
+      body: `A session (${session.device?.label || "device"}) was signed out`,
+      priority: "normal",
+      data: { sessionId: String(session._id) },
+    })
+    .catch(() => {});
 };
 
 export const revokeOtherUserSessions = async ({ userId, currentSessionId }) => {

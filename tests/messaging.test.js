@@ -18,6 +18,7 @@ import ChatSetting from "../src/modules/messaging/models/chat-setting.model.js";
 import ChatArchive from "../src/modules/messaging/models/chat-archive.model.js";
 import Report from "../src/modules/messaging/models/report.model.js";
 import User from "../src/modules/users/models/users.model.js";
+import Contact from "../src/modules/contacts/models/contact.model.js";
 import {
   privacyByUser,
   loadPrivacy,
@@ -1240,6 +1241,10 @@ async function runAllTests() {
         password: TEST_PASSWORD,
         status: "active",
       });
+      await Contact.insertMany([
+        { ownerId: alice.user._id, contactId: dummyOfflineUser._id },
+        { ownerId: dummyOfflineUser._id, contactId: alice.user._id },
+      ]);
       const ackResult = await new Promise((resolve) => {
         alice.socket.emit(
           "call:invite",
