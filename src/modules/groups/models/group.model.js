@@ -42,6 +42,12 @@ const GroupSchema = new mongoose.Schema(
       default: "all",
     },
 
+    mentionAllPermission: {
+      type: String,
+      enum: ["everyone", "admins_only", "disabled"],
+      default: "everyone",
+    },
+
     keyRotationPending: { type: Boolean, default: false },
     keyVersion: { type: Number, default: 0 },
   },

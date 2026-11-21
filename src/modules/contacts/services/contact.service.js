@@ -702,14 +702,24 @@ export const acceptContactRequest = async (recipientId, requestId) => {
     );
   }
 
-  if (
-    !request ||
-    String(request.recipientId) !== String(recipientId) ||
-    request.status !== CONTACT_REQUEST_STATUS.PENDING
-  ) {
+  if (!request) {
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       CONTACT_ERROR_MESSAGES.REQUEST_NOT_FOUND,
+    );
+  }
+
+  if (String(request.recipientId) !== String(recipientId)) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You are not authorized to accept this contact request.",
+    );
+  }
+
+  if (request.status !== CONTACT_REQUEST_STATUS.PENDING) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Contact request is already ${request.status}.`,
     );
   }
 
@@ -769,14 +779,24 @@ export const rejectContactRequest = async (recipientId, requestId) => {
     );
   }
 
-  if (
-    !request ||
-    String(request.recipientId) !== String(recipientId) ||
-    request.status !== CONTACT_REQUEST_STATUS.PENDING
-  ) {
+  if (!request) {
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       CONTACT_ERROR_MESSAGES.REQUEST_NOT_FOUND,
+    );
+  }
+
+  if (String(request.recipientId) !== String(recipientId)) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You are not authorized to decline this contact request.",
+    );
+  }
+
+  if (request.status !== CONTACT_REQUEST_STATUS.PENDING) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Contact request is already ${request.status}.`,
     );
   }
 
@@ -822,14 +842,24 @@ export const cancelContactRequest = async (senderId, requestId) => {
     );
   }
 
-  if (
-    !request ||
-    String(request.senderId) !== String(senderId) ||
-    request.status !== CONTACT_REQUEST_STATUS.PENDING
-  ) {
+  if (!request) {
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       CONTACT_ERROR_MESSAGES.REQUEST_NOT_FOUND,
+    );
+  }
+
+  if (String(request.senderId) !== String(senderId)) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You are not authorized to cancel this contact request.",
+    );
+  }
+
+  if (request.status !== CONTACT_REQUEST_STATUS.PENDING) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Contact request is already ${request.status}.`,
     );
   }
 

@@ -17,6 +17,7 @@ import { StatusCodes } from "http-status-codes";
 const isTypePermitted = (type, preferences = {}) => {
   switch (type) {
     case "message_received":
+    case "gift_received":
       return preferences.messagesPersonal !== false;
     case "message_reply":
       return preferences.messageReplies !== false;
@@ -32,6 +33,7 @@ const isTypePermitted = (type, preferences = {}) => {
     case "group_reply":
       return preferences.messageReplies !== false;
     case "group_mention":
+    case "group_mention_all":
     case "group_mention_everyone":
       return preferences.messageMentions !== false;
     case "group_reaction":
@@ -165,6 +167,7 @@ export const dispatchNotification = async ({
           data.groupId &&
           mutedGroups.includes(String(data.groupId)) &&
           type !== "group_mention" &&
+          type !== "group_mention_all" &&
           type !== "group_mention_everyone"
         ) {
           return null; // Muted group

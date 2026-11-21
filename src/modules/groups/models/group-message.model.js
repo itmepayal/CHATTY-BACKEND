@@ -112,6 +112,29 @@ const GroupMessageSchema = new mongoose.Schema(
       expiresAt: { type: Date, default: null },
     },
 
+    gift: {
+      id: { type: String },
+      giftId: { type: String },
+      slug: { type: String },
+      name: { type: String },
+      icon: { type: String },
+      image: { type: String },
+      category: { type: String },
+      coinPrice: { type: Number, default: 0 },
+      rarity: { type: String, default: "common" },
+      badge: { type: String, default: "" },
+      isAnimated: { type: Boolean, default: false },
+      animation: { type: String },
+      color: { type: String },
+      message: { type: String },
+      senderName: { type: String },
+    },
+    messageType: {
+      type: String,
+      enum: ["text", "image", "file", "audio", "video", "location", "poll", "gift"],
+      default: "text",
+    },
+
     isViewOnce: { type: Boolean, default: false },
     viewOnceViewedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     viewOnceExpired: { type: Boolean, default: false },
@@ -136,6 +159,8 @@ const GroupMessageSchema = new mongoose.Schema(
     pinnedAt: { type: Date },
 
     starredBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    mentionAll: { type: Boolean, default: false },
 
     mentions: [
       {
@@ -170,7 +195,8 @@ GroupMessageSchema.pre("validate", function (next) {
     !this.audio?.url &&
     !this.video?.url &&
     !hasLocation &&
-    !this.poll?.question
+    !this.poll?.question &&
+    !this.gift?.name
   ) {
     return next(
       new Error("Message must have text, an attachment or a location."),

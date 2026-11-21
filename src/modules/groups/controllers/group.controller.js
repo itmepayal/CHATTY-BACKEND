@@ -60,6 +60,7 @@ export const updateGroup = asyncHandler(async (req, res) => {
     name: req.body.name,
     file: req.file,
     whoCanPin: req.body.whoCanPin,
+    mentionAllPermission: req.body.mentionAllPermission,
   });
 
   return new ApiResponse(

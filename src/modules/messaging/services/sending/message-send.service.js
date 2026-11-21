@@ -40,6 +40,7 @@ export const sendMessage = async (
     isViewOnce,
     expiresAt,
     parentMessageId,
+    gift,
   } = {},
   file,
 ) => {
@@ -52,9 +53,16 @@ export const sendMessage = async (
     );
   }
 
+  let parsedGift = null;
+  if (gift) {
+    try {
+      parsedGift = typeof gift === "string" ? JSON.parse(gift) : gift;
+    } catch (_e) {}
+  }
+
   const trimmedText = text?.trim();
 
-  if (!trimmedText && !file) {
+  if (!trimmedText && !file && !parsedGift?.name) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
   }
 
@@ -179,6 +187,9 @@ export const sendMessage = async (
         ...(isViewOnceReq ? { isViewOnce: true } : {}),
         ...(explicitExpiry ? { expiresAt: explicitExpiry } : {}),
         ...(parentMessageId ? { parentMessageId } : {}),
+        ...(parsedGift?.name
+          ? { gift: parsedGift, messageType: "gift" }
+          : {}),
         ...(wantsE2EE
           ? {
               e2ee: true,

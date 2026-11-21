@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
+  <defs>
+    <linearGradient id="g_premium_sushi_platter_bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f97316" />
+      <stop offset="100%" stop-color="#c2410c" />
+    </linearGradient>
+    <radialGradient id="g_premium_sushi_platter_halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fed7aa" stop-opacity="0.65" />
+      <stop offset="60%" stop-color="#f97316" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#c2410c" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="g_premium_sushi_platter_border" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.8" />
+      <stop offset="50%" stop-color="#fed7aa" stop-opacity="0.5" />
+      <stop offset="100%" stop-color="#c2410c" stop-opacity="0.3" />
+    </linearGradient>
+    <filter id="glow_premium_sushi_platter" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="10" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  
+  
+  <!-- Outer Ambient Radial Aura -->
+  <circle cx="128" cy="128" r="110" fill="url(#g_premium_sushi_platter_halo)" />
+
+  <!-- Shield Base Card (Rounded Hexagon / Rounded Rect) -->
+  <rect x="28" y="28" width="200" height="200" rx="48" fill="url(#g_premium_sushi_platter_bg)" stroke="url(#g_premium_sushi_platter_border)" stroke-width="3" filter="url(#glow_premium_sushi_platter)" opacity="0.95" />
+
+  <!-- Inner Shimmer Layer -->
+  <rect x="36" y="36" width="184" height="184" rx="40" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.3" />
+  
+  <!-- Decorative Background Elements -->
+  <circle cx="128" cy="128" r="70" fill="#ffffff" fill-opacity="0.08" />
+  <circle cx="128" cy="128" r="50" fill="none" stroke="#ffffff" stroke-opacity="0.15" stroke-dasharray="6 6" />
+
+  <!-- Floating Sparkles -->
+  <g class="anim-star" fill="#fed7aa">
+    <path d="M 60 70 Q 65 75 70 75 Q 65 75 60 80 Q 65 75 60 70 Z" />
+    <path d="M 195 75 Q 198 80 203 80 Q 198 80 195 85 Q 198 80 195 75 Z" />
+    <path d="M 185 185 Q 190 190 195 190 Q 190 190 185 195 Q 190 190 185 185 Z" />
+    <path d="M 65 180 Q 70 183 75 183 Q 70 183 65 186 Q 70 183 65 180 Z" />
+  </g>
+
+  <!-- Central Visual Glyph / Art -->
+  <g class="" id="artwork">
+    <circle cx="128" cy="120" r="48" fill="#ffffff" fill-opacity="0.22" filter="drop-shadow(0 8px 16px rgba(0,0,0,0.3))" />
+    <text x="128" y="142" font-family="'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif" font-size="58" text-anchor="middle" filter="drop-shadow(0 4px 8px rgba(0,0,0,0.4))">
+      🍣
+    </text>
+  </g>
+
+  <!-- Bottom Coin Value Pill -->
+  <g id="price-tag">
+    <rect x="76" y="196" width="104" height="26" rx="13" fill="#0f172a" fill-opacity="0.85" stroke="#fed7aa" stroke-width="1" />
+    <circle cx="92" cy="209" r="6" fill="#facc15" stroke="#ca8a04" stroke-width="1" />
+    <text x="92" y="212" font-family="system-ui, sans-serif" font-size="7" font-weight="900" fill="#78350f" text-anchor="middle">C</text>
+    <text x="136" y="214" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">
+      90
+    </text>
+  </g>
+</svg>

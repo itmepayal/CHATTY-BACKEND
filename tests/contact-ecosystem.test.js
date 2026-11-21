@@ -14,7 +14,8 @@ import ContactRequest, {
 import Notification from "../src/modules/notifications/models/notification.model.js";
 
 test("Complete Contact Management, Social Connection & Notification Ecosystem Suite", async (t) => {
-  const { app, ioServer, server } = await setupTestEnvironment();
+  const env = await setupTestEnvironment();
+  const { app, ioServer, server } = env;
 
   let alice, bob, charlie, port;
   let aliceSocket, bobSocket;
@@ -206,6 +207,45 @@ test("Complete Contact Management, Social Connection & Notification Ecosystem Su
     assert.ok(bobGetRes.body.data.length >= 1);
   });
 
+  await t.test("4b. Authorization and pending status validation on request accept/reject", async () => {
+    // Attempting to accept already accepted request -> 400 Bad Request
+    const reAcceptRes = await request(app)
+      .post(`/api/v1/contacts/requests/${bobRequestId}/accept`)
+      .set("Cookie", bob.cookies);
+    assert.equal(reAcceptRes.status, 400);
+
+    // Charlie sends request to Alice
+    const sendRes = await request(app)
+      .post(`/api/v1/contacts/requests/${alice.user._id}`)
+      .set("Cookie", charlie.cookies);
+    assert.equal(sendRes.status, 201);
+    const charlieReqId = sendRes.body.data.id || sendRes.body.data._id || sendRes.body.data.requestId;
+
+    // Bob tries to accept Charlie's request to Alice -> 403 Forbidden
+    const bobAcceptRes = await request(app)
+      .post(`/api/v1/contacts/requests/${charlieReqId}/accept`)
+      .set("Cookie", bob.cookies);
+    assert.equal(bobAcceptRes.status, 403);
+
+    // Bob tries to decline Charlie's request to Alice -> 403 Forbidden
+    const bobDeclineRes = await request(app)
+      .post(`/api/v1/contacts/requests/${charlieReqId}/reject`)
+      .set("Cookie", bob.cookies);
+    assert.equal(bobDeclineRes.status, 403);
+
+    // Alice declines Charlie's request -> 200 OK
+    const aliceDeclineRes = await request(app)
+      .post(`/api/v1/contacts/requests/${charlieReqId}/reject`)
+      .set("Cookie", alice.cookies);
+    assert.equal(aliceDeclineRes.status, 200);
+
+    // Alice tries to decline again -> 400 Bad Request
+    const reDeclineRes = await request(app)
+      .post(`/api/v1/contacts/requests/${charlieReqId}/reject`)
+      .set("Cookie", alice.cookies);
+    assert.equal(reDeclineRes.status, 400);
+  });
+
   await t.test("5. Contact Request History Endpoint", async () => {
     const res = await request(app)
       .get("/api/v1/contacts/requests/history")
@@ -308,8 +348,10 @@ test("Complete Contact Management, Social Connection & Notification Ecosystem Su
     assert.equal(postRemoveMsgRes.body.code, "CONTACT_NOT_ACCEPTED");
   });
 
-  t.after(() => {
+  t.after(async () => {
     if (aliceSocket?.connected) aliceSocket.disconnect();
     if (bobSocket?.connected) bobSocket.disconnect();
+    if (charlie?.socket?.connected) charlie.socket.disconnect();
+    await teardownTestEnvironment(env);
   });
 });

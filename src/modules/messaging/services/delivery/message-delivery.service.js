@@ -79,6 +79,11 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
     io.to(senderId.toString()).emit("newMessage", payload);
   }
 
+  if (payload.gift?.name) {
+    io.to(receiverId.toString()).emit("message:gift:received", payload);
+    io.to(senderId.toString()).emit("message:gift:send", payload);
+  }
+
   if (seenNow) {
     io.to(senderId.toString()).emit("messagesSeen", {
       messageIds: [message._id],
@@ -115,6 +120,9 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
       } else if (data?.location?.lat != null) {
         notifType = "location_shared";
         body = "Shared live location";
+      } else if (data?.gift?.name) {
+        notifType = "gift_received";
+        body = `Sent you a gift: ${data.gift.icon || "🎁"} ${data.gift.name}`;
       } else if (data?.e2ee || data?.encrypted) {
         body = "New encrypted message";
       } else if (data?.text) {

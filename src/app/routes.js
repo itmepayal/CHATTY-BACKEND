@@ -13,6 +13,7 @@ import settingsRoutes from "../modules/notifications/routes/notification-setting
 import notificationRoutes from "../modules/notifications/routes/notification.routes.js";
 import savedMessageRoutes from "../modules/messaging/routes/saved-message.routes.js";
 import advancedMessagingRoutes from "../modules/messaging/routes/advanced-messaging.routes.js";
+import giftRoutes from "../modules/gifts/routes/gift.routes.js";
 
 const router = Router();
 
@@ -35,5 +36,6 @@ router.use("/ai", aiRoutes);
 router.use("/calls", callRoutes);
 router.use("/group-calls", groupCallRoutes);
 router.use("/contacts", contactRoutes);
+router.use("/gifts", giftRoutes);
 
 export default router;
