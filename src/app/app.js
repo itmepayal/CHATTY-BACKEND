@@ -1,6 +1,8 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import path from "path";
+import fs from "fs";
 import { app } from "../infrastructure/socket/socket.js";
 import router from "./routes.js";
 import {
@@ -38,6 +40,13 @@ app.use(
 app.use(cookieParser());
 
 setupSwagger(app);
+
+const publicDir = fs.existsSync(path.resolve(process.cwd(), "server/public"))
+  ? path.resolve(process.cwd(), "server/public")
+  : path.resolve(process.cwd(), "public");
+
+app.use("/assets", express.static(path.join(publicDir, "assets")));
+app.use("/public", express.static(publicDir));
 
 app.use("/api/v1", router);
 app.use("/api", router);

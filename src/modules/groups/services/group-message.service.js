@@ -92,7 +92,7 @@ export const getGroupMessagesList = async ({ group, member, me, query }) => {
     .sort({ createdAt: -1 })
     .limit(limit)
     .populate("senderId", "fullName avatar profilePhotoVisibility profilePhotoExceptions")
-    .populate("replyTo", "senderId text image file audio video location isDeleted e2ee iv")
+    .populate("replyTo", "senderId text image file audio video location gift messageType isDeleted e2ee iv")
     .populate("mentions.userId", "fullName avatar username");
 
   const senderIds = [
@@ -151,12 +151,8 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
   let attachment = {};
   let clientId = null;
   try {
-    const { text, cipher, isVoice, isVideo } = await validateGroupMessageInput(
-      group,
-      me,
-      body,
-      file,
-    );
+    const { text, cipher, isVoice, isVideo, gift } =
+      await validateGroupMessageInput(group, me, body, file);
 
     clientId = readClientId(body);
 
@@ -196,8 +192,57 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
       expiresAt = new Date(Date.now() + group.disappearAfter * 1000);
     }
 
+    // Check for @all mention token
+    const hasMentionAll = /(?:^|\s)@all(?:\s|$|[.,!?])/i.test(text || "");
+    let mentionAll = false;
+
+    if (hasMentionAll) {
+      const perm = group.mentionAllPermission || "everyone";
+      if (perm === "disabled") {
+        throw new ApiError(
+          StatusCodes.FORBIDDEN,
+          "Mentioning everyone is disabled in this group.",
+        );
+      }
+      if (perm === "admins_only") {
+        const isSenderAdminOrOwner =
+          sid(group.owner) === sid(me) ||
+          group.members.some(
+            (m) =>
+              sid(m.userId?._id || m.userId) === sid(me) && m.role === "admin",
+          );
+        if (!isSenderAdminOrOwner) {
+          throw new ApiError(
+            StatusCodes.FORBIDDEN,
+            "Only group admins can mention everyone.",
+          );
+        }
+      }
+      mentionAll = true;
+    }
+
     // Parse and validate mentions
     let mentions = [];
+    const groupMemberIds = new Set(
+      group.members.map((m) => String(m.userId?._id || m.userId)),
+    );
+    const seen = new Set();
+
+    if (mentionAll) {
+      // Include all active group members (except sender)
+      for (const m of group.members) {
+        const uid = String(m.userId?._id || m.userId || "");
+        if (uid && uid !== String(me) && !seen.has(uid)) {
+          seen.add(uid);
+          mentions.push({
+            userId: new mongoose.Types.ObjectId(uid),
+            startIndex: 0,
+            length: 4,
+          });
+        }
+      }
+    }
+
     if (body.mentions) {
       try {
         const raw =
@@ -205,10 +250,6 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
             ? JSON.parse(body.mentions)
             : body.mentions;
         if (Array.isArray(raw)) {
-          const groupMemberIds = new Set(
-            group.members.map((m) => String(m.userId?._id || m.userId)),
-          );
-          const seen = new Set();
           for (const item of raw) {
             const uid = String(item.userId || item.id || "");
             if (
@@ -240,16 +281,18 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
       replyTo,
       isForwarded,
       isViewOnce,
+      mentionAll,
       mentions,
       ...(expiresAt ? { expiresAt } : {}),
       ...(body.parentMessageId ? { parentMessageId: body.parentMessageId } : {}),
+      ...(gift?.name ? { gift, messageType: "gift" } : {}),
       readBy: [me],
     });
 
     if (replyTo) {
       await message.populate(
         "replyTo",
-        "senderId text image file audio video location isDeleted e2ee iv",
+        "senderId text image file audio video location gift messageType isDeleted e2ee iv",
       );
     }
 
@@ -304,38 +347,83 @@ export const editGroupMessageService = async ({
 
   const cutoff = new Date(Date.now() - EDIT_WINDOW_MS);
 
-  let mentions = undefined;
-  if (body.mentions) {
-    try {
-      const raw =
-        typeof body.mentions === "string"
-          ? JSON.parse(body.mentions)
-          : body.mentions;
-      if (Array.isArray(raw)) {
-        const groupMemberIds = new Set(
-          group.members.map((m) => String(m.userId?._id || m.userId)),
+  const hasMentionAll = /(?:^|\s)@all(?:\s|$|[.,!?])/i.test(text || "");
+  let mentionAll = false;
+
+  if (hasMentionAll) {
+    const perm = group.mentionAllPermission || "everyone";
+    if (perm === "disabled") {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "Mentioning everyone is disabled in this group.",
+      );
+    }
+    if (perm === "admins_only") {
+      const isSenderAdminOrOwner =
+        sid(group.owner) === sid(me) ||
+        group.members.some(
+          (m) =>
+            sid(m.userId?._id || m.userId) === sid(me) && m.role === "admin",
         );
-        const seen = new Set();
-        mentions = [];
-        for (const item of raw) {
-          const uid = String(item.userId || item.id || "");
-          if (
-            mongoose.Types.ObjectId.isValid(uid) &&
-            groupMemberIds.has(uid) &&
-            uid !== String(me) &&
-            !seen.has(uid)
-          ) {
-            seen.add(uid);
-            mentions.push({
-              userId: new mongoose.Types.ObjectId(uid),
-              startIndex:
-                typeof item.startIndex === "number" ? item.startIndex : 0,
-              length: typeof item.length === "number" ? item.length : 0,
-            });
-          }
+      if (!isSenderAdminOrOwner) {
+        throw new ApiError(
+          StatusCodes.FORBIDDEN,
+          "Only group admins can mention everyone.",
+        );
+      }
+    }
+    mentionAll = true;
+  }
+
+  let mentions = undefined;
+  if (body.mentions || mentionAll) {
+    const groupMemberIds = new Set(
+      group.members.map((m) => String(m.userId?._id || m.userId)),
+    );
+    const seen = new Set();
+    mentions = [];
+
+    if (mentionAll) {
+      for (const m of group.members) {
+        const uid = String(m.userId?._id || m.userId || "");
+        if (uid && uid !== String(me) && !seen.has(uid)) {
+          seen.add(uid);
+          mentions.push({
+            userId: new mongoose.Types.ObjectId(uid),
+            startIndex: 0,
+            length: 4,
+          });
         }
       }
-    } catch (_e) {}
+    }
+
+    if (body.mentions) {
+      try {
+        const raw =
+          typeof body.mentions === "string"
+            ? JSON.parse(body.mentions)
+            : body.mentions;
+        if (Array.isArray(raw)) {
+          for (const item of raw) {
+            const uid = String(item.userId || item.id || "");
+            if (
+              mongoose.Types.ObjectId.isValid(uid) &&
+              groupMemberIds.has(uid) &&
+              uid !== String(me) &&
+              !seen.has(uid)
+            ) {
+              seen.add(uid);
+              mentions.push({
+                userId: new mongoose.Types.ObjectId(uid),
+                startIndex:
+                  typeof item.startIndex === "number" ? item.startIndex : 0,
+                length: typeof item.length === "number" ? item.length : 0,
+              });
+            }
+          }
+        }
+      } catch (_e) {}
+    }
   }
 
   const updatedMessage = await groupMessageRepository
@@ -357,7 +445,7 @@ export const editGroupMessageService = async ({
         $set: {
           text,
           ...(wantsE2EE ? { iv } : {}),
-          ...(mentions !== undefined ? { mentions } : {}),
+          ...(mentions !== undefined ? { mentions, mentionAll } : {}),
           isEdited: true,
           editedAt: new Date(),
         },

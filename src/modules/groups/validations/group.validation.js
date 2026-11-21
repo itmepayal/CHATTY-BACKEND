@@ -63,6 +63,7 @@ export const updateGroupBodySchema = z
       .optional(),
     description: z.string().max(500).optional(),
     whoCanPin: z.enum(["all", "admins"]).optional(),
+    mentionAllPermission: z.enum(["everyone", "admins_only", "disabled"]).optional(),
   })
   .passthrough();
 

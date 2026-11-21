@@ -166,10 +166,15 @@ export const toggleReaction = async ({
       ...payload,
       groupId: String(groupId),
     });
+    io.to(String(groupId)).emit("message:reaction:updated", {
+      ...payload,
+      groupId: String(groupId),
+    });
   } else {
     const sId = String(message.senderId);
     const rId = String(message.receiverId);
     io.to(sId).to(rId).emit("messageReaction", payload);
+    io.to(sId).to(rId).emit("message:reaction:updated", payload);
   }
 
   // Dispatch notification to message creator if new reaction

@@ -162,6 +162,7 @@ export const sendThreadReply = async ({
       throw new ApiError(StatusCodes.BAD_REQUEST, "Cannot reply to a deleted message.");
     }
 
+    const isE2EE = Boolean(payloadData.e2ee || payloadData.encrypted);
     const reply = await GroupMessage.create({
       groupId: toObjectId(groupId),
       senderId: toObjectId(userId),
@@ -172,8 +173,10 @@ export const sendThreadReply = async ({
       audio: payloadData.audio,
       video: payloadData.video,
       clientId: payloadData.clientId,
-      e2ee: Boolean(payloadData.e2ee),
-      iv: payloadData.iv,
+      e2ee: isE2EE,
+      iv: payloadData.iv || undefined,
+      keyVersion:
+        payloadData.keyVersion != null ? Number(payloadData.keyVersion) : undefined,
     });
 
     // Update parent message stats
@@ -215,7 +218,9 @@ export const sendThreadReply = async ({
           category: "group",
           type: "group_reply",
           title: `Reply in ${group.name}`,
-          body: data.text ? data.text.slice(0, 80) : "Replied in thread",
+          body: isE2EE
+            ? "🔒 Encrypted reply"
+            : (data.text ? data.text.slice(0, 80) : "Replied in thread"),
           data: {
             groupId: String(groupId),
             parentMessageId: String(pId),
@@ -254,6 +259,7 @@ export const sendThreadReply = async ({
 
   await assertCanMessage(userId, peerId);
 
+  const isDirectE2EE = Boolean(payloadData.e2ee || payloadData.encrypted);
   const reply = await Message.create({
     senderId: toObjectId(userId),
     receiverId: toObjectId(peerId),
@@ -264,8 +270,11 @@ export const sendThreadReply = async ({
     audio: payloadData.audio,
     video: payloadData.video,
     clientId: payloadData.clientId,
-    e2ee: Boolean(payloadData.e2ee),
-    iv: payloadData.iv,
+    e2ee: isDirectE2EE,
+    iv: payloadData.iv || undefined,
+    keyEnvelopes: Array.isArray(payloadData.keyEnvelopes)
+      ? payloadData.keyEnvelopes
+      : undefined,
     status: "sent",
   });
 
@@ -312,7 +321,9 @@ export const sendThreadReply = async ({
         category: "message",
         type: "message_reply",
         title: "New Thread Reply",
-        body: data.text ? data.text.slice(0, 80) : "Replied in thread",
+        body: isDirectE2EE
+          ? "🔒 Encrypted reply"
+          : (data.text ? data.text.slice(0, 80) : "Replied in thread"),
         data: {
           conversationId: u1,
           peerId: u1,

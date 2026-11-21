@@ -181,6 +181,7 @@ export const formatGroup = (
     keyRotationPending: !!group.keyRotationPending,
     disappearAfter: group.disappearAfter || 0,
     whoCanPin: group.whoCanPin || "all",
+    mentionAllPermission: group.mentionAllPermission || "everyone",
     ...extra,
   };
 };
@@ -234,17 +235,31 @@ const formatGroupReply = (r) => {
     text: isEncrypted ? "" : (r.text || "").slice(0, 120),
     encrypted: isEncrypted,
     e2ee: isEncrypted,
-    type: r.image?.url
-      ? "image"
-      : r.video?.url
-        ? "video"
-        : r.audio?.url
-          ? "audio"
-          : r.file?.url
-            ? "file"
-            : hasLocation
-              ? "location"
-              : "text",
+    type: r.gift?.name
+      ? "gift"
+      : r.image?.url
+        ? "image"
+        : r.video?.url
+          ? "video"
+          : r.audio?.url
+            ? "audio"
+            : r.file?.url
+              ? "file"
+              : hasLocation
+                ? "location"
+                : "text",
+    gift: r.gift?.name
+      ? {
+          name: r.gift.name,
+          slug: r.gift.slug || "",
+          icon: r.gift.icon,
+          image: r.gift.image || "",
+          category: r.gift.category,
+          coinPrice: r.gift.coinPrice || 0,
+          color: r.gift.color,
+          message: r.gift.message,
+        }
+      : null,
     image: r.image?.url ? { url: r.image.url } : null,
     file: r.file?.url ? { name: r.file.name } : null,
     audio: r.audio?.url
@@ -341,6 +356,26 @@ export const formatGroupMessage = (msg, viewerId = null) => {
       ? msg.threadParticipants.map((p) => String(p._id || p))
       : [],
     poll: msg.poll?.question ? msg.poll : null,
+    gift:
+      !isDeleted && msg.gift?.name
+        ? {
+            id: msg.gift.id,
+            giftId: msg.gift.giftId || msg.gift.id,
+            name: msg.gift.name,
+            slug: msg.gift.slug || "",
+            icon: msg.gift.icon,
+            image: msg.gift.image || "",
+            category: msg.gift.category,
+            coinPrice: msg.gift.coinPrice || 0,
+            rarity: msg.gift.rarity || "common",
+            badge: msg.gift.badge || "",
+            animation: msg.gift.animation,
+            color: msg.gift.color,
+            message: msg.gift.message,
+            senderName: msg.gift.senderName,
+          }
+        : null,
+    messageType: msg.messageType || (msg.gift?.name ? "gift" : "text"),
     isViewOnce: Boolean(msg.isViewOnce),
     viewOnceViewedBy: Array.isArray(msg.viewOnceViewedBy)
       ? msg.viewOnceViewedBy.map((u) => String(u._id || u))
@@ -370,6 +405,7 @@ export const formatGroupMessage = (msg, viewerId = null) => {
         msg.starredBy.some((id) => String(id) === String(viewerId)),
     ),
     starredBy: Array.isArray(msg.starredBy) ? msg.starredBy.map(String) : [],
+    mentionAll: Boolean(msg.mentionAll),
     mentions: Array.isArray(msg.mentions)
       ? msg.mentions.map((m) => {
           const u = m.userId?._id ? m.userId : null;
@@ -628,53 +664,71 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
     }
 
     if (!isSelf) {
+      const isMentionAll = Boolean(message.mentionAll);
       const isMentioned =
-        Array.isArray(message.mentions) &&
-        message.mentions.some(
-          (m) => String(m.userId?._id || m.userId) === id,
-        );
+        isMentionAll ||
+        (Array.isArray(message.mentions) &&
+          message.mentions.some(
+            (m) => String(m.userId?._id || m.userId) === id,
+          ));
 
       let groupNotifType = "group_message_received";
       let groupNotifTitle = group.name || "Group";
       let groupNotifBody = "New message";
 
-      if (isMentioned) {
+      if (isMentionAll) {
+        groupNotifType = "group_mention_all";
+        groupNotifTitle = `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}`;
+        groupNotifBody = `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}`;
+      } else if (isMentioned) {
         groupNotifType = "group_mention";
         groupNotifTitle = "You were mentioned";
         groupNotifBody = `${sender?.fullName || "Someone"} mentioned you in ${group.name}`;
       } else if (message.replyTo && String(message.replyTo.senderId) === id) {
         groupNotifType = "group_reply";
         groupNotifTitle = `${sender?.fullName || "Someone"} replied in ${group.name}`;
-      } else if (
-        message.text &&
-        (message.text.includes("@everyone") || message.text.includes("@all"))
-      ) {
-        groupNotifType = "group_mention_everyone";
-        groupNotifTitle = `${sender?.fullName || "Someone"} mentioned @everyone in ${group.name}`;
       }
 
       if (message.image?.url) {
-        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a photo`;
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}: Sent a photo`
+          : `${sender?.fullName || "Someone"}: Sent a photo`;
       } else if (message.video?.url) {
-        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a video`;
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}: Sent a video`
+          : `${sender?.fullName || "Someone"}: Sent a video`;
       } else if (message.audio?.url) {
-        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a voice message`;
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}: Sent a voice message`
+          : `${sender?.fullName || "Someone"}: Sent a voice message`;
       } else if (message.file?.url) {
-        groupNotifBody = `${sender?.fullName || "Someone"}: Sent a document`;
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}: Sent a document`
+          : `${sender?.fullName || "Someone"}: Sent a document`;
       } else if (message.location?.lat != null) {
-        groupNotifBody = `${sender?.fullName || "Someone"}: Shared location`;
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}: Shared location`
+          : `${sender?.fullName || "Someone"}: Shared location`;
+      } else if (message.gift?.name) {
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}: Sent a gift ${message.gift.icon || "🎁"} ${message.gift.name}`
+          : `${sender?.fullName || "Someone"}: Sent a gift ${message.gift.icon || "🎁"} ${message.gift.name}`;
       } else if (message.e2ee) {
-        groupNotifBody = isMentioned
-          ? `${sender?.fullName || "Someone"} mentioned you in ${group.name}`
-          : `${sender?.fullName || "Someone"}: New encrypted message`;
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}`
+          : isMentioned
+            ? `${sender?.fullName || "Someone"} mentioned you in ${group.name}`
+            : `${sender?.fullName || "Someone"}: New encrypted message`;
       } else if (message.text) {
         const preview =
           message.text.length > 60
             ? `${message.text.slice(0, 60)}…`
             : message.text;
-        groupNotifBody = isMentioned
-          ? `${sender?.fullName || "Someone"} mentioned you in ${group.name}: ${preview}`
-          : `${sender?.fullName || "Someone"}: ${preview}`;
+        groupNotifBody = isMentionAll
+          ? `${sender?.fullName || "Someone"} mentioned everyone in ${group.name}: ${preview}`
+          : isMentioned
+            ? `${sender?.fullName || "Someone"} mentioned you in ${group.name}: ${preview}`
+            : `${sender?.fullName || "Someone"}: ${preview}`;
       }
 
       notificationService
@@ -689,10 +743,17 @@ export const broadcastGroupMessage = async (group, message, senderId) => {
             groupId: String(group._id),
             messageId: String(message._id),
             senderId: sId,
-            mentionedUserId: isMentioned ? id : undefined,
+            senderName: sender?.fullName || "Someone",
             groupName: group.name,
+            mentionType: isMentionAll ? "all" : isMentioned ? "user" : undefined,
+            mentionedUserId: isMentioned ? id : undefined,
+            timestamp: message.createdAt || new Date(),
           },
-          dedupKey: isMentioned ? `group_mention:${message._id}:${id}` : null,
+          dedupKey: isMentionAll
+            ? `group_mention_all:${message._id}:${id}`
+            : isMentioned
+              ? `group_mention:${message._id}:${id}`
+              : null,
         })
         .catch(() => {});
     }
@@ -843,7 +904,7 @@ export const getGroupDetails = async (groupId, me) => {
   return presentGroup(group, { archived }, me);
 };
 
-export const updateGroupService = async ({ group, me, name, file, whoCanPin }) => {
+export const updateGroupService = async ({ group, me, name, file, whoCanPin, mentionAllPermission }) => {
   let changed = false;
   let oldPublicId = null;
   let newAvatar = null;
@@ -859,6 +920,16 @@ export const updateGroupService = async ({ group, me, name, file, whoCanPin }) =
   if (whoCanPin !== undefined && ["all", "admins"].includes(whoCanPin)) {
     if (group.whoCanPin !== whoCanPin) {
       group.whoCanPin = whoCanPin;
+      changed = true;
+    }
+  }
+
+  if (
+    mentionAllPermission !== undefined &&
+    ["everyone", "admins_only", "disabled"].includes(mentionAllPermission)
+  ) {
+    if (group.mentionAllPermission !== mentionAllPermission) {
+      group.mentionAllPermission = mentionAllPermission;
       changed = true;
     }
   }
@@ -1063,7 +1134,15 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
   const isVoice = body.isVoice === "true" || body.isVoice === true;
   const isVideo = body.isVideo === "true" || body.isVideo === true;
 
-  if (!text && !file) {
+  let parsedGift = null;
+  if (body.gift) {
+    try {
+      parsedGift =
+        typeof body.gift === "string" ? JSON.parse(body.gift) : body.gift;
+    } catch (_e) {}
+  }
+
+  if (!text && !file && !parsedGift?.name) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
   }
   if (
@@ -1147,7 +1226,7 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
     cipher = { e2ee: true, iv: body.iv, keyVersion };
   }
 
-  return { text, cipher, wantsE2EE, isVoice, isVideo };
+  return { text, cipher, wantsE2EE, isVoice, isVideo, gift: parsedGift };
 };
 
 export const updateGroupForRequest = async ({
@@ -1156,10 +1235,11 @@ export const updateGroupForRequest = async ({
   name,
   file,
   whoCanPin,
+  mentionAllPermission,
 }) => {
   const { group, member } = await getGroupAndMember(groupId, me);
   assertAdmin(member);
-  return updateGroupService({ group, me, name, file, whoCanPin });
+  return updateGroupService({ group, me, name, file, whoCanPin, mentionAllPermission });
 };
 
 export const deleteGroupForRequest = async ({ groupId, me }) => {

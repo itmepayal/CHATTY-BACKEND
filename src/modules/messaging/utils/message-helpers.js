@@ -5,7 +5,7 @@ import { io } from "../../../infrastructure/socket/socket.js";
 export const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
 export const REPLY_SELECT =
-  "senderId text image file audio video location isDeleted e2ee iv keyEnvelopes";
+  "senderId text image file audio video location gift messageType isDeleted e2ee iv keyEnvelopes";
 
 const formatFile = (file) =>
   file?.url
@@ -60,17 +60,31 @@ const formatReply = (r) => {
     text: isEncrypted ? "" : (r.text || "").slice(0, 120),
     encrypted: isEncrypted,
     e2ee: isEncrypted,
-    type: r.image?.url
-      ? "image"
-      : r.video?.url
-        ? "video"
-        : r.audio?.url
-          ? "audio"
-          : r.file?.url
-            ? "file"
-            : hasLatLng(r.location)
-              ? "location"
-              : "text",
+    type: r.gift?.name
+      ? "gift"
+      : r.image?.url
+        ? "image"
+        : r.video?.url
+          ? "video"
+          : r.audio?.url
+            ? "audio"
+            : r.file?.url
+              ? "file"
+              : hasLatLng(r.location)
+                ? "location"
+                : "text",
+    gift: r.gift?.name
+      ? {
+          name: r.gift.name,
+          slug: r.gift.slug || "",
+          icon: r.gift.icon,
+          image: r.gift.image || "",
+          category: r.gift.category,
+          coinPrice: r.gift.coinPrice || 0,
+          color: r.gift.color,
+          message: r.gift.message,
+        }
+      : null,
     image: r.image?.url ? { url: r.image.url } : null,
     file: r.file?.url ? { name: r.file.name } : null,
     audio: formatAudio(r.audio),
@@ -219,6 +233,26 @@ export const formatMessage = (msg) => {
       ? msg.threadParticipants.map((p) => String(p._id || p))
       : [],
     poll: deleted ? null : formatPollHelper(msg.poll),
+    gift:
+      !deleted && msg.gift?.name
+        ? {
+            id: msg.gift.id,
+            giftId: msg.gift.giftId || msg.gift.id,
+            name: msg.gift.name,
+            slug: msg.gift.slug || "",
+            icon: msg.gift.icon,
+            image: msg.gift.image || "",
+            category: msg.gift.category,
+            coinPrice: msg.gift.coinPrice || 0,
+            rarity: msg.gift.rarity || "common",
+            badge: msg.gift.badge || "",
+            animation: msg.gift.animation,
+            color: msg.gift.color,
+            message: msg.gift.message,
+            senderName: msg.gift.senderName,
+          }
+        : null,
+    messageType: msg.messageType || (msg.gift?.name ? "gift" : "text"),
     isViewOnce: Boolean(msg.isViewOnce),
     viewOnceViewedBy: Array.isArray(msg.viewOnceViewedBy)
       ? msg.viewOnceViewedBy.map((u) => String(u._id || u))
