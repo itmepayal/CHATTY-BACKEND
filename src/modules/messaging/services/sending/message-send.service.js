@@ -41,6 +41,8 @@ export const sendMessage = async (
     expiresAt,
     parentMessageId,
     gift,
+    storyReply,
+    messageType,
   } = {},
   file,
 ) => {
@@ -187,6 +189,7 @@ export const sendMessage = async (
         ...(isViewOnceReq ? { isViewOnce: true } : {}),
         ...(explicitExpiry ? { expiresAt: explicitExpiry } : {}),
         ...(parentMessageId ? { parentMessageId } : {}),
+        ...(storyReply ? { storyReply, messageType: messageType || "story_reply" } : {}),
         ...(parsedGift?.name
           ? { gift: parsedGift, messageType: "gift" }
           : {}),

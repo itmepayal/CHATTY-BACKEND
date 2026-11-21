@@ -252,7 +252,20 @@ export const formatMessage = (msg) => {
             senderName: msg.gift.senderName,
           }
         : null,
-    messageType: msg.messageType || (msg.gift?.name ? "gift" : "text"),
+    messageType: msg.messageType || (msg.gift?.name ? "gift" : msg.storyReply?.storyId ? "story_reply" : "text"),
+    storyReply:
+      !deleted && msg.storyReply?.storyId
+        ? {
+            storyId: String(msg.storyReply.storyId),
+            storyOwnerId: msg.storyReply.storyOwnerId
+              ? String(msg.storyReply.storyOwnerId)
+              : undefined,
+            storyMediaType: msg.storyReply.storyMediaType || "text",
+            storyPreviewUrl: msg.storyReply.storyPreviewUrl || "",
+            storyCaption: msg.storyReply.storyCaption || "",
+            storyTextContent: msg.storyReply.storyTextContent || "",
+          }
+        : null,
     isViewOnce: Boolean(msg.isViewOnce),
     viewOnceViewedBy: Array.isArray(msg.viewOnceViewedBy)
       ? msg.viewOnceViewedBy.map((u) => String(u._id || u))
