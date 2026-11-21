@@ -110,9 +110,17 @@ const MessageSchema = mongoose.Schema(
       message: { type: String },
       senderName: { type: String },
     },
+    storyReply: {
+      storyId: { type: mongoose.Schema.Types.ObjectId, ref: "Story" },
+      storyOwnerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      storyMediaType: { type: String, enum: ["image", "video", "text"] },
+      storyPreviewUrl: { type: String, default: "" },
+      storyCaption: { type: String, default: "" },
+      storyTextContent: { type: String, default: "" },
+    },
     messageType: {
       type: String,
-      enum: ["text", "image", "file", "audio", "video", "location", "poll", "gift"],
+      enum: ["text", "image", "file", "audio", "video", "location", "poll", "gift", "story_reply"],
       default: "text",
     },
 
