@@ -15,6 +15,8 @@ import savedMessageRoutes from "../modules/messaging/routes/saved-message.routes
 import advancedMessagingRoutes from "../modules/messaging/routes/advanced-messaging.routes.js";
 import giftRoutes from "../modules/gifts/routes/gift.routes.js";
 import storyRoutes from "../modules/stories/routes/story.routes.js";
+import badgeRoutes from "../modules/badges/routes/badge.routes.js";
+import stickerRoutes from "../modules/stickers/routes/sticker.routes.js";
 
 const router = Router();
 
@@ -39,5 +41,9 @@ router.use("/group-calls", groupCallRoutes);
 router.use("/contacts", contactRoutes);
 router.use("/gifts", giftRoutes);
 router.use("/stories", storyRoutes);
+router.use("/badges", badgeRoutes);
+router.use("/v1/badges", badgeRoutes);
+router.use("/v1/users", userRoutes);
+router.use("/stickers", stickerRoutes);
 
 export default router;

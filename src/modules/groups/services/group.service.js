@@ -235,19 +235,22 @@ const formatGroupReply = (r) => {
     text: isEncrypted ? "" : (r.text || "").slice(0, 120),
     encrypted: isEncrypted,
     e2ee: isEncrypted,
-    type: r.gift?.name
-      ? "gift"
-      : r.image?.url
-        ? "image"
-        : r.video?.url
-          ? "video"
-          : r.audio?.url
-            ? "audio"
-            : r.file?.url
-              ? "file"
-              : hasLocation
-                ? "location"
-                : "text",
+    type: r.sticker?.url
+      ? "sticker"
+      : r.gift?.name
+        ? "gift"
+        : r.image?.url
+          ? "image"
+          : r.video?.url
+            ? "video"
+            : r.audio?.url
+              ? "audio"
+              : r.file?.url
+                ? "file"
+                : hasLocation
+                  ? "location"
+                  : "text",
+    sticker: r.sticker?.url ? { url: r.sticker.url, name: r.sticker.name } : null,
     gift: r.gift?.name
       ? {
           name: r.gift.name,
@@ -294,6 +297,7 @@ export const formatGroupMessage = (msg, viewerId = null) => {
             (typeof sender.avatar === "string" ? sender.avatar : "") ||
             sender.profilePic ||
             "",
+          featuredBadge: sender.featuredBadge || null,
         }
       : null,
     text: isDeleted ? "" : (msg.text || ""),
@@ -375,7 +379,23 @@ export const formatGroupMessage = (msg, viewerId = null) => {
             senderName: msg.gift.senderName,
           }
         : null,
-    messageType: msg.messageType || (msg.gift?.name ? "gift" : "text"),
+    sticker:
+      !isDeleted && msg.sticker?.url
+        ? {
+            stickerId: msg.sticker.stickerId ? String(msg.sticker.stickerId) : "",
+            packId: msg.sticker.packId ? String(msg.sticker.packId) : "",
+            packName: msg.sticker.packName || "",
+            url: msg.sticker.url,
+            thumbnailUrl: msg.sticker.thumbnailUrl || msg.sticker.url,
+            name: msg.sticker.name || "",
+            altText: msg.sticker.altText || "",
+            isAnimated: Boolean(msg.sticker.isAnimated),
+            format: msg.sticker.format || "webp",
+            width: msg.sticker.width || 256,
+            height: msg.sticker.height || 256,
+          }
+        : null,
+    messageType: msg.messageType || (msg.sticker?.url ? "sticker" : msg.gift?.name ? "gift" : "text"),
     isViewOnce: Boolean(msg.isViewOnce),
     viewOnceViewedBy: Array.isArray(msg.viewOnceViewedBy)
       ? msg.viewOnceViewedBy.map((u) => String(u._id || u))

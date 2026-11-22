@@ -9,6 +9,7 @@ import messageSendService from "../../messaging/services/sending/message-send.se
 import { uploadFileToCloudinary, deleteFileToCloudinary } from "../../../config/cloudinary.config.js";
 import { io } from "../../../infrastructure/socket/socket.js";
 import ApiError from "../../../shared/errors/api-error.js";
+import { trackActivity } from "../../badges/services/achievement-engine.service.js";
 
 const sanitizeUser = (user) => {
   if (!user) return null;
@@ -147,6 +148,9 @@ export const createStory = async ({
     excludedViewers: parsedExcluded,
     expiresAt,
   });
+
+  // Track gamification activity asynchronously
+  trackActivity(userId, "stories_published", 1);
 
   const populatedStory = await Story.findById(story._id).populate(
     "userId",

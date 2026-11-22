@@ -5,7 +5,7 @@ import { io } from "../../../infrastructure/socket/socket.js";
 export const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
 export const REPLY_SELECT =
-  "senderId text image file audio video location gift messageType isDeleted e2ee iv keyEnvelopes";
+  "senderId text image file audio video location gift storyReply sticker messageType isDeleted e2ee iv keyEnvelopes";
 
 const formatFile = (file) =>
   file?.url
@@ -264,6 +264,22 @@ export const formatMessage = (msg) => {
             storyPreviewUrl: msg.storyReply.storyPreviewUrl || "",
             storyCaption: msg.storyReply.storyCaption || "",
             storyTextContent: msg.storyReply.storyTextContent || "",
+          }
+        : null,
+    sticker:
+      !deleted && msg.sticker?.url
+        ? {
+            stickerId: msg.sticker.stickerId ? String(msg.sticker.stickerId) : "",
+            packId: msg.sticker.packId ? String(msg.sticker.packId) : "",
+            packName: msg.sticker.packName || "",
+            url: msg.sticker.url,
+            thumbnailUrl: msg.sticker.thumbnailUrl || msg.sticker.url,
+            name: msg.sticker.name || "",
+            altText: msg.sticker.altText || "",
+            isAnimated: Boolean(msg.sticker.isAnimated),
+            format: msg.sticker.format || "webp",
+            width: msg.sticker.width || 256,
+            height: msg.sticker.height || 256,
           }
         : null,
     isViewOnce: Boolean(msg.isViewOnce),

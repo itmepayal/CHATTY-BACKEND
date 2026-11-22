@@ -31,6 +31,8 @@ import {
   EDIT_WINDOW_MS,
   GROUP_ERROR_MESSAGES,
 } from "../constants/index.js";
+import { trackActivity } from "../../badges/services/achievement-engine.service.js";
+import { recordStickerUsage } from "../../stickers/services/sticker-marketplace.service.js";
 import { GROUP_SOCKET_EVENTS } from "../constants/group-events.constants.js";
 import {
   sid,
@@ -151,7 +153,7 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
   let attachment = {};
   let clientId = null;
   try {
-    const { text, cipher, isVoice, isVideo, gift } =
+    const { text, cipher, isVoice, isVideo, gift, sticker } =
       await validateGroupMessageInput(group, me, body, file);
 
     clientId = readClientId(body);
@@ -286,6 +288,7 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
       ...(expiresAt ? { expiresAt } : {}),
       ...(body.parentMessageId ? { parentMessageId: body.parentMessageId } : {}),
       ...(gift?.name ? { gift, messageType: "gift" } : {}),
+      ...(sticker?.url ? { sticker, messageType: "sticker" } : {}),
       readBy: [me],
     });
 
@@ -297,6 +300,15 @@ export const sendGroupMessageService = async ({ group, me, body, file }) => {
     }
 
     const payload = await broadcastGroupMessage(group, message, me);
+
+    // Trigger achievement activity & sticker usage in background
+    trackActivity(me, "messages_sent", 1);
+    const stickerIdToRecord =
+      sticker?.stickerId || sticker?._id || sticker?.id;
+    if (stickerIdToRecord) {
+      recordStickerUsage(me, stickerIdToRecord, "group");
+    }
+
     return { isDuplicate: false, payload };
   } catch (error) {
     if (attachment && Object.keys(attachment).length > 0) {

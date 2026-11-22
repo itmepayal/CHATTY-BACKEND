@@ -1,5 +1,6 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../shared/errors/api-error.js";
+import { trackActivity } from "../../badges/services/achievement-engine.service.js";
 import { isValidObjectId } from "../../../shared/utils/object-id.util.js";
 import * as groupRepository from "../repositories/group.repository.js";
 import * as groupKeyRepository from "../repositories/group-key.repository.js";
@@ -123,6 +124,8 @@ export const createGroupWithMembers = async ({
 
     const group = await loadGroup(created._id);
     await emitGroupToMembers(group, GROUP_SOCKET_EVENTS.GROUP_CREATED);
+
+    trackActivity(meId, "groups_created", 1);
 
     return presentGroup(group, {}, meId);
   } catch (error) {

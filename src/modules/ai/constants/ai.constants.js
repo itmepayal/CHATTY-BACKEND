@@ -6,6 +6,8 @@ export const ALLOWED_TONES = Object.freeze([
   "persuasive",
   "humorous",
   "concise",
+  "shorter",
+  "expand",
 ]);
 
 export const AI_TONES = ALLOWED_TONES;

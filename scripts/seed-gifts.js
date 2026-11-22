@@ -31,6 +31,7 @@ export async function seedGifts(options = {}) {
         update: {
           $set: {
             name: item.name,
+            customId: item.id || item.slug,
             description: item.description,
             category: item.category,
             subcategory: item.subcategory,
