@@ -10,12 +10,27 @@ export const CALL_STATUS = Object.freeze({
   CANCELLED: "cancelled",
   COMPLETED: "completed",
   FAILED: "failed",
+  BUSY: "busy",
 });
 
 export const CALL_LIFECYCLE_STATE = Object.freeze({
+  IDLE: "idle",
+  INITIATING: "initiating",
   RINGING: "ringing",
+  ACCEPTING: "accepting",
   ACCEPTED: "accepted",
+  CONNECTING: "connecting",
+  CONNECTED: "connected",
+  ACTIVE: "active",
+  HELD: "held",
+  ON_HOLD: "on_hold",
+  RECONNECTING: "reconnecting",
   ENDED: "ended",
+  REJECTED: "rejected",
+  BUSY: "busy",
+  FAILED: "failed",
+  MISSED: "missed",
+  CANCELLED: "cancelled",
 });
 
 export const CALL_TYPES = Object.freeze({
@@ -38,8 +53,21 @@ export const CALL_SOCKET_EVENTS = Object.freeze({
   CALL_ANSWER: "call:answer",
   CALL_ICE: "call:ice",
   CALL_MEDIA: "call:media",
+  CALL_HOLD: "call:hold",
+  CALL_HELD: "call:held",
+  CALL_RESUME: "call:resume",
+  CALL_RESUMED: "call:resumed",
+  CALL_STATE: "call:state",
+  CALL_GET_STATE: "call:get-state",
+  CALL_WAITING: "call:waiting",
+  CALL_RECONNECT: "call:reconnect",
+  CALL_RECONNECTED: "call:reconnected",
+  CALL_QUALITY: "call:quality",
   CALLS_READ: "calls:read",
   CALL_MISSED_CLEARED: "call:missed:cleared",
+  CALL_REACTION: "call:reaction",
+  CALL_CAPTION: "call:caption",
+  CALL_SCREENSHARE: "call:screenshare",
 
   // Group calling
   GCALL_START: "gcall:start",
@@ -53,6 +81,29 @@ export const CALL_SOCKET_EVENTS = Object.freeze({
   GCALL_PEER_LEFT: "gcall:peer-left",
   GCALL_ENDED: "gcall:ended",
   GCALL_JOINED_ELSEWHERE: "gcall:joined-elsewhere",
+  GCALL_REACTION: "gcall:reaction",
+  GCALL_CAPTION: "gcall:caption",
+  GCALL_SCREENSHARE: "gcall:screenshare",
+  GCALL_KICK: "gcall:kick",
+  GCALL_MUTE_PEER: "gcall:mute-peer",
+});
+
+export const CALL_REACTIONS = Object.freeze([
+  "❤️",
+  "😂",
+  "👍",
+  "👏",
+  "🎉",
+  "😮",
+  "😢",
+  "🔥",
+]);
+
+export const CALL_VIDEO_RESOLUTIONS = Object.freeze({
+  RES_360P: "360p",
+  RES_480P: "480p",
+  RES_720P: "720p",
+  RES_1080P: "1080p",
 });
 
 export const CALL_LIMITS = Object.freeze({

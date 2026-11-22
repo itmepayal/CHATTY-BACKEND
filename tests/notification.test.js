@@ -250,6 +250,152 @@ async function runNotificationTests() {
       const remaining = await Notification.countDocuments({ recipientId: aliceId });
       assert.equal(remaining, 0);
     });
+
+    /* ================================================================ */
+    /* 5. Advanced Ecosystem: Master Switch, Unread, Story & Privacy    */
+    /* ================================================================ */
+
+    // Unmute Bob for Alice before section 5 tests
+    await User.findByIdAndUpdate(aliceId, {
+      "notificationPreferences.mutedConversations": [],
+      "notificationPreferences.masterEnabled": true,
+      "notificationPreferences.dndEnabled": false,
+    });
+
+    await testCase("5.1 PATCH /api/v1/notifications/:id/unread marks as unread", async () => {
+      const notif = await notificationService.dispatchNotification({
+        recipientId: aliceId,
+        senderId: bobId,
+        type: NOTIFICATION_TYPES.MESSAGE_RECEIVED,
+        title: "Unread Test Message",
+        body: "Hello Alice",
+      });
+
+      // First mark as read
+      await request(env.app)
+        .patch(`/api/v1/notifications/${notif.id}/read`)
+        .set("Cookie", alice.cookies);
+
+      // Now mark as unread
+      const unreadRes = await request(env.app)
+        .patch(`/api/v1/notifications/${notif.id}/unread`)
+        .set("Cookie", alice.cookies);
+
+      assert.equal(unreadRes.status, 200);
+      assert.equal(unreadRes.body.data.isRead, false);
+
+      const dbDoc = await Notification.findById(notif.id);
+      assert.equal(dbDoc.isRead, false);
+    });
+
+    await testCase("5.2 DELETE /api/v1/notifications/clear-read removes read only", async () => {
+      // Create one read and one unread notification
+      const readNotif = await notificationService.dispatchNotification({
+        recipientId: aliceId,
+        senderId: bobId,
+        type: NOTIFICATION_TYPES.MESSAGE_RECEIVED,
+        title: "Read Notif",
+        body: "To be cleared",
+        dedupKey: `read_test_${Date.now()}_1`,
+      });
+      await request(env.app)
+        .patch(`/api/v1/notifications/${readNotif.id}/read`)
+        .set("Cookie", alice.cookies);
+
+      const unreadNotif = await notificationService.dispatchNotification({
+        recipientId: aliceId,
+        senderId: bobId,
+        type: NOTIFICATION_TYPES.MESSAGE_RECEIVED,
+        title: "Keep Unread Notif",
+        body: "Must remain",
+        dedupKey: `unread_test_${Date.now()}_2`,
+      });
+
+      const clearRes = await request(env.app)
+        .delete("/api/v1/notifications/clear-read")
+        .set("Cookie", alice.cookies);
+
+      assert.equal(clearRes.status, 200);
+
+      const readExists = await Notification.findById(readNotif.id);
+      const unreadExists = await Notification.findById(unreadNotif.id);
+      assert.equal(readExists, null);
+      assert.notEqual(unreadExists, null);
+    });
+
+    await testCase("5.3 Master switch disabled suppresses non-critical notifications", async () => {
+      await User.findByIdAndUpdate(aliceId, {
+        "notificationPreferences.masterEnabled": false,
+      });
+
+      const suppressed = await notificationService.dispatchNotification({
+        recipientId: aliceId,
+        senderId: bobId,
+        type: NOTIFICATION_TYPES.MESSAGE_RECEIVED,
+        title: "Should Be Suppressed",
+        body: "Master toggle is off",
+      });
+
+      assert.equal(suppressed, null);
+    });
+
+    await testCase("5.4 Critical security notifications bypass master switch", async () => {
+      const securityNotif = await notificationService.dispatchNotification({
+        recipientId: aliceId,
+        type: NOTIFICATION_TYPES.SECURITY_NEW_DEVICE,
+        title: "Security: New Device Login",
+        body: "Linux Firefox from 192.168.1.1",
+      });
+
+      assert.notEqual(securityNotif, null);
+      assert.equal(securityNotif.category, "security");
+
+      // Re-enable master switch for subsequent tests
+      await User.findByIdAndUpdate(aliceId, {
+        "notificationPreferences.masterEnabled": true,
+      });
+    });
+
+    await testCase("5.5 Story reaction and favorite notifications dispatch properly", async () => {
+      const storyReaction = await notificationService.dispatchNotification({
+        recipientId: aliceId,
+        senderId: bobId,
+        category: NOTIFICATION_CATEGORIES.STORY,
+        type: NOTIFICATION_TYPES.STORY_REACTION,
+        title: "Story Reaction",
+        body: "Bob reacted 🔥 to your story",
+      });
+
+      assert.notEqual(storyReaction, null);
+      assert.equal(storyReaction.category, "story");
+      assert.equal(storyReaction.type, "story_reaction");
+    });
+
+    await testCase("5.6 Notification preview privacy hides sensitive text when requested", async () => {
+      // Set Alice's preview privacy to sender_only
+      await User.findByIdAndUpdate(aliceId, {
+        "notificationPreferences.previewPrivacy": "sender_only",
+        "notificationSettings.previewPrivacy": "sender_only",
+      });
+
+      const notif = await notificationService.dispatchNotification({
+        recipientId: aliceId,
+        senderId: bobId,
+        category: NOTIFICATION_CATEGORIES.MESSAGE,
+        type: NOTIFICATION_TYPES.MESSAGE_RECEIVED,
+        title: "Bob Smith",
+        body: "Very confidential bank account number: 123456",
+        dedupKey: `privacy_test_${Date.now()}`,
+      });
+
+      assert.equal(notif.body, "New message"); // Redacted from confidential content!
+
+      // Reset
+      await User.findByIdAndUpdate(aliceId, {
+        "notificationPreferences.previewPrivacy": "full",
+        "notificationSettings.previewPrivacy": "full",
+      });
+    });
   } catch (err) {
     console.error("Test setup error:", err);
   } finally {

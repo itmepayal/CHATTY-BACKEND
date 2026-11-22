@@ -10,6 +10,11 @@ import { uploadFileToCloudinary, deleteFileToCloudinary } from "../../../config/
 import { io } from "../../../infrastructure/socket/socket.js";
 import ApiError from "../../../shared/errors/api-error.js";
 import { trackActivity } from "../../badges/services/achievement-engine.service.js";
+import * as notificationService from "../../notifications/services/notification.service.js";
+import {
+  NOTIFICATION_TYPES,
+  NOTIFICATION_CATEGORIES,
+} from "../../notifications/models/notification.model.js";
 
 const sanitizeUser = (user) => {
   if (!user) return null;
@@ -197,6 +202,37 @@ export const createStory = async ({
         }
       }
     }
+
+    // Notify favorite contacts who opted into story notifications
+    User.find({
+      favoriteUsers: userId,
+      "notificationPreferences.storiesFavorites": { $ne: false },
+    })
+      .select("_id")
+      .lean()
+      .then((favUsers) => {
+        const creatorName =
+          populatedStory.userId?.fullName ||
+          populatedStory.userId?.username ||
+          "A contact";
+        for (const fav of favUsers || []) {
+          const fid = String(fav._id);
+          if (fid !== String(userId) && !blockedIds.has(fid)) {
+            notificationService
+              .dispatchNotification({
+                recipientId: fid,
+                senderId: String(userId),
+                category: NOTIFICATION_CATEGORIES.STORY,
+                type: NOTIFICATION_TYPES.STORY_FAVORITE_POSTED,
+                title: "New Story",
+                body: `${creatorName} shared a new story`,
+                data: { storyId: String(story._id) },
+              })
+              .catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
   } catch (sockErr) {
     console.error("[story] socket emit story:new failed:", sockErr?.message || sockErr);
   }
@@ -422,6 +458,25 @@ export const reactToStory = async (storyId, viewerId, emoji) => {
       emoji,
       reactedAt: new Date(),
     });
+
+    if (ownerIdStr !== viewerIdStr) {
+      const viewerName =
+        viewerUser?.fullName || viewerUser?.username || "Someone";
+      notificationService
+        .dispatchNotification({
+          recipientId: ownerIdStr,
+          senderId: viewerIdStr,
+          category: NOTIFICATION_CATEGORIES.STORY,
+          type: NOTIFICATION_TYPES.STORY_REACTION,
+          title: "Story Reaction",
+          body: `${viewerName} reacted ${emoji} to your story`,
+          data: {
+            storyId: String(storyId),
+            emoji,
+          },
+        })
+        .catch(() => {});
+    }
   } catch (err) {
     console.error("[story] emit story:reaction failed:", err?.message || err);
   }

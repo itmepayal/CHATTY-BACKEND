@@ -405,6 +405,13 @@ async function runTests() {
     });
 
     await testCase("7.3 Existing 'seen' message status is masked to 'delivered' when receipts OFF", async () => {
+      // Ensure Alice and Bob are mutual contacts for messaging operations
+      await Contact.findOneAndUpdate(
+        { ownerId: bobId, contactId: aliceId },
+        { ownerId: bobId, contactId: aliceId, name: "Alice by Bob" },
+        { upsert: true },
+      );
+
       // Create a message between Alice and Bob with status 'seen'
       await Message.deleteMany({});
       const msg = await Message.create({

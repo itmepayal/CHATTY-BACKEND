@@ -94,3 +94,27 @@ export const validateMediaPayload = (payload) => {
     video: Boolean(payload.video),
   };
 };
+
+/**
+ * Validates Call ID string format to prevent prototype injection or oversized identifiers.
+ */
+export const isValidCallId = (callId) => {
+  if (typeof callId !== "string") return false;
+  const trimmed = callId.trim();
+  return trimmed.length > 0 && trimmed.length <= 128 && /^[\w-]+$/.test(trimmed);
+};
+
+/**
+ * Validates quality indicator string.
+ */
+export const isValidQuality = (q) =>
+  typeof q === "string" &&
+  ["excellent", "good", "weak", "poor", "reconnecting"].includes(q);
+
+/**
+ * Sanitizes call end/rejection reason string to bounded characters.
+ */
+export const sanitizeReason = (reason) => {
+  if (typeof reason !== "string") return "unknown";
+  return reason.trim().slice(0, 64).replace(/[^\w\s-]/g, "");
+};

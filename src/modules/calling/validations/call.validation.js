@@ -73,3 +73,42 @@ export const validateCallHistoryQuery = (req, _res, next) => {
 
   next();
 };
+
+/**
+ * Validates Call ID parameter in routes.
+ */
+export const validateCallIdParam = (req, _res, next) => {
+  const { callId } = req.params;
+  if (!callId || typeof callId !== "string" || callId.length > 128 || !/^[\w-]+$/.test(callId)) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid call ID parameter.");
+  }
+  next();
+};
+
+/**
+ * Validates array of call IDs for bulk history deletion.
+ */
+export const validateBulkDeleteCallIds = (req, _res, next) => {
+  const { callIds } = req.body || {};
+  if (!Array.isArray(callIds) || callIds.length === 0) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "An array of call IDs is required for bulk deletion.",
+    );
+  }
+  if (callIds.length > 100) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Cannot delete more than 100 call records in a single request.",
+    );
+  }
+  for (const id of callIds) {
+    if (!id || typeof id !== "string" || id.length > 128 || !/^[\w-]+$/.test(id)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Invalid call ID format in request: ${id}`,
+      );
+    }
+  }
+  next();
+};

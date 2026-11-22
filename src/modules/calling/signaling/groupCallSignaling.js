@@ -8,6 +8,7 @@ import {
   CALL_STATUS,
   CALL_SOCKET_EVENTS,
   CALL_LIMITS,
+  CALL_REACTIONS,
 } from "../constants/call.constants.js";
 import {
   validateSdp,
@@ -99,6 +100,20 @@ async function finishCall(io, call, { status, reason = "" }) {
 
 function removeParticipant(io, call, userId, reason = "left") {
   if (!call || !call.participants.has(userId)) return;
+
+  // If this participant was sharing their screen, clear state and notify others
+  if (call.screenSharingUserId && String(call.screenSharingUserId) === String(userId)) {
+    call.screenSharingUserId = null;
+    for (const p of call.participants.values()) {
+      if (p.socketId) {
+        io.to(p.socketId).emit(CALL_SOCKET_EVENTS.GCALL_SCREENSHARE, {
+          callId: call.callId,
+          userId,
+          isSharing: false,
+        });
+      }
+    }
+  }
 
   call.participants.delete(userId);
   userGroup.delete(userId);
@@ -348,6 +363,7 @@ export function registerGroupCallHandlers(io, socket) {
           callId: call.callId,
           type: call.type,
           peers: safePeers,
+          screenSharingUserId: call.screenSharingUserId || null,
         });
       }
 
@@ -364,6 +380,7 @@ export function registerGroupCallHandlers(io, socket) {
         callId: call.callId,
         type: call.type,
         peers,
+        screenSharingUserId: call.screenSharingUserId || null,
       });
     } catch (err) {
       console.error("[gcall] join failed:", err?.message || err);
@@ -451,6 +468,196 @@ export function registerGroupCallHandlers(io, socket) {
   socket.on(CALL_SOCKET_EVENTS.GCALL_LEAVE, ({ callId } = {}) => {
     const call = myCall(callId);
     if (call) removeParticipant(io, call, userId, "left");
+  });
+
+  socket.on(CALL_SOCKET_EVENTS.GCALL_REACTION, ({ callId, reaction } = {}, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const call = myCall(callId);
+    if (!call) return reply({ ok: false, reason: "not-found" });
+
+    if (
+      !socketLimiter.consume(
+        userId,
+        CALL_SOCKET_EVENTS.GCALL_REACTION,
+        SOCKET_RATE_LIMITS.GCALL_REACTION,
+      )
+    ) {
+      return reply({ ok: false, reason: "rate_limited" });
+    }
+
+    if (!CALL_REACTIONS.includes(reaction)) {
+      return reply({ ok: false, reason: "invalid-reaction" });
+    }
+
+    const payload = {
+      callId,
+      senderId: userId,
+      reaction,
+      timestamp: Date.now(),
+    };
+
+    for (const [uid, p] of call.participants) {
+      io.to(p.socketId).emit(CALL_SOCKET_EVENTS.GCALL_REACTION, payload);
+    }
+
+    reply({ ok: true });
+  });
+
+  socket.on(CALL_SOCKET_EVENTS.GCALL_CAPTION, ({ callId, text, isFinal, sourceLang } = {}, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const call = myCall(callId);
+    if (!call) return reply({ ok: false, reason: "not-found" });
+
+    if (
+      !socketLimiter.consume(
+        userId,
+        CALL_SOCKET_EVENTS.GCALL_CAPTION,
+        SOCKET_RATE_LIMITS.GCALL_CAPTION,
+      )
+    ) {
+      return reply({ ok: false, reason: "rate_limited" });
+    }
+
+    if (typeof text !== "string" || !text.trim()) {
+      return reply({ ok: false, reason: "invalid-text" });
+    }
+
+    const payload = {
+      callId,
+      senderId: userId,
+      text: text.trim().slice(0, 500),
+      isFinal: Boolean(isFinal),
+      sourceLang: typeof sourceLang === "string" ? sourceLang.slice(0, 10) : "en",
+      timestamp: Date.now(),
+    };
+
+    for (const [uid, p] of call.participants) {
+      if (uid !== userId) {
+        io.to(p.socketId).emit(CALL_SOCKET_EVENTS.GCALL_CAPTION, payload);
+      }
+    }
+
+    reply({ ok: true });
+  });
+
+  socket.on(CALL_SOCKET_EVENTS.GCALL_SCREENSHARE, ({ callId, isSharing } = {}, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const call = myCall(callId);
+    if (!call) return reply({ ok: false, reason: "not-found" });
+
+    if (
+      !socketLimiter.consume(
+        userId,
+        CALL_SOCKET_EVENTS.GCALL_SCREENSHARE,
+        SOCKET_RATE_LIMITS.GCALL_SCREENSHARE,
+      )
+    ) {
+      return reply({ ok: false, reason: "rate_limited" });
+    }
+
+    if (!call.participants.has(userId)) {
+      return reply({ ok: false, reason: "not-participant" });
+    }
+
+    // Host or active sharer authorization:
+    // If stopping, only the active sharer or the host (call starter) can stop it
+    if (
+      !isSharing &&
+      call.screenSharingUserId &&
+      String(call.screenSharingUserId) !== String(userId) &&
+      String(call.startedBy) !== String(userId)
+    ) {
+      return reply({ ok: false, reason: "not-authorized" });
+    }
+
+    call.screenSharingUserId = isSharing ? userId : null;
+
+    const payload = {
+      callId,
+      userId,
+      isSharing: Boolean(isSharing),
+    };
+
+    for (const [uid, p] of call.participants) {
+      if (uid !== userId) {
+        io.to(p.socketId).emit(CALL_SOCKET_EVENTS.GCALL_SCREENSHARE, payload);
+      }
+    }
+
+    reply({ ok: true, isSharing: Boolean(isSharing), screenSharingUserId: call.screenSharingUserId });
+  });
+
+  // Host Control: Kick participant from group call
+  socket.on(CALL_SOCKET_EVENTS.GCALL_KICK, ({ callId, targetUserId } = {}, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const call = myCall(callId);
+    if (!call) return reply({ ok: false, reason: "not-found" });
+
+    if (
+      !socketLimiter.consume(
+        userId,
+        CALL_SOCKET_EVENTS.GCALL_KICK,
+        SOCKET_RATE_LIMITS.GCALL_KICK,
+      )
+    ) {
+      return reply({ ok: false, reason: "rate_limited" });
+    }
+
+    // Authorization: Only the call starter (host) can kick participants
+    if (String(call.startedBy) !== String(userId)) {
+      return reply({ ok: false, reason: "unauthorized", message: "Only the call host can remove participants." });
+    }
+
+    const targetIdStr = String(targetUserId);
+    if (targetIdStr === userId) {
+      return reply({ ok: false, reason: "invalid-target", message: "Host cannot kick themselves." });
+    }
+
+    const targetP = call.participants.get(targetIdStr);
+    if (!targetP) {
+      return reply({ ok: false, reason: "peer-not-in-call" });
+    }
+
+    io.to(targetP.socketId).emit(CALL_SOCKET_EVENTS.GCALL_KICK, {
+      callId,
+      kickedBy: userId,
+      reason: "removed-by-host",
+    });
+
+    removeParticipant(io, call, targetIdStr, "removed-by-host");
+    reply({ ok: true });
+  });
+
+  // Host / Self Control: Request peer mute
+  socket.on(CALL_SOCKET_EVENTS.GCALL_MUTE_PEER, ({ callId, targetUserId } = {}, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    const call = myCall(callId);
+    if (!call) return reply({ ok: false, reason: "not-found" });
+
+    if (
+      !socketLimiter.consume(
+        userId,
+        CALL_SOCKET_EVENTS.GCALL_MUTE_PEER,
+        SOCKET_RATE_LIMITS.GCALL_MUTE_PEER,
+      )
+    ) {
+      return reply({ ok: false, reason: "rate_limited" });
+    }
+
+    // Only host can mute others
+    if (String(call.startedBy) !== String(userId)) {
+      return reply({ ok: false, reason: "unauthorized" });
+    }
+
+    const targetP = call.participants.get(String(targetUserId));
+    if (targetP) {
+      io.to(targetP.socketId).emit(CALL_SOCKET_EVENTS.GCALL_MUTE_PEER, {
+        callId,
+        requestedBy: userId,
+      });
+    }
+
+    reply({ ok: true });
   });
 
   socket.on("disconnect", () => {

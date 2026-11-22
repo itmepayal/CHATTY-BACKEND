@@ -12,6 +12,7 @@ import GroupCall from "../src/modules/calling/models/group-call.model.js";
 import User from "../src/modules/users/models/users.model.js";
 import Contact from "../src/modules/contacts/models/contact.model.js";
 import { socketLimiter } from "../src/infrastructure/socket/socket-rate-limit.js";
+import { resetTargetCooldowns } from "../src/modules/calling/signaling/callSignaling.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -362,7 +363,9 @@ async function runCallingTests() {
       assert(elsewhereEvent.callId === invite.callId, "Device 2 received answered-elsewhere");
 
       // Clean up call
+      const cleanEndedPromise1 = waitForEvent(alice.socket, "call:ended");
       await emitWithAck(alice.socket, "call:end", { callId: invite.callId });
+      await cleanEndedPromise1;
       charlieSocket2.disconnect();
     });
 
@@ -397,7 +400,9 @@ async function runCallingTests() {
       assert(acceptRes.ok === true, "Device 1 must be able to accept call despite device 2 disconnect");
 
       // Clean up call
+      const cleanEndedPromise2 = waitForEvent(alice.socket, "call:ended");
       await emitWithAck(alice.socket, "call:end", { callId: invite.callId });
+      await cleanEndedPromise2;
     });
 
     await testCase("[1-1 Calling] Accepted call participating socket disconnects -> call finishes immediately even if other socket remains (no zombie)", async () => {
@@ -971,6 +976,657 @@ async function runCallingTests() {
       // Alice leaves group call
       alice.socket.emit("gcall:leave", { callId: gCallRes.callId });
       await delay(200);
+    });
+
+    console.log("\n--- Category 10: Calling Security & Authorization Hardening ---");
+
+    await testCase("[Security] Non-participant cannot end, accept, or tamper with another call", async () => {
+      // Alice calls Bob
+      const incPromise = waitForEvent(bob.socket, "call:incoming");
+      const invite = await emitWithAck(alice.socket, "call:invite", {
+        to: String(bob.user._id),
+        type: "audio",
+      });
+      assert(invite.ok === true, "Invite ok");
+      await incPromise;
+
+      // Charlie (non-participant) tries to accept Alice & Bob's call
+      const charlieAccept = await emitWithAck(charlie.socket, "call:accept", {
+        callId: invite.callId,
+      });
+      assert(charlieAccept.ok === false, "Charlie cannot accept Alice's call");
+
+      // Charlie tries to end Alice & Bob's call
+      const charlieEnd = await emitWithAck(charlie.socket, "call:end", {
+        callId: invite.callId,
+      });
+      assert(charlieEnd.ok === false, "Charlie cannot end Alice's call");
+
+      // Charlie tries to cancel Alice & Bob's call
+      const charlieCancel = await emitWithAck(charlie.socket, "call:cancel", {
+        callId: invite.callId,
+      });
+      assert(charlieCancel.ok === false, "Charlie cannot cancel Alice's call");
+
+      // Clean up call properly by Alice cancelling
+      await emitWithAck(alice.socket, "call:cancel", { callId: invite.callId });
+      await delay(200);
+    });
+
+    await testCase("[Security] Non-participant cannot inject WebRTC signaling or ICE candidates", async () => {
+      // Alice calls Bob and Bob accepts
+      const incPromise = waitForEvent(bob.socket, "call:incoming");
+      const invite = await emitWithAck(alice.socket, "call:invite", {
+        to: String(bob.user._id),
+        type: "audio",
+      });
+      assert(invite.ok === true, "Invite ok");
+      await incPromise;
+
+      const accPromise = waitForEvent(alice.socket, "call:accepted");
+      await emitWithAck(bob.socket, "call:accept", { callId: invite.callId });
+      await accPromise;
+
+      // Charlie tries to inject SDP offer into Alice & Bob's call
+      let bobGotTamperedOffer = false;
+      const tamperedOfferListener = () => {
+        bobGotTamperedOffer = true;
+      };
+      bob.socket.on("call:offer", tamperedOfferListener);
+
+      charlie.socket.emit("call:offer", {
+        callId: invite.callId,
+        offer: {
+          type: "offer",
+          sdp: "v=0\r\no=- 123 456 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n",
+        },
+      });
+      await delay(200);
+      bob.socket.off("call:offer", tamperedOfferListener);
+      assert(!bobGotTamperedOffer, "Charlie's injected offer must NOT reach Bob");
+
+      // Charlie tries to inject ICE candidate into Alice & Bob's call
+      let bobGotTamperedIce = false;
+      const tamperedIceListener = () => {
+        bobGotTamperedIce = true;
+      };
+      bob.socket.on("call:ice", tamperedIceListener);
+
+      charlie.socket.emit("call:ice", {
+        callId: invite.callId,
+        candidate: {
+          candidate: "candidate:1 1 UDP 2130706431 192.168.1.1 50000 typ host",
+          sdpMid: "0",
+          sdpMLineIndex: 0,
+        },
+      });
+      await delay(200);
+      bob.socket.off("call:ice", tamperedIceListener);
+      assert(!bobGotTamperedIce, "Charlie's injected ICE candidate must NOT reach Bob");
+
+      // Charlie tries to hold Alice & Bob's call
+      const charlieHold = await emitWithAck(charlie.socket, "call:hold", {
+        callId: invite.callId,
+      });
+      assert(charlieHold.ok === false, "Charlie cannot hold Alice's call");
+
+      // Clean up call
+      const cleanEndedPromise2 = waitForEvent(alice.socket, "call:ended");
+      await emitWithAck(alice.socket, "call:end", { callId: invite.callId });
+      await cleanEndedPromise2;
+      await delay(200);
+    });
+
+    await testCase("[Security] Oversized SDP (>64KB) is rejected", async () => {
+      const incPromise = waitForEvent(bob.socket, "call:incoming");
+      const invite = await emitWithAck(alice.socket, "call:invite", {
+        to: String(bob.user._id),
+        type: "audio",
+      });
+      await incPromise;
+      await emitWithAck(bob.socket, "call:accept", { callId: invite.callId });
+
+      let bobGotOversizedOffer = false;
+      const offerListener = () => {
+        bobGotOversizedOffer = true;
+      };
+      bob.socket.on("call:offer", offerListener);
+
+      // Create >65KB SDP string
+      const hugeSdp = "v=0\r\n" + "a=candidate:".repeat(6000);
+      alice.socket.emit("call:offer", {
+        callId: invite.callId,
+        offer: { type: "offer", sdp: hugeSdp },
+      });
+      await delay(200);
+      bob.socket.off("call:offer", offerListener);
+      assert(!bobGotOversizedOffer, "Oversized SDP must be dropped by server validator");
+
+      await emitWithAck(alice.socket, "call:end", { callId: invite.callId });
+      await delay(200);
+    });
+
+    await testCase("[Security] Malformed or oversized ICE candidate is rejected", async () => {
+      const incPromise = waitForEvent(bob.socket, "call:incoming");
+      const invite = await emitWithAck(alice.socket, "call:invite", {
+        to: String(bob.user._id),
+        type: "audio",
+      });
+      await incPromise;
+      await emitWithAck(bob.socket, "call:accept", { callId: invite.callId });
+
+      let bobGotBadIce = false;
+      const iceListener = () => {
+        bobGotBadIce = true;
+      };
+      bob.socket.on("call:ice", iceListener);
+
+      // Oversized candidate (>4KB)
+      alice.socket.emit("call:ice", {
+        callId: invite.callId,
+        candidate: {
+          candidate: "candidate:".repeat(500),
+          sdpMid: "0",
+          sdpMLineIndex: 0,
+        },
+      });
+      // Malformed candidate (empty object)
+      alice.socket.emit("call:ice", {
+        callId: invite.callId,
+        candidate: {},
+      });
+      // Negative sdpMLineIndex
+      alice.socket.emit("call:ice", {
+        callId: invite.callId,
+        candidate: { candidate: "cand", sdpMid: "0", sdpMLineIndex: -5 },
+      });
+
+      await delay(200);
+      bob.socket.off("call:ice", iceListener);
+      assert(!bobGotBadIce, "Malformed/oversized ICE candidates must be dropped");
+
+      await emitWithAck(alice.socket, "call:end", { callId: invite.callId });
+      await delay(200);
+    });
+
+    await testCase("[Security & Privacy] Call History soft deletion isolation and IDOR protection", async () => {
+      // Create a test call record directly between Alice and Bob
+      const { createCallRecord } = await import("../src/modules/calling/services/call.service.js");
+      const testCall = await createCallRecord({
+        callerId: alice.user._id,
+        receiverId: bob.user._id,
+        type: "audio",
+        status: "completed",
+        duration: 45,
+      });
+
+      // Charlie tries to delete Alice & Bob's call record (IDOR)
+      const charlieDelRes = await request(app)
+        .delete(`/api/v1/calls/${testCall._id}`)
+        .set("Cookie", charlie.cookies);
+      assert(charlieDelRes.status === 404, `Charlie IDOR attempt should return 404, got ${charlieDelRes.status}`);
+
+      // Alice deletes the call record
+      const aliceDelRes = await request(app)
+        .delete(`/api/v1/calls/${testCall._id}`)
+        .set("Cookie", alice.cookies);
+      assert(aliceDelRes.status === 200, `Alice delete call record should return 200, got ${aliceDelRes.status}`);
+
+      // Alice fetches history -> call should NOT be in Alice's history
+      const aliceHistory = await request(app)
+        .get("/api/v1/calls/history")
+        .set("Cookie", alice.cookies);
+      const inAlice = aliceHistory.body.data?.some(c => String(c.id || c._id) === String(testCall._id));
+      assert(!inAlice, "Call record should be excluded from Alice's history");
+
+      // Bob fetches history -> call MUST STILL be in Bob's history (soft deletion isolation)
+      const bobHistory = await request(app)
+        .get("/api/v1/calls/history")
+        .set("Cookie", bob.cookies);
+      const inBob = bobHistory.body.data?.some(c => String(c.id || c._id) === String(testCall._id));
+      assert(inBob, "Call record MUST remain in Bob's history when Alice deleted it");
+    });
+
+    await testCase("[Security] ICE servers endpoint returns structured config without leaking secrets", async () => {
+      const res = await request(app)
+        .get("/api/v1/calls/ice-servers")
+        .set("Cookie", alice.cookies);
+
+      assert(res.status === 200, "ICE servers 200 OK");
+      assert(res.body.success === true, "Response success");
+      assert(Array.isArray(res.body.data?.iceServers), "iceServers is an array");
+      assert(typeof res.body.data?.turnOperational === "boolean", "turnOperational boolean present");
+      // Verify no secret leak
+      const rawString = JSON.stringify(res.body);
+      assert(!rawString.includes("TURN_SECRET"), "TURN_SECRET must not leak");
+    });
+
+    await testCase("[Security] Caller anti-spam cooldown prevents flooding same target", async () => {
+      resetTargetCooldowns();
+      for (let i = 0; i < 4; i++) {
+        socketLimiter.reset(String(alice.user._id));
+        const res = await emitWithAck(alice.socket, "call:invite", {
+          to: String(charlie.user._id),
+          type: "audio",
+        });
+        if (res.callId) {
+          await emitWithAck(alice.socket, "call:cancel", { callId: res.callId });
+        }
+        await delay(50);
+      }
+
+      // The 5th attempt within 20s must be throttled by target cooldown even if token bucket has tokens
+      socketLimiter.reset(String(alice.user._id));
+      const floodRes = await emitWithAck(alice.socket, "call:invite", {
+        to: String(charlie.user._id),
+        type: "audio",
+      });
+      assert(floodRes.ok === false && floodRes.reason === "rate_limited", "Anti-spam cooldown must reject 5th invite within 20s");
+      resetTargetCooldowns();
+    });
+
+    console.log("\n--- Category 11: Call Hold / Resume Synchronization & Authority ---");
+
+    let syncCallId = null;
+
+    await testCase("[Hold / Resume] Scenario A: User A (caller) puts call on HOLD -> BOTH participants receive call:held and call:state", async () => {
+      // Step 1: Alice calls Bob, Bob accepts
+      const bobIncomingPromise = waitForEvent(bob.socket, "call:incoming");
+      const inviteRes = await emitWithAck(alice.socket, "call:invite", {
+        to: String(bob.user._id),
+        type: "audio",
+      });
+      assert(inviteRes.ok === true && inviteRes.callId, "Alice invite succeeds");
+      syncCallId = inviteRes.callId;
+
+      await bobIncomingPromise;
+      const acceptRes = await emitWithAck(bob.socket, "call:accept", { callId: syncCallId });
+      assert(acceptRes.ok === true, "Bob accept succeeds");
+      await delay(100);
+
+      // Step 2: Prepare listeners for BOTH participants
+      const aliceHeldPromise = waitForEvent(alice.socket, "call:held");
+      const bobHeldPromise = waitForEvent(bob.socket, "call:held");
+      const aliceStatePromise = waitForEvent(alice.socket, "call:state");
+      const bobStatePromise = waitForEvent(bob.socket, "call:state");
+
+      // Step 3: Alice holds the call
+      const holdRes = await emitWithAck(alice.socket, "call:hold", { callId: syncCallId });
+      assert(holdRes.ok === true, "Alice hold request ack is ok");
+      assert(holdRes.isHeld === true, "Ack indicates isHeld=true");
+      assert(String(holdRes.heldBy) === String(alice.user._id), "Ack indicates heldBy Alice");
+      assert(holdRes.state === "held", "Ack state is held");
+      assert(holdRes.stateVersion >= 2, "Ack stateVersion incremented");
+
+      // Step 4: Verify BOTH participants received synchronous events
+      const [aliceHeld, bobHeld, aliceState, bobState] = await Promise.all([
+        aliceHeldPromise,
+        bobHeldPromise,
+        aliceStatePromise,
+        bobStatePromise,
+      ]);
+
+      assert(aliceHeld.callId === syncCallId, "Alice received call:held");
+      assert(String(aliceHeld.heldBy) === String(alice.user._id), "Alice held payload indicates Alice");
+      assert(aliceHeld.isHeld === true, "Alice held payload isHeld=true");
+
+      assert(bobHeld.callId === syncCallId, "Bob received call:held");
+      assert(String(bobHeld.heldBy) === String(alice.user._id), "Bob held payload indicates Alice");
+      assert(bobHeld.isHeld === true, "Bob held payload isHeld=true");
+
+      assert(aliceState.state === "held" && aliceState.isHeld === true, "Alice call:state indicates held");
+      assert(bobState.state === "held" && bobState.isHeld === true, "Bob call:state indicates held");
+      assert(String(bobState.heldBy) === String(alice.user._id), "Bob call:state indicates heldBy Alice");
+    });
+
+    await testCase("[Hold / Resume] Scenario A: User A (caller) RESUMES call -> BOTH participants receive call:resumed and call:state", async () => {
+      // Step 1: Prepare listeners for BOTH participants
+      const aliceResumedPromise = waitForEvent(alice.socket, "call:resumed");
+      const bobResumedPromise = waitForEvent(bob.socket, "call:resumed");
+      const aliceStatePromise = waitForEvent(alice.socket, "call:state");
+      const bobStatePromise = waitForEvent(bob.socket, "call:state");
+
+      // Step 2: Alice resumes call
+      const resumeRes = await emitWithAck(alice.socket, "call:resume", { callId: syncCallId });
+      assert(resumeRes.ok === true, "Alice resume request ack is ok");
+      assert(resumeRes.isHeld === false, "Ack indicates isHeld=false");
+      assert(resumeRes.heldBy === null, "Ack indicates heldBy is null");
+      assert(resumeRes.state === "active", "Ack state is active");
+      assert(resumeRes.stateVersion >= 3, "Ack stateVersion incremented");
+
+      // Step 3: Verify BOTH participants received synchronous resume events
+      const [aliceResumed, bobResumed, aliceState, bobState] = await Promise.all([
+        aliceResumedPromise,
+        bobResumedPromise,
+        aliceStatePromise,
+        bobStatePromise,
+      ]);
+
+      assert(aliceResumed.callId === syncCallId, "Alice received call:resumed");
+      assert(String(aliceResumed.resumedBy) === String(alice.user._id), "Alice resumed payload indicates Alice");
+      assert(aliceResumed.isHeld === false, "Alice resumed payload isHeld=false");
+
+      assert(bobResumed.callId === syncCallId, "Bob received call:resumed");
+      assert(String(bobResumed.resumedBy) === String(alice.user._id), "Bob resumed payload indicates Alice");
+      assert(bobResumed.isHeld === false, "Bob resumed payload isHeld=false");
+
+      assert(aliceState.state === "active" && aliceState.isHeld === false, "Alice call:state indicates active");
+      assert(bobState.state === "active" && bobState.isHeld === false, "Bob call:state indicates active");
+      assert(bobState.heldBy === null, "Bob call:state indicates heldBy is null");
+    });
+
+    await testCase("[Hold / Resume] Scenario C: User B (callee) puts call on HOLD and RESUMES -> symmetric synchronization", async () => {
+      // Bob holds
+      const aliceHeldPromise = waitForEvent(alice.socket, "call:held");
+      const bobHeldPromise = waitForEvent(bob.socket, "call:held");
+
+      const bobHoldRes = await emitWithAck(bob.socket, "call:hold", { callId: syncCallId });
+      assert(bobHoldRes.ok === true && bobHoldRes.isHeld === true, "Bob hold succeeds");
+      assert(String(bobHoldRes.heldBy) === String(bob.user._id), "Bob hold ack heldBy Bob");
+
+      const [aliceHeld, bobHeld] = await Promise.all([aliceHeldPromise, bobHeldPromise]);
+      assert(String(aliceHeld.heldBy) === String(bob.user._id), "Alice received Bob's hold event");
+      assert(String(bobHeld.heldBy) === String(bob.user._id), "Bob received own hold event");
+
+      // Bob resumes
+      const aliceResumePromise = waitForEvent(alice.socket, "call:resumed");
+      const bobResumePromise = waitForEvent(bob.socket, "call:resumed");
+
+      const bobResumeRes = await emitWithAck(bob.socket, "call:resume", { callId: syncCallId });
+      assert(bobResumeRes.ok === true && bobResumeRes.isHeld === false, "Bob resume succeeds");
+
+      const [aliceResumed, bobResumed] = await Promise.all([aliceResumePromise, bobResumePromise]);
+      assert(String(aliceResumed.resumedBy) === String(bob.user._id), "Alice received Bob's resume event");
+      assert(String(bobResumed.resumedBy) === String(bob.user._id), "Bob received own resume event");
+    });
+
+    await testCase("[Hold / Resume] Idempotency: Duplicate hold/resume requests return idempotent success without state corruption", async () => {
+      // Alice holds
+      await emitWithAck(alice.socket, "call:hold", { callId: syncCallId });
+
+      // Duplicate hold request
+      const dupHoldRes = await emitWithAck(alice.socket, "call:hold", { callId: syncCallId });
+      assert(dupHoldRes.ok === true, "Duplicate hold returns ok=true");
+      assert(dupHoldRes.reason === "already-held", "Reason is already-held");
+      assert(dupHoldRes.isHeld === true, "isHeld remains true");
+
+      // Alice resumes
+      await emitWithAck(alice.socket, "call:resume", { callId: syncCallId });
+
+      // Duplicate resume request
+      const dupResumeRes = await emitWithAck(alice.socket, "call:resume", { callId: syncCallId });
+      assert(dupResumeRes.ok === true, "Duplicate resume returns ok=true");
+      assert(dupResumeRes.reason === "already-active", "Reason is already-active");
+      assert(dupResumeRes.isHeld === false, "isHeld remains false");
+    });
+
+    await testCase("[Hold / Resume] Security: Non-participant (David) cannot hold or resume Alice & Bob's call", async () => {
+      const unauthorizedHold = await emitWithAck(david.socket, "call:hold", { callId: syncCallId });
+      assert(unauthorizedHold.ok === false, "David hold rejected");
+      assert(unauthorizedHold.reason === "not-participant", "Reason is not-participant");
+
+      const unauthorizedResume = await emitWithAck(david.socket, "call:resume", { callId: syncCallId });
+      assert(unauthorizedResume.ok === false, "David resume rejected");
+      assert(unauthorizedResume.reason === "not-participant", "Reason is not-participant");
+    });
+
+    await testCase("[Hold / Resume] Reconnection: call:get-state returns authoritative state and durations", async () => {
+      // Put call on hold
+      await emitWithAck(alice.socket, "call:hold", { callId: syncCallId });
+      await delay(100);
+
+      // Bob queries state (simulating reconnect)
+      const getStateRes1 = await emitWithAck(bob.socket, "call:get-state", { callId: syncCallId });
+      assert(getStateRes1.ok === true, "call:get-state succeeds");
+      assert(getStateRes1.callState.isHeld === true, "Authoritative isHeld=true");
+      assert(String(getStateRes1.callState.heldBy) === String(alice.user._id), "Authoritative heldBy Alice");
+      assert(getStateRes1.callState.state === "held", "Authoritative state=held");
+      assert(typeof getStateRes1.callState.activeDurationSec === "number", "activeDurationSec provided");
+      assert(typeof getStateRes1.callState.totalHoldDurationSec === "number", "totalHoldDurationSec provided");
+
+      // Resume call
+      await emitWithAck(alice.socket, "call:resume", { callId: syncCallId });
+      await delay(100);
+
+      // Bob queries state again
+      const getStateRes2 = await emitWithAck(bob.socket, "call:get-state", { callId: syncCallId });
+      assert(getStateRes2.ok === true, "call:get-state succeeds after resume");
+      assert(getStateRes2.callState.isHeld === false, "Authoritative isHeld=false");
+      assert(getStateRes2.callState.heldBy === null, "Authoritative heldBy=null");
+      assert(getStateRes2.callState.state === "active", "Authoritative state=active");
+    });
+
+    await testCase("[Hold / Resume] Database persistence: Call record preserves activeDuration, holdDuration, and holdCycles", async () => {
+      // End the call
+      await emitWithAck(alice.socket, "call:end", { callId: syncCallId });
+      await delay(200);
+
+      // Fetch from DB
+      const Call = (await import("../src/modules/calling/models/call.model.js")).default;
+      const savedCall = await Call.findOne({ callId: syncCallId }).lean();
+      assert(savedCall, "Call record found in DB");
+      assert(savedCall.status === "completed", "Status is completed");
+      assert(typeof savedCall.activeDuration === "number", "activeDuration persisted");
+      assert(typeof savedCall.holdDuration === "number", "holdDuration persisted");
+      assert(typeof savedCall.holdCycles === "number" && savedCall.holdCycles >= 1, "holdCycles persisted >= 1");
+
+      // Verify cannot hold/resume already ended call
+      const lateHold = await emitWithAck(alice.socket, "call:hold", { callId: syncCallId });
+      assert(lateHold.ok === false, "Cannot hold ended call");
+      assert(
+        lateHold.reason === "already-ended" ||
+        lateHold.reason === "invalid-state" ||
+        lateHold.reason === "not-found",
+        "Ended call hold error reason"
+      );
+
+      const lateResume = await emitWithAck(alice.socket, "call:resume", { callId: syncCallId });
+      assert(lateResume.ok === false, "Cannot resume ended call");
+      assert(
+        lateResume.reason === "already-ended" ||
+        lateResume.reason === "invalid-state" ||
+        lateResume.reason === "not-found",
+        "Ended call resume error reason"
+      );
+    });
+
+    console.log("\n--- Category 12: Hold Owner Authorization & Resume Permission Control ---");
+
+    let authCallId = null;
+
+    await testCase("[Hold Authorization] Setup: Alice calls Bob and connects active call", async () => {
+      resetTargetCooldowns();
+      const bobIncomingPromise = waitForEvent(bob.socket, "call:incoming");
+      const inviteRes = await emitWithAck(alice.socket, "call:invite", {
+        to: String(bob.user._id),
+        type: "audio",
+      });
+      assert(inviteRes.ok === true && inviteRes.callId, "Alice invite succeeds");
+      authCallId = inviteRes.callId;
+
+      await bobIncomingPromise;
+      const acceptRes = await emitWithAck(bob.socket, "call:accept", { callId: authCallId });
+      assert(acceptRes.ok === true, "Bob accept succeeds");
+      await delay(100);
+    });
+
+    await testCase("[Hold Authorization] User A holds call -> holdOwnerId is set to Alice and synchronized to both participants", async () => {
+      const aliceHeldPromise = waitForEvent(alice.socket, "call:held");
+      const bobHeldPromise = waitForEvent(bob.socket, "call:held");
+
+      const holdRes = await emitWithAck(alice.socket, "call:hold", { callId: authCallId });
+      assert(holdRes.ok === true, "Alice hold succeeds");
+      assert(holdRes.isHeld === true, "Ack indicates isHeld=true");
+      assert(String(holdRes.holdOwnerId) === String(alice.user._id), "Ack holdOwnerId is Alice");
+      assert(String(holdRes.heldBy) === String(alice.user._id), "Ack heldBy is Alice");
+
+      const [aliceHeld, bobHeld] = await Promise.all([aliceHeldPromise, bobHeldPromise]);
+      assert(String(aliceHeld.holdOwnerId) === String(alice.user._id), "Alice event holdOwnerId is Alice");
+      assert(String(bobHeld.holdOwnerId) === String(alice.user._id), "Bob event holdOwnerId is Alice");
+      assert(bobHeld.isHeld === true, "Bob event isHeld is true");
+    });
+
+    await testCase("[Hold Authorization] User B cannot resume User A's hold -> rejected with HOLD_OWNER_ONLY and message", async () => {
+      const resumeRes = await emitWithAck(bob.socket, "call:resume", { callId: authCallId });
+      assert(resumeRes.ok === false, "User B resume rejected");
+      assert(resumeRes.reason === "HOLD_OWNER_ONLY", "Reason is HOLD_OWNER_ONLY");
+      assert(
+        resumeRes.message === "Only the participant who placed this call on hold can resume it.",
+        "Error message matches required specification"
+      );
+      assert(String(resumeRes.holdOwnerId) === String(alice.user._id), "Rejection specifies current holdOwnerId");
+    });
+
+    await testCase("[Hold Authorization] Unauthorized resume attempt leaves call state unchanged", async () => {
+      let resumedEmitted = false;
+      const onResumed = () => { resumedEmitted = true; };
+      alice.socket.on("call:resumed", onResumed);
+      bob.socket.on("call:resumed", onResumed);
+
+      const resumeRes = await emitWithAck(bob.socket, "call:resume", { callId: authCallId });
+      assert(resumeRes.ok === false, "Bob resume fails");
+      await delay(150);
+
+      alice.socket.off("call:resumed", onResumed);
+      bob.socket.off("call:resumed", onResumed);
+
+      assert(resumedEmitted === false, "call:resumed was NOT emitted on unauthorized attempt");
+
+      // Verify state still held
+      const stateRes = await emitWithAck(bob.socket, "call:get-state", { callId: authCallId });
+      assert(stateRes.ok === true, "call:get-state succeeds");
+      assert(stateRes.callState.isHeld === true, "Call remains held");
+      assert(String(stateRes.callState.holdOwnerId) === String(alice.user._id), "holdOwnerId still Alice");
+    });
+
+    await testCase("[Hold Authorization] Backend ignores forged holdOwnerId in client payload -> strictly enforces socket user ID", async () => {
+      // Bob attempts to spoof by passing holdOwnerId: bob._id
+      const spoofedResume = await emitWithAck(bob.socket, "call:resume", {
+        callId: authCallId,
+        holdOwnerId: String(bob.user._id),
+        heldBy: String(bob.user._id),
+      });
+      assert(spoofedResume.ok === false, "Spoofed resume rejected");
+      assert(spoofedResume.reason === "HOLD_OWNER_ONLY", "Reason remains HOLD_OWNER_ONLY");
+    });
+
+    await testCase("[Hold Authorization] Non-participant (David) cannot resume call", async () => {
+      const davidResume = await emitWithAck(david.socket, "call:resume", { callId: authCallId });
+      assert(davidResume.ok === false, "David resume rejected");
+      assert(davidResume.reason === "not-participant", "Reason is not-participant");
+    });
+
+    await testCase("[Hold Authorization] Authorized Hold Owner (User A) successfully resumes call", async () => {
+      const aliceResumedPromise = waitForEvent(alice.socket, "call:resumed");
+      const bobResumedPromise = waitForEvent(bob.socket, "call:resumed");
+
+      const resumeRes = await emitWithAck(alice.socket, "call:resume", { callId: authCallId });
+      assert(resumeRes.ok === true, "Alice resume succeeds");
+      assert(resumeRes.state === "active", "State is active");
+      assert(resumeRes.isHeld === false, "isHeld is false");
+      assert(resumeRes.holdOwnerId === null, "holdOwnerId cleared to null");
+
+      const [aliceResumed, bobResumed] = await Promise.all([aliceResumedPromise, bobResumedPromise]);
+      assert(aliceResumed.isHeld === false, "Alice event isHeld=false");
+      assert(bobResumed.isHeld === false, "Bob event isHeld=false");
+      assert(String(aliceResumed.resumedBy) === String(alice.user._id), "resumedBy is Alice");
+    });
+
+    await testCase("[Hold Authorization] Reverse scenario: User B holds call -> User A cannot resume (HOLD_OWNER_ONLY)", async () => {
+      const holdRes = await emitWithAck(bob.socket, "call:hold", { callId: authCallId });
+      assert(holdRes.ok === true, "Bob hold succeeds");
+      assert(String(holdRes.holdOwnerId) === String(bob.user._id), "holdOwnerId is Bob");
+
+      // Alice tries to resume -> rejected
+      const aliceResume = await emitWithAck(alice.socket, "call:resume", { callId: authCallId });
+      assert(aliceResume.ok === false, "Alice resume rejected");
+      assert(aliceResume.reason === "HOLD_OWNER_ONLY", "Reason is HOLD_OWNER_ONLY");
+      assert(String(aliceResume.holdOwnerId) === String(bob.user._id), "holdOwnerId is Bob");
+    });
+
+    await testCase("[Hold Authorization] Reverse scenario: User B successfully resumes their own hold", async () => {
+      const resumeRes = await emitWithAck(bob.socket, "call:resume", { callId: authCallId });
+      assert(resumeRes.ok === true, "Bob resume succeeds");
+      assert(resumeRes.state === "active", "State is active");
+      assert(resumeRes.holdOwnerId === null, "holdOwnerId cleared");
+    });
+
+    await testCase("[Hold Authorization] Reconnection / State Query: authoritative holdOwnerId returned in call:get-state", async () => {
+      // Bob puts on hold
+      await emitWithAck(bob.socket, "call:hold", { callId: authCallId });
+      await delay(100);
+
+      // Alice queries state
+      const stateRes = await emitWithAck(alice.socket, "call:get-state", { callId: authCallId });
+      assert(stateRes.ok === true, "get-state succeeds");
+      assert(stateRes.callState.isHeld === true, "isHeld is true");
+      assert(String(stateRes.callState.holdOwnerId) === String(bob.user._id), "holdOwnerId is Bob");
+      assert(
+        typeof stateRes.callState.holdStartedAt === "string" ||
+        typeof stateRes.callState.holdStartedAt === "number",
+        "holdStartedAt timestamp/string provided"
+      );
+      assert(!isNaN(new Date(stateRes.callState.holdStartedAt).getTime()), "holdStartedAt is valid date/timestamp");
+      assert(typeof stateRes.callState.holdStateVersion === "number", "holdStateVersion provided");
+
+      // Bob resumes
+      await emitWithAck(bob.socket, "call:resume", { callId: authCallId });
+      await delay(100);
+    });
+
+    await testCase("[Hold Authorization] Multi-Device: Device 2 of User A can resume User A's hold", async () => {
+      // Connect second socket for Alice
+      const aliceDevice2 = ioClient(`http://127.0.0.1:${port}`, {
+        auth: { token: alice.accessToken },
+        extraHeaders: { Cookie: alice.cookies },
+        transports: ["websocket"],
+        reconnection: false,
+      });
+
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timeout connecting aliceDevice2")), 4000);
+        aliceDevice2.on("connect", () => { clearTimeout(timer); resolve(); });
+        aliceDevice2.on("connect_error", (err) => { clearTimeout(timer); reject(err); });
+      });
+
+      try {
+        // Alice Device 1 holds call
+        const holdRes = await emitWithAck(alice.socket, "call:hold", { callId: authCallId });
+        assert(holdRes.ok === true, "Alice Device 1 hold succeeds");
+        assert(String(holdRes.holdOwnerId) === String(alice.user._id), "holdOwnerId is Alice");
+
+        // Alice Device 2 resumes call
+        const resumeRes = await emitWithAck(aliceDevice2, "call:resume", { callId: authCallId });
+        assert(resumeRes.ok === true, "Alice Device 2 resume succeeds because user identity matches hold owner");
+        assert(resumeRes.state === "active", "State transitioned to active");
+        assert(resumeRes.holdOwnerId === null, "holdOwnerId cleared");
+      } finally {
+        aliceDevice2.disconnect();
+      }
+    });
+
+    await testCase("[Hold Authorization] Call termination clears hold ownership and persists metrics to DB", async () => {
+      // Alice puts call on hold again before ending
+      await emitWithAck(alice.socket, "call:hold", { callId: authCallId });
+      await delay(100);
+
+      // End call
+      const endRes = await emitWithAck(alice.socket, "call:end", { callId: authCallId });
+      assert(endRes.ok === true, "Alice end succeeds");
+      await delay(200);
+
+      // Verify DB record
+      const Call = (await import("../src/modules/calling/models/call.model.js")).default;
+      const callDoc = await Call.findOne({ callId: authCallId }).lean();
+      assert(callDoc, "Call found in DB");
+      assert(callDoc.status === "completed", "Status is completed");
+      assert(callDoc.holdCycles >= 3, "holdCycles recorded >= 3");
+      assert(typeof callDoc.holdDuration === "number", "holdDuration recorded");
+      assert(typeof callDoc.activeDuration === "number", "activeDuration recorded");
+
+      // Verify cannot resume terminated call
+      const lateResume = await emitWithAck(alice.socket, "call:resume", { callId: authCallId });
+      assert(lateResume.ok === false, "Cannot resume terminated call");
     });
 
     console.log("\n==================================================");

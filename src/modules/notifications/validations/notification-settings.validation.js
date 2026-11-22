@@ -1,14 +1,25 @@
 import { z } from "zod";
 
 const ALLOWED_KEYS = new Set([
+  "masterEnabled",
   "soundEnabled",
   "soundVolume",
   "desktopNotifications",
   "showPreview",
+  "previewPrivacy",
+  "inAppNotifications",
+  "pushNotifications",
+  "vibrationEnabled",
+  "ringtone",
 ]);
 
 export const updateNotificationSettingsSchema = z
   .object({
+    masterEnabled: z
+      .boolean({
+        invalid_type_error: "masterEnabled must be a boolean",
+      })
+      .optional(),
     soundEnabled: z
       .boolean({
         invalid_type_error: "soundEnabled must be a boolean",
@@ -32,6 +43,27 @@ export const updateNotificationSettingsSchema = z
         invalid_type_error: "showPreview must be a boolean",
       })
       .optional(),
+    previewPrivacy: z
+      .enum(["full", "sender_only", "hidden"], {
+        invalid_type_error: "previewPrivacy must be 'full', 'sender_only', or 'hidden'",
+      })
+      .optional(),
+    inAppNotifications: z
+      .boolean({
+        invalid_type_error: "inAppNotifications must be a boolean",
+      })
+      .optional(),
+    pushNotifications: z
+      .boolean({
+        invalid_type_error: "pushNotifications must be a boolean",
+      })
+      .optional(),
+    vibrationEnabled: z
+      .boolean({
+        invalid_type_error: "vibrationEnabled must be a boolean",
+      })
+      .optional(),
+    ringtone: z.string().optional(),
   })
   .strict("Unknown field(s) provided");
 
@@ -67,6 +99,7 @@ export const validateNotificationUpdateBody = (body) => {
 
 export const updateNotificationPreferencesSchema = z
   .object({
+    masterEnabled: z.boolean().optional(),
     messagesPersonal: z.boolean().optional(),
     messagesGroup: z.boolean().optional(),
     messageReplies: z.boolean().optional(),
@@ -81,6 +114,10 @@ export const updateNotificationPreferencesSchema = z
     contactAcceptance: z.boolean().optional(),
     groupInvitations: z.boolean().optional(),
     groupMembershipEvents: z.boolean().optional(),
+    storiesReplies: z.boolean().optional(),
+    storiesReactions: z.boolean().optional(),
+    storiesMentions: z.boolean().optional(),
+    storiesFavorites: z.boolean().optional(),
     securityNewDevice: z.boolean().optional(),
     securityDeviceLinking: z.boolean().optional(),
     securityCredentialChanges: z.boolean().optional(),
@@ -88,6 +125,11 @@ export const updateNotificationPreferencesSchema = z
     systemAnnouncements: z.boolean().optional(),
     systemMaintenance: z.boolean().optional(),
     systemAlerts: z.boolean().optional(),
+    quietHoursEnabled: z.boolean().optional(),
+    quietHoursStart: z.string().optional(),
+    quietHoursEnd: z.string().optional(),
+    quietHoursDays: z.array(z.string()).optional(),
+    quietHoursTimezone: z.string().optional(),
     dndEnabled: z.boolean().optional(),
     dndUntil: z.string().datetime().nullable().optional(),
   })

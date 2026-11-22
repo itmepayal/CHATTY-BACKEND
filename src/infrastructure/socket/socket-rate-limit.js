@@ -1,9 +1,16 @@
 class SocketRateLimiter {
   constructor() {
     this.buckets = new Map();
+    this.resetHooks = new Set();
     this.cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000);
     if (this.cleanupTimer.unref) {
       this.cleanupTimer.unref();
+    }
+  }
+
+  onReset(fn) {
+    if (typeof fn === "function") {
+      this.resetHooks.add(fn);
     }
   }
 
@@ -49,6 +56,11 @@ class SocketRateLimiter {
 
   resetAll() {
     this.buckets.clear();
+    for (const hook of this.resetHooks) {
+      try {
+        hook();
+      } catch {}
+    }
   }
 
   cleanup() {
