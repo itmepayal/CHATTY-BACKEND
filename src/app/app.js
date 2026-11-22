@@ -47,6 +47,8 @@ const publicDir = fs.existsSync(path.resolve(process.cwd(), "server/public"))
 
 app.use("/assets", express.static(path.join(publicDir, "assets")));
 app.use("/public", express.static(publicDir));
+app.use("/upload", express.static(path.join(publicDir, "upload")));
+app.use("/uploads", express.static(path.join(publicDir, "upload")));
 
 app.use("/api/v1", router);
 app.use("/api", router);

@@ -217,6 +217,18 @@ const UserSchema = new mongoose.Schema(
       index: true,
     },
 
+    featuredBadge: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Badge",
+      default: null,
+    },
+
+    badgeVisibility: {
+      type: String,
+      enum: ["public", "contacts", "private"],
+      default: "public",
+    },
+
     status: {
       type: String,
       enum: ["active", "suspended", "deactivated"],

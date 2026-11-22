@@ -16,6 +16,12 @@ const GiftSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+    customId: {
+      type: String,
+      trim: true,
+      index: true,
+      sparse: true,
+    },
     description: {
       type: String,
       default: "",
@@ -131,6 +137,7 @@ const GiftSchema = new mongoose.Schema(
   },
 );
 
+GiftSchema.index({ slug: 1, isActive: 1 });
 GiftSchema.index({ category: 1, isActive: 1, displayOrder: 1 });
 GiftSchema.index({ name: "text", description: "text", tags: "text" });
 

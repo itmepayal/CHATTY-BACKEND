@@ -1,6 +1,6 @@
 import Gift from "../models/gift.model.js";
 import Favorite from "../models/favorite.model.js";
-import { GIFT_CATEGORIES } from "../data/gifts-catalog.data.js";
+import { GIFTS, GIFT_CATEGORIES } from "../data/gifts-catalog.data.js";
 import ApiError from "../../../shared/errors/api-error.js";
 import { StatusCodes } from "http-status-codes";
 
@@ -9,7 +9,7 @@ import { StatusCodes } from "http-status-codes";
  */
 export const getGiftCatalog = async (query = {}, currentUserId = null) => {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 24));
+  const limit = Math.min(1000, Math.max(1, parseInt(query.limit, 10) || 100));
   const skip = (page - 1) * limit;
   const userId = currentUserId || query.userId;
 
@@ -187,18 +187,90 @@ export const getFeaturedGifts = async () => {
 /**
  * Retrieves a single gift by ID or slug.
  */
+/**
+ * Authoritatively resolves a Gift document by ObjectId, slug, customId (e.g. gift_love_01), or catalog definition.
+ */
+export const findGiftByIdOrSlug = async (idOrSlug) => {
+  if (!idOrSlug) return null;
+  const identifier = String(idOrSlug).trim();
+
+  // 1. Valid 24-character hexadecimal MongoDB ObjectId
+  if (/^[0-9a-fA-F]{24}$/.test(identifier)) {
+    const doc = await Gift.findById(identifier);
+    if (doc) return doc;
+  }
+
+  // 2. Query MongoDB by slug, customId, or customId lowercase
+  const doc = await Gift.findOne({
+    $or: [
+      { slug: identifier.toLowerCase() },
+      { customId: identifier },
+      { customId: identifier.toLowerCase() },
+    ],
+  });
+  if (doc) return doc;
+
+  // 3. Fallback: match against in-memory 600-item GIFTS catalog
+  const catalogItem = GIFTS.find(
+    (item) =>
+      item.id === identifier ||
+      item.slug === identifier.toLowerCase() ||
+      item.name?.toLowerCase() === identifier.toLowerCase(),
+  );
+
+  if (catalogItem) {
+    let found = await Gift.findOne({
+      $or: [
+        { slug: catalogItem.slug },
+        { customId: catalogItem.id },
+        { name: catalogItem.name },
+      ],
+    });
+    if (!found) {
+      try {
+        found = await Gift.create({
+          name: catalogItem.name,
+          slug: catalogItem.slug,
+          customId: catalogItem.id,
+          description: catalogItem.description || "",
+          category: catalogItem.category,
+          subcategory: catalogItem.subcategory || "",
+          tags: catalogItem.tags || [],
+          coinPrice: catalogItem.coinPrice || 25,
+          icon: catalogItem.icon || "🎁",
+          image: catalogItem.image,
+          thumbnail: catalogItem.thumbnail || catalogItem.image,
+          animationAsset: catalogItem.animationAsset || "",
+          assetType: catalogItem.assetType || "svg",
+          isAnimated: Boolean(catalogItem.isAnimated),
+          isPremium: Boolean(catalogItem.isPremium),
+          isPopular: Boolean(catalogItem.isPopular),
+          isTrending: Boolean(catalogItem.isTrending),
+          isLimitedEdition: Boolean(catalogItem.isLimitedEdition),
+          isNew: Boolean(catalogItem.isNew),
+          isActive: catalogItem.isActive !== false,
+          displayOrder: catalogItem.displayOrder || 0,
+          rarity: catalogItem.rarity || "common",
+          gradient: catalogItem.gradient || [],
+          badge: catalogItem.badge || "",
+          color: catalogItem.color || "",
+        });
+      } catch (_e) {
+        found = await Gift.findOne({ slug: catalogItem.slug });
+      }
+    }
+    return found;
+  }
+
+  return null;
+};
+
 export const getGiftByIdOrSlug = async (idOrSlug) => {
-  let gift = null;
-  if (/^[0-9a-fA-F]{24}$/.test(idOrSlug)) {
-    gift = await Gift.findById(idOrSlug).lean();
-  }
-  if (!gift) {
-    gift = await Gift.findOne({ slug: idOrSlug.toLowerCase() }).lean();
-  }
+  const gift = await findGiftByIdOrSlug(idOrSlug);
   if (!gift) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Gift not found in catalog.");
   }
-  return formatGift(gift);
+  return formatGift(gift.toObject ? gift.toObject() : gift);
 };
 
 /**
@@ -233,10 +305,7 @@ export const createGift = async (data) => {
  * Admin: Updates an existing gift.
  */
 export const updateGift = async (idOrSlug, updates) => {
-  const query = /^[0-9a-fA-F]{24}$/.test(idOrSlug)
-    ? { _id: idOrSlug }
-    : { slug: idOrSlug.toLowerCase() };
-  const gift = await Gift.findOne(query);
+  const gift = await findGiftByIdOrSlug(idOrSlug);
   if (!gift) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Gift not found.");
   }
@@ -254,10 +323,7 @@ export const updateGift = async (idOrSlug, updates) => {
  * Admin: Toggles or deactivates a gift.
  */
 export const deleteGift = async (idOrSlug) => {
-  const query = /^[0-9a-fA-F]{24}$/.test(idOrSlug)
-    ? { _id: idOrSlug }
-    : { slug: idOrSlug.toLowerCase() };
-  const gift = await Gift.findOne(query);
+  const gift = await findGiftByIdOrSlug(idOrSlug);
   if (!gift) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Gift not found.");
   }
@@ -270,10 +336,7 @@ export const deleteGift = async (idOrSlug) => {
  * Toggles a gift as favorite for a user.
  */
 export const toggleFavorite = async (userId, idOrSlug) => {
-  const query = /^[0-9a-fA-F]{24}$/.test(idOrSlug)
-    ? { _id: idOrSlug }
-    : { slug: idOrSlug.toLowerCase() };
-  const gift = await Gift.findOne(query);
+  const gift = await findGiftByIdOrSlug(idOrSlug);
   if (!gift) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Gift not found.");
   }
@@ -331,6 +394,7 @@ export const formatGift = (doc) => {
   return {
     id: String(doc._id || doc.id),
     _id: String(doc._id || doc.id),
+    customId: doc.customId || doc.id || "",
     name: doc.name,
     slug: doc.slug,
     description: doc.description || "",
@@ -358,4 +422,64 @@ export const formatGift = (doc) => {
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
+};
+
+/**
+ * Ensures all 600 default gifts exist in MongoDB idempotently on server startup.
+ */
+export const ensureDefaultGiftsSeeded = async () => {
+  try {
+    const count = await Gift.countDocuments();
+    if (count >= GIFTS.length) {
+      return { success: true, count, seeded: false };
+    }
+
+    const bulkOps = GIFTS.map((item) => ({
+      updateOne: {
+        filter: { slug: item.slug },
+        update: {
+          $set: {
+            name: item.name,
+            customId: item.id || item.slug,
+            description: item.description,
+            category: item.category,
+            subcategory: item.subcategory,
+            tags: item.tags,
+            icon: item.icon,
+            image: item.image,
+            thumbnail: item.thumbnail,
+            animationAsset: item.animationAsset,
+            assetType: item.assetType,
+            isAnimated: item.isAnimated,
+            isPremium: item.isPremium,
+            isPopular: item.isPopular,
+            isTrending: item.isTrending,
+            isLimitedEdition: item.isLimitedEdition,
+            isNew: item.isNew,
+            isActive: item.isActive !== false,
+            displayOrder: item.displayOrder,
+            rarity: item.rarity,
+            gradient: item.gradient,
+            badge: item.badge,
+            color: item.color,
+          },
+          $setOnInsert: {
+            coinPrice: item.coinPrice,
+          },
+        },
+        upsert: true,
+      },
+    }));
+
+    if (bulkOps.length > 0) {
+      await Gift.bulkWrite(bulkOps, { ordered: false });
+    }
+
+    const totalInDb = await Gift.countDocuments();
+    console.log(`[GiftCatalog] Verified gifts in database: ${totalInDb}/${GIFTS.length}`);
+    return { success: true, count: totalInDb, seeded: true };
+  } catch (err) {
+    console.error("[GiftCatalog] Seed error:", err?.message || err);
+    return { success: false, error: err?.message };
+  }
 };

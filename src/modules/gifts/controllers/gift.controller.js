@@ -147,6 +147,7 @@ export const sendGift = async (req, res, next) => {
       recipientId,
       groupId,
       giftIdOrSlug: giftId || giftSlug,
+      giftSlug,
       personalMessage: personalMessage || note || "",
       idempotencyKey,
       chatType,

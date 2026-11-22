@@ -22,6 +22,8 @@ import {
   sanitizeAndValidateEnvelopes,
 } from "../../utils/e2ee.js";
 import { MAX_TEXT_LENGTH } from "../../constants/messages.constants.js";
+import { trackActivity } from "../../../badges/services/achievement-engine.service.js";
+import { recordStickerUsage } from "../../../stickers/services/sticker-marketplace.service.js";
 
 export const sendMessage = async (
   senderId,
@@ -42,6 +44,7 @@ export const sendMessage = async (
     parentMessageId,
     gift,
     storyReply,
+    sticker,
     messageType,
   } = {},
   file,
@@ -62,9 +65,16 @@ export const sendMessage = async (
     } catch (_e) {}
   }
 
+  let parsedSticker = null;
+  if (sticker) {
+    try {
+      parsedSticker = typeof sticker === "string" ? JSON.parse(sticker) : sticker;
+    } catch (_e) {}
+  }
+
   const trimmedText = text?.trim();
 
-  if (!trimmedText && !file && !parsedGift?.name) {
+  if (!trimmedText && !file && !parsedGift?.name && !parsedSticker?.url) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
   }
 
@@ -193,6 +203,9 @@ export const sendMessage = async (
         ...(parsedGift?.name
           ? { gift: parsedGift, messageType: "gift" }
           : {}),
+        ...(parsedSticker?.url
+          ? { sticker: parsedSticker, messageType: "sticker" }
+          : {}),
         ...(wantsE2EE
           ? {
               e2ee: true,
@@ -223,6 +236,14 @@ export const sendMessage = async (
   const { message, payload } = result;
 
   if (!wantsE2EE) attachLinkPreview(message);
+
+  // Trigger achievement activity & sticker usage in background
+  trackActivity(senderId, "messages_sent", 1);
+  const stickerIdToRecord =
+    parsedSticker?.stickerId || parsedSticker?._id || parsedSticker?.id;
+  if (stickerIdToRecord) {
+    recordStickerUsage(senderId, stickerIdToRecord, "direct");
+  }
 
   return {
     status: StatusCodes.CREATED,

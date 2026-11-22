@@ -129,9 +129,22 @@ const GroupMessageSchema = new mongoose.Schema(
       message: { type: String },
       senderName: { type: String },
     },
+    sticker: {
+      stickerId: { type: String },
+      packId: { type: mongoose.Schema.Types.ObjectId, ref: "StickerPack" },
+      packName: { type: String, default: "" },
+      url: { type: String },
+      thumbnailUrl: { type: String, default: "" },
+      name: { type: String, default: "" },
+      altText: { type: String, default: "" },
+      isAnimated: { type: Boolean, default: false },
+      format: { type: String, default: "webp" },
+      width: { type: Number, default: 256 },
+      height: { type: Number, default: 256 },
+    },
     messageType: {
       type: String,
-      enum: ["text", "image", "file", "audio", "video", "location", "poll", "gift"],
+      enum: ["text", "image", "file", "audio", "video", "location", "poll", "gift", "sticker"],
       default: "text",
     },
 

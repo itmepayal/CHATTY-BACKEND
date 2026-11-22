@@ -34,7 +34,20 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
   const isVoice = body.isVoice === "true" || body.isVoice === true;
   const isVideo = body.isVideo === "true" || body.isVideo === true;
 
-  if (!text && !file) {
+  let gift = null;
+  if (body.gift) {
+    try {
+      gift = typeof body.gift === "string" ? JSON.parse(body.gift) : body.gift;
+    } catch (_e) {}
+  }
+  let sticker = null;
+  if (body.sticker) {
+    try {
+      sticker = typeof body.sticker === "string" ? JSON.parse(body.sticker) : body.sticker;
+    } catch (_e) {}
+  }
+
+  if (!text && !file && !gift?.name && !sticker?.url) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
   }
   if (
@@ -118,7 +131,7 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
     cipher = { e2ee: true, iv: body.iv, keyVersion };
   }
 
-  return { text, cipher, wantsE2EE, isVoice, isVideo };
+  return { text, cipher, wantsE2EE, isVoice, isVideo, gift, sticker };
 };
 
 export const validateInitialKeyEntries = ({ keyEntries, me, memberIds }) => {

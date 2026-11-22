@@ -4,6 +4,7 @@ import usersController from "../controllers/users.controller.js";
 import userLockController from "../controllers/user-lock.controller.js";
 import messageController from "../../messaging/controllers/messages.controller.js";
 import notificationSettingsController from "../../notifications/controllers/notification-settings.controller.js";
+import * as badgeController from "../../badges/controllers/badge.controller.js";
 import upload, {
   autoCleanupMulterOnFailure,
 } from "../../../middlewares/multer.middleware.js";
@@ -87,5 +88,12 @@ router.get("/starred-messages/:id", messageController.getStarred);
 router.patch("/star-message/:messageId", messageController.toggleStar);
 router.patch("/:id/pin-chat", settingsLimiter, messageController.setPinChat);
 router.patch("/:id/mute-chat", settingsLimiter, messageController.setMuteChat);
+
+// Profile Badges & Achievements Integration Endpoints
+router.get("/me/badges", badgeController.getMyBadges);
+router.get("/me/achievements", badgeController.getMyAchievements);
+router.get("/:userId/badges", badgeController.getUserBadges);
+router.patch("/me/badges/featured", badgeController.setFeaturedBadge);
+router.patch("/me/badges/visibility", badgeController.updateBadgeVisibility);
 
 export default router;
