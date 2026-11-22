@@ -399,6 +399,10 @@ const UserSchema = new mongoose.Schema(
     },
 
     notificationSettings: {
+      masterEnabled: {
+        type: Boolean,
+        default: true,
+      },
       soundEnabled: {
         type: Boolean,
         default: true,
@@ -417,9 +421,31 @@ const UserSchema = new mongoose.Schema(
         type: Boolean,
         default: true,
       },
+      previewPrivacy: {
+        type: String,
+        enum: ["full", "sender_only", "hidden"],
+        default: "full",
+      },
+      inAppNotifications: {
+        type: Boolean,
+        default: true,
+      },
+      pushNotifications: {
+        type: Boolean,
+        default: true,
+      },
+      vibrationEnabled: {
+        type: Boolean,
+        default: true,
+      },
+      ringtone: {
+        type: String,
+        default: "default",
+      },
     },
 
     notificationPreferences: {
+      masterEnabled: { type: Boolean, default: true },
       messagesPersonal: { type: Boolean, default: true },
       messagesGroup: { type: Boolean, default: true },
       messageReplies: { type: Boolean, default: true },
@@ -434,6 +460,10 @@ const UserSchema = new mongoose.Schema(
       contactAcceptance: { type: Boolean, default: true },
       groupInvitations: { type: Boolean, default: true },
       groupMembershipEvents: { type: Boolean, default: true },
+      storiesReplies: { type: Boolean, default: true },
+      storiesReactions: { type: Boolean, default: true },
+      storiesMentions: { type: Boolean, default: true },
+      storiesFavorites: { type: Boolean, default: true },
       securityNewDevice: { type: Boolean, default: true },
       securityDeviceLinking: { type: Boolean, default: true },
       securityCredentialChanges: { type: Boolean, default: true },
@@ -441,6 +471,11 @@ const UserSchema = new mongoose.Schema(
       systemAnnouncements: { type: Boolean, default: true },
       systemMaintenance: { type: Boolean, default: true },
       systemAlerts: { type: Boolean, default: true },
+      quietHoursEnabled: { type: Boolean, default: false },
+      quietHoursStart: { type: String, default: "22:00" },
+      quietHoursEnd: { type: String, default: "08:00" },
+      quietHoursDays: [{ type: String, default: ["everyday"] }],
+      quietHoursTimezone: { type: String, default: "UTC" },
       dndEnabled: { type: Boolean, default: false },
       dndUntil: { type: Date, default: null },
       mutedConversations: [{ type: String, default: [] }],

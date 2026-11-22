@@ -71,6 +71,7 @@ export const countUnreadByCategory = async (recipientId) => {
     contact: 0,
     security: 0,
     system: 0,
+    story: 0,
   };
 
   for (const c of counts) {
@@ -89,6 +90,17 @@ export const markRead = async (recipientId, notificationId) => {
       recipientId: toObjectId(recipientId),
     },
     { $set: { isRead: true, readAt: new Date() } },
+    { new: true },
+  ).lean();
+};
+
+export const markUnread = async (recipientId, notificationId) => {
+  return Notification.findOneAndUpdate(
+    {
+      _id: toObjectId(notificationId),
+      recipientId: toObjectId(recipientId),
+    },
+    { $set: { isRead: false, readAt: null } },
     { new: true },
   ).lean();
 };
@@ -113,6 +125,17 @@ export const deleteById = async (recipientId, notificationId) => {
   });
 };
 
+export const clearRead = async (recipientId, category = null) => {
+  const filter = {
+    recipientId: toObjectId(recipientId),
+    isRead: true,
+  };
+  if (category && category !== "all") {
+    filter.category = category;
+  }
+  return Notification.deleteMany(filter);
+};
+
 export const deleteAll = async (recipientId, category = null) => {
   const filter = { recipientId: toObjectId(recipientId) };
   if (category && category !== "all") {
@@ -129,8 +152,7 @@ export const findRecentDuplicate = async (
   dedupKey = null,
 ) => {
   if (dedupKey) {
-    const existing = await Notification.findOne({ dedupKey }).lean();
-    if (existing) return existing;
+    return Notification.findOne({ dedupKey }).lean();
   }
 
   const since = new Date(Date.now() - windowMs);

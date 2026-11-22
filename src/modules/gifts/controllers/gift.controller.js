@@ -140,6 +140,7 @@ export const sendGift = async (req, res, next) => {
       personalMessage,
       idempotencyKey,
       chatType,
+      parentMessageId,
     } = req.body;
 
     const result = await giftTransactionService.sendGift({
@@ -151,6 +152,7 @@ export const sendGift = async (req, res, next) => {
       personalMessage: personalMessage || note || "",
       idempotencyKey,
       chatType,
+      parentMessageId,
     });
 
     if (result.isDuplicate) {

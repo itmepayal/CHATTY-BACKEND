@@ -100,39 +100,51 @@ export const deliverMessage = async ({ senderId, receiverId, data }) => {
       let title = senderName;
       let body = "New message";
 
-      if (data?.replyTo) {
+      let notifCategory = "message";
+
+      if (data?.storyReply || data?.messageType === "story_reply") {
+        notifType = "story_reply";
+        notifCategory = "story";
+        title = `${senderName} replied to your story`;
+        body = data?.text ? (data.text.length > 80 ? `${data.text.slice(0, 80)}…` : data.text) : "Replied to your story";
+      } else if (data?.replyTo) {
         notifType = "message_reply";
         title = `${senderName} replied to your message`;
       }
 
-      if (data?.image?.url) {
-        notifType = "media_received";
-        body = "Sent a photo";
-      } else if (data?.video?.url) {
-        notifType = "media_received";
-        body = "Sent a video";
-      } else if (data?.audio?.url) {
-        notifType = "media_received";
-        body = "Sent a voice message";
-      } else if (data?.file?.url) {
-        notifType = "media_received";
-        body = "Sent an attachment";
-      } else if (data?.location?.lat != null) {
-        notifType = "location_shared";
-        body = "Shared live location";
-      } else if (data?.gift?.name) {
-        notifType = "gift_received";
-        body = `Sent you a gift: ${data.gift.icon || "🎁"} ${data.gift.name}`;
-      } else if (data?.e2ee || data?.encrypted) {
-        body = "New encrypted message";
-      } else if (data?.text) {
-        body = data.text.length > 80 ? `${data.text.slice(0, 80)}…` : data.text;
+      if (notifType !== "story_reply") {
+        if (data?.image?.url) {
+          notifType = "media_received";
+          body = "Sent a photo";
+        } else if (data?.video?.url) {
+          notifType = "media_received";
+          body = "Sent a video";
+        } else if (data?.audio?.url) {
+          notifType = "media_received";
+          body = "Sent a voice message";
+        } else if (data?.file?.url) {
+          notifType = "media_received";
+          body = "Sent an attachment";
+        } else if (data?.sticker?.url) {
+          notifType = "media_received";
+          body = "Sent a sticker";
+        } else if (data?.location?.lat != null) {
+          notifType = "location_shared";
+          body = "Shared live location";
+        } else if (data?.gift?.name) {
+          notifType = "gift_received";
+          body = `Sent you a gift: ${data.gift.icon || "🎁"} ${data.gift.name}`;
+        } else if (data?.e2ee || data?.encrypted) {
+          body = "New encrypted message";
+        } else if (data?.text) {
+          body = data.text.length > 80 ? `${data.text.slice(0, 80)}…` : data.text;
+        }
       }
 
       notificationService.dispatchNotification({
         recipientId: receiverId,
         senderId,
-        category: "message",
+        category: notifCategory,
         type: notifType,
         title,
         body,

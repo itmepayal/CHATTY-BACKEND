@@ -36,6 +36,18 @@ export const markAsRead = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const markAsUnread = asyncHandler(async (req, res) => {
+  const result = await notificationService.markAsUnread(
+    req.user._id,
+    req.params.id,
+  );
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    "Notification marked as unread.",
+  ).send(res);
+});
+
 export const markAllAsRead = asyncHandler(async (req, res) => {
   const category = req.query.category || req.body?.category || null;
   const result = await notificationService.markAllAsRead(req.user._id, category);
@@ -71,11 +83,26 @@ export const clearAllNotifications = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
+export const clearReadNotifications = asyncHandler(async (req, res) => {
+  const category = req.query.category || req.body?.category || null;
+  const result = await notificationService.clearReadNotifications(
+    req.user._id,
+    category,
+  );
+  return new ApiResponse(
+    StatusCodes.OK,
+    result,
+    "Read notifications cleared successfully.",
+  ).send(res);
+});
+
 export default {
   getNotifications,
   getUnreadCount,
   markAsRead,
+  markAsUnread,
   markAllAsRead,
   deleteNotification,
   clearAllNotifications,
+  clearReadNotifications,
 };

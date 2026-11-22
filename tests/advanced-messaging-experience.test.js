@@ -20,7 +20,7 @@ test("Advanced Professional Messaging Suite: Contact Discovery, Requests, Stars,
 
   await t.test("Setup test users with phone and profiles", async () => {
     const port = server.address().port;
-    const sessions = await createAndLoginUsers(app, port);
+    const sessions = await createAndLoginUsers(app, port, { makeContacts: false });
 
     alice = sessions.alice;
     bob = sessions.bob;

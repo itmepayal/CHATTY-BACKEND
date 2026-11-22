@@ -163,6 +163,33 @@ export const sendThreadReply = async ({
     }
 
     const isE2EE = Boolean(payloadData.e2ee || payloadData.encrypted);
+
+    // Normalize sticker payload defensively in place
+    if (typeof payloadData.sticker === "string" && payloadData.sticker.trim()) {
+      try {
+        payloadData.sticker = JSON.parse(payloadData.sticker);
+      } catch (_e) {
+        payloadData.sticker = { url: payloadData.sticker.trim() };
+      }
+    }
+    if (payloadData.sticker && typeof payloadData.sticker === "object") {
+      if (!payloadData.sticker.url && (payloadData.sticker.imageUrl || payloadData.sticker.thumbnailUrl)) {
+        payloadData.sticker = {
+          ...payloadData.sticker,
+          url: payloadData.sticker.imageUrl || payloadData.sticker.thumbnailUrl,
+        };
+      }
+    }
+
+    // Normalize gift payload defensively in place
+    if (typeof payloadData.gift === "string" && payloadData.gift.trim()) {
+      try {
+        payloadData.gift = JSON.parse(payloadData.gift);
+      } catch (_e) {
+        payloadData.gift = null;
+      }
+    }
+
     const reply = await GroupMessage.create({
       groupId: toObjectId(groupId),
       senderId: toObjectId(userId),
@@ -172,6 +199,15 @@ export const sendThreadReply = async ({
       file: payloadData.file,
       audio: payloadData.audio,
       video: payloadData.video,
+      sticker: payloadData.sticker,
+      gift: payloadData.gift,
+      messageType:
+        payloadData.messageType ||
+        (payloadData.sticker?.url
+          ? "sticker"
+          : payloadData.gift?.name
+            ? "gift"
+            : "text"),
       clientId: payloadData.clientId,
       e2ee: isE2EE,
       iv: payloadData.iv || undefined,
@@ -211,6 +247,14 @@ export const sendThreadReply = async ({
 
     // Notification
     if (String(parent.senderId) !== String(userId)) {
+      const notifBody = isE2EE
+        ? "🔒 Encrypted reply"
+        : payloadData.sticker?.url
+          ? "🎨 Sent a sticker"
+          : payloadData.gift?.name
+            ? `🎁 Sent a gift: ${payloadData.gift.name}`
+            : (data.text || payloadData.text ? (data.text || payloadData.text).slice(0, 80) : "Replied in thread");
+
       notificationService
         .dispatchNotification({
           recipientId: parent.senderId,
@@ -218,9 +262,7 @@ export const sendThreadReply = async ({
           category: "group",
           type: "group_reply",
           title: `Reply in ${group.name}`,
-          body: isE2EE
-            ? "🔒 Encrypted reply"
-            : (data.text ? data.text.slice(0, 80) : "Replied in thread"),
+          body: notifBody,
           data: {
             groupId: String(groupId),
             parentMessageId: String(pId),
@@ -260,6 +302,33 @@ export const sendThreadReply = async ({
   await assertCanMessage(userId, peerId);
 
   const isDirectE2EE = Boolean(payloadData.e2ee || payloadData.encrypted);
+
+  // Normalize sticker payload defensively in place
+  if (typeof payloadData.sticker === "string" && payloadData.sticker.trim()) {
+    try {
+      payloadData.sticker = JSON.parse(payloadData.sticker);
+    } catch (_e) {
+      payloadData.sticker = { url: payloadData.sticker.trim() };
+    }
+  }
+  if (payloadData.sticker && typeof payloadData.sticker === "object") {
+    if (!payloadData.sticker.url && (payloadData.sticker.imageUrl || payloadData.sticker.thumbnailUrl)) {
+      payloadData.sticker = {
+        ...payloadData.sticker,
+        url: payloadData.sticker.imageUrl || payloadData.sticker.thumbnailUrl,
+      };
+    }
+  }
+
+  // Normalize gift payload defensively in place
+  if (typeof payloadData.gift === "string" && payloadData.gift.trim()) {
+    try {
+      payloadData.gift = JSON.parse(payloadData.gift);
+    } catch (_e) {
+      payloadData.gift = null;
+    }
+  }
+
   const reply = await Message.create({
     senderId: toObjectId(userId),
     receiverId: toObjectId(peerId),
@@ -269,6 +338,15 @@ export const sendThreadReply = async ({
     file: payloadData.file,
     audio: payloadData.audio,
     video: payloadData.video,
+    sticker: payloadData.sticker,
+    gift: payloadData.gift,
+    messageType:
+      payloadData.messageType ||
+      (payloadData.sticker?.url
+        ? "sticker"
+        : payloadData.gift?.name
+          ? "gift"
+          : "text"),
     clientId: payloadData.clientId,
     e2ee: isDirectE2EE,
     iv: payloadData.iv || undefined,
@@ -314,6 +392,14 @@ export const sendThreadReply = async ({
 
   // Notification
   if (String(parent.senderId) !== String(userId)) {
+    const notifBody = isDirectE2EE
+      ? "🔒 Encrypted reply"
+      : payloadData.sticker?.url
+        ? "🎨 Sent a sticker"
+        : payloadData.gift?.name
+          ? `🎁 Sent a gift: ${payloadData.gift.name}`
+          : (data.text || payloadData.text ? (data.text || payloadData.text).slice(0, 80) : "Replied in thread");
+
     notificationService
       .dispatchNotification({
         recipientId: parent.senderId,
@@ -321,9 +407,7 @@ export const sendThreadReply = async ({
         category: "message",
         type: "message_reply",
         title: "New Thread Reply",
-        body: isDirectE2EE
-          ? "🔒 Encrypted reply"
-          : (data.text ? data.text.slice(0, 80) : "Replied in thread"),
+        body: notifBody,
         data: {
           conversationId: u1,
           peerId: u1,
@@ -338,7 +422,7 @@ export const sendThreadReply = async ({
     reply: replyPayload,
     parentMessage: {
       id: String(pId),
-      threadReplyCount: (parent.threadReplyCount || 0) + 1,
+      threadReplyCount: updatedParent?.threadReplyCount || (parent.threadReplyCount || 0) + 1,
       threadLastReplyAt: now,
     },
     ...replyPayload,

@@ -49,6 +49,23 @@ const isTypePermitted = (type, preferences = {}) => {
     case "group_info_updated":
     case "group_message_pinned":
       return preferences.groupMembershipEvents !== false;
+    case "story_reply":
+      return (
+        preferences.storiesReplies !== false &&
+        preferences.messageReplies !== false
+      );
+    case "story_reaction":
+      return (
+        preferences.storiesReactions !== false &&
+        preferences.messageReactions !== false
+      );
+    case "story_mention":
+      return (
+        preferences.storiesMentions !== false &&
+        preferences.messageMentions !== false
+      );
+    case "story_favorite_posted":
+      return preferences.storiesFavorites !== false;
     case "call_incoming_voice":
       return preferences.callsVoice !== false;
     case "call_incoming_video":
@@ -101,6 +118,126 @@ const isUserInDND = (preferences = {}) => {
 };
 
 /**
+ * Checks whether user is currently within configured Quiet Hours.
+ */
+export const isUserInQuietHours = (preferences = {}) => {
+  if (!preferences.quietHoursEnabled) return false;
+
+  const tz = preferences.quietHoursTimezone || "UTC";
+  const now = new Date();
+
+  let hoursStr = "0";
+  let minutesStr = "0";
+  let dayName = "monday";
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      minute: "numeric",
+      weekday: "long",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(now);
+    for (const part of parts) {
+      if (part.type === "hour") hoursStr = part.value;
+      if (part.type === "minute") minutesStr = part.value;
+      if (part.type === "weekday") dayName = part.value.toLowerCase();
+    }
+  } catch (_e) {
+    hoursStr = String(now.getUTCHours());
+    minutesStr = String(now.getUTCMinutes());
+    dayName = [
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ][now.getUTCDay()];
+  }
+
+  const days = Array.isArray(preferences.quietHoursDays)
+    ? preferences.quietHoursDays.map((d) => d.toLowerCase())
+    : ["everyday"];
+
+  if (!days.includes("everyday")) {
+    const isWeekend = dayName === "saturday" || dayName === "sunday";
+    const isWeekday = !isWeekend;
+    if (days.includes("weekdays") && !isWeekday) return false;
+    if (days.includes("weekends") && !isWeekend) return false;
+    if (
+      !days.includes("weekdays") &&
+      !days.includes("weekends") &&
+      !days.includes(dayName)
+    ) {
+      return false;
+    }
+  }
+
+  const currentMinutes = parseInt(hoursStr, 10) * 60 + parseInt(minutesStr, 10);
+  const [startH, startM] = (preferences.quietHoursStart || "22:00")
+    .split(":")
+    .map(Number);
+  const [endH, endM] = (preferences.quietHoursEnd || "08:00")
+    .split(":")
+    .map(Number);
+
+  const startMinutes = (startH || 0) * 60 + (startM || 0);
+  const endMinutes = (endH || 0) * 60 + (endM || 0);
+
+  if (startMinutes === endMinutes) {
+    return true;
+  }
+
+  if (startMinutes < endMinutes) {
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  } else {
+    // Overnight window (e.g. 22:00 to 08:00)
+    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+  }
+};
+
+/**
+ * Applies notification preview privacy (full, sender_only, hidden).
+ */
+export const applyPreviewPrivacy = (
+  title,
+  body,
+  previewPrivacy = "full",
+  category = "system",
+  type = "",
+  senderName = "Someone",
+) => {
+  if (category === "security" || type === "system_security_alert") {
+    return { title, body };
+  }
+
+  if (previewPrivacy === "hidden") {
+    return {
+      title: "Chatty",
+      body: "You have a new notification",
+    };
+  }
+
+  if (previewPrivacy === "sender_only") {
+    let safeBody = "New notification";
+    if (category === "message") safeBody = "New message";
+    else if (category === "group") safeBody = "New group activity";
+    else if (category === "call") safeBody = "Incoming call";
+    else if (category === "contact") safeBody = "Contact update";
+    else if (category === "story") safeBody = "Story update";
+
+    return {
+      title: senderName || "Someone",
+      body: safeBody,
+    };
+  }
+
+  return { title, body };
+};
+
+/**
  * Dispatches a notification across DB, Socket.IO, and Push.
  */
 export const dispatchNotification = async ({
@@ -138,10 +275,21 @@ export const dispatchNotification = async ({
         resolvedCategory === "security" ||
         type === "system_security_alert";
 
-      // Non-critical notifications must respect DND and category filters
+      // Non-critical notifications must respect DND, quiet hours, and master switch
       if (!isCritical) {
+        if (
+          prefs.masterEnabled === false ||
+          user.notificationSettings?.masterEnabled === false
+        ) {
+          return null; // Suppressed by Master Notification Switch
+        }
+
         if (isUserInDND(prefs)) {
           return null; // Suppressed by DND
+        }
+
+        if (isUserInQuietHours(prefs)) {
+          return null; // Suppressed by Quiet Hours
         }
 
         if (!isTypePermitted(type, prefs)) {
@@ -210,13 +358,26 @@ export const dispatchNotification = async ({
       "fullName username avatar profilePic",
     );
 
+    const userSettings = user?.notificationSettings || {};
+    const privacyPref =
+      userSettings.previewPrivacy ||
+      (userSettings.showPreview === false ? "hidden" : "full");
+    const { title: finalTitle, body: finalBody } = applyPreviewPrivacy(
+      populated.title,
+      populated.body,
+      privacyPref,
+      populated.category,
+      populated.type,
+      populated.senderId?.fullName || "Someone",
+    );
+
     const payload = {
       id: String(populated._id),
       _id: populated._id,
       category: populated.category,
       type: populated.type,
-      title: populated.title,
-      body: populated.body,
+      title: finalTitle,
+      body: finalBody,
       data: populated.data,
       isRead: populated.isRead,
       createdAt: populated.createdAt,
@@ -376,6 +537,32 @@ export const markAsRead = async (userId, notificationId) => {
   return { id: String(notificationId), isRead: true, unreadCount, categoryCounts };
 };
 
+export const markAsUnread = async (userId, notificationId) => {
+  assertValidObjectId(userId, "Invalid user ID.");
+  assertValidObjectId(notificationId, "Invalid notification ID.");
+
+  const updated = await notificationRepo.markUnread(userId, notificationId);
+  if (!updated) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Notification not found.");
+  }
+
+  const [unreadCount, categoryCounts] = await Promise.all([
+    notificationRepo.countUnread(userId),
+    notificationRepo.countUnreadByCategory(userId),
+  ]);
+
+  io.to(String(userId)).emit("notification:unread", {
+    id: String(notificationId),
+    category: updated.category,
+  });
+  io.to(String(userId)).emit("notification:count:updated", {
+    count: unreadCount,
+    categoryCounts,
+  });
+
+  return { id: String(notificationId), isRead: false, unreadCount, categoryCounts };
+};
+
 export const markAllAsRead = async (userId, category = null) => {
   assertValidObjectId(userId, "Invalid user ID.");
   await notificationRepo.markAllRead(userId, category);
@@ -434,13 +621,35 @@ export const clearAllNotifications = async (userId, category = null) => {
   return { success: true, unreadCount, categoryCounts };
 };
 
+export const clearReadNotifications = async (userId, category = null) => {
+  assertValidObjectId(userId, "Invalid user ID.");
+  await notificationRepo.clearRead(userId, category);
+
+  const [unreadCount, categoryCounts] = await Promise.all([
+    notificationRepo.countUnread(userId),
+    notificationRepo.countUnreadByCategory(userId),
+  ]);
+
+  io.to(String(userId)).emit("notification:cleared", {
+    category: category || "all",
+  });
+  io.to(String(userId)).emit("notification:count:updated", {
+    count: unreadCount,
+    categoryCounts,
+  });
+
+  return { success: true, unreadCount, categoryCounts };
+};
+
 export default {
   dispatchNotification,
   sendNotification,
   getNotifications,
   getUnreadCount,
   markAsRead,
+  markAsUnread,
   markAllAsRead,
   deleteNotification,
   clearAllNotifications,
+  clearReadNotifications,
 };

@@ -11,6 +11,7 @@ import * as walletService from "./wallet.service.js";
 import { findGiftByIdOrSlug } from "./gift-catalog.service.js";
 import { io } from "../../../infrastructure/socket/socket.js";
 import * as notificationService from "../../notifications/services/notification.service.js";
+import * as threadService from "../../messaging/services/threads/thread.service.js";
 import ApiError from "../../../shared/errors/api-error.js";
 import { StatusCodes } from "http-status-codes";
 import { trackActivity } from "../../badges/services/achievement-engine.service.js";
@@ -27,6 +28,7 @@ export const sendGift = async ({
   personalMessage = "",
   idempotencyKey = null,
   chatType = "direct",
+  parentMessageId = null,
 }) => {
   if (!senderId) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, "Authentication required.");
@@ -92,6 +94,19 @@ export const sendGift = async ({
     }
   } else {
     chatType = "direct";
+    // If sending a gift in a thread and recipientId is not provided or equals senderId:
+    // infer the other conversation participant from the parent message
+    if (parentMessageId && (!recipientId || String(recipientId) === String(senderId))) {
+      const parentMsg = await Message.findById(parentMessageId)
+        .select("senderId receiverId")
+        .lean();
+      if (parentMsg) {
+        recipientId =
+          String(parentMsg.senderId) === String(senderId)
+            ? parentMsg.receiverId
+            : parentMsg.senderId;
+      }
+    }
     if (!recipientId) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
@@ -242,7 +257,19 @@ export const sendGift = async ({
 
     // 9. Dispatch Message through the existing messaging pipeline
     let messageResult = null;
-    if (chatType === "direct") {
+    if (parentMessageId) {
+      messageResult = await threadService.sendThreadReply({
+        userId: senderId,
+        parentMessageId,
+        isGroup: chatType === "group",
+        groupId: chatType === "group" ? groupId : null,
+        data: {
+          text: personalMessage || "",
+          gift: giftPayload,
+          messageType: "gift",
+        },
+      });
+    } else if (chatType === "direct") {
       messageResult = await sendMessageService(
         senderId,
         recipientId,
@@ -256,15 +283,17 @@ export const sendGift = async ({
       messageResult = await sendGroupMessageService({
         group: groupDoc,
         me: senderId,
-        text: personalMessage || "",
         body: {
+          text: personalMessage || "",
           gift: JSON.stringify(giftPayload),
+          ...(parentMessageId ? { parentMessageId } : {}),
         },
         file: null,
       });
     }
 
-    const messagePayload = messageResult?.payload || messageResult;
+    const messagePayload =
+      messageResult?.reply || messageResult?.payload || messageResult;
 
     // 10. Real-time Socket.IO Broadcasts & Wallet Synchronization
     trackActivity(senderId, "gifts_sent", 1);
@@ -306,6 +335,53 @@ export const sendGift = async ({
           },
         })
         .catch(() => {});
+    } else if (chatType === "group" && groupDoc) {
+      const otherMembers = (groupDoc.members || [])
+        .map((m) =>
+          m.userId
+            ? m.userId._id || m.userId
+            : m.user
+              ? m.user._id || m.user
+              : m._id
+                ? m._id
+                : m,
+        )
+        .filter((uid) => uid && String(uid) !== String(senderId));
+
+      for (const uid of otherMembers) {
+        io.to(String(uid)).emit("message:gift:received", {
+          gift: giftPayload,
+          message: messagePayload,
+          sender: {
+            id: String(sender._id),
+            fullName: sender.fullName,
+            username: sender.username,
+            avatar: sender.avatar?.url || "",
+          },
+          groupId: String(groupDoc._id),
+        });
+
+        notificationService
+          .dispatchNotification({
+            recipientId: uid,
+            senderId,
+            category: "group",
+            type: "gift_received",
+            title: `${sender.fullName || "Someone"} sent a gift to ${groupDoc.name || "the group"}!`,
+            body: `${gift.icon || "🎁"} ${gift.name}${personalMessage ? `: "${personalMessage}"` : ""}`,
+            data: {
+              giftId: String(gift._id),
+              giftName: gift.name,
+              giftIcon: gift.icon,
+              coinPrice: gift.coinPrice,
+              senderId: String(senderId),
+              senderName: sender.fullName,
+              groupId: String(groupDoc._id),
+              messageId: String(messagePayload?._id || messagePayload?.id || ""),
+            },
+          })
+          .catch(() => {});
+      }
     }
 
     return {

@@ -37,6 +37,7 @@ router.use("/scheduled", scheduledRoutes);
 router.use("/groups", groupRoutes);
 router.use("/ai", aiRoutes);
 router.use("/calls", callRoutes);
+router.use("/v1/calls", callRoutes);
 router.use("/group-calls", groupCallRoutes);
 router.use("/contacts", contactRoutes);
 router.use("/gifts", giftRoutes);

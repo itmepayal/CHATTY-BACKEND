@@ -46,9 +46,41 @@ const CallSchema = mongoose.Schema(
       default: 0,
       min: 0,
     },
+    activeDuration: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    holdDuration: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    holdCycles: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    holdOwnerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    holdStartedAt: {
+      type: Date,
+      default: null,
+    },
+    holdStateVersion: {
+      type: Number,
+      default: 0,
+    },
     endedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
+    },
+    endReason: {
+      type: String,
+      default: "",
     },
     seen: {
       type: Boolean,
@@ -64,6 +96,12 @@ const CallSchema = mongoose.Schema(
         ref: "User",
       },
     ],
+    deletedFor: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true },
 );
@@ -73,6 +111,8 @@ CallSchema.index({ receiverId: 1, createdAt: -1 });
 CallSchema.index({ callerId: 1, receiverId: 1, createdAt: -1 });
 CallSchema.index({ receiverId: 1, seen: 1 });
 CallSchema.index({ receiverId: 1, readBy: 1 });
+CallSchema.index({ deletedFor: 1 });
 
 const Call = mongoose.model("Call", CallSchema);
+export { Call };
 export default Call;

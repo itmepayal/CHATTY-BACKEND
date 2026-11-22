@@ -977,6 +977,36 @@ export const updateGroupService = async ({ group, me, name, file, whoCanPin, men
 
     const full = await loadGroup(group._id);
     await emitGroupToMembers(full, GROUP_SOCKET_EVENTS.GROUP_UPDATED);
+
+    // Notify members about group info updates
+    if (changed) {
+      const actorIdStr = String(me);
+      User.findById(me)
+        .select("fullName username")
+        .lean()
+        .then((actorUser) => {
+          const actorName =
+            actorUser?.fullName || actorUser?.username || "An admin";
+          for (const m of group.members || []) {
+            const memberIdStr = String(m.userId?._id || m.userId);
+            if (memberIdStr && memberIdStr !== actorIdStr) {
+              notificationService
+                .dispatchNotification({
+                  recipientId: memberIdStr,
+                  senderId: actorIdStr,
+                  category: NOTIFICATION_CATEGORIES.GROUP,
+                  type: NOTIFICATION_TYPES.GROUP_INFO_UPDATED,
+                  title: "Group updated",
+                  body: `${actorName} updated info for ${group.name}`,
+                  data: { groupId: String(group._id) },
+                })
+                .catch(() => {});
+            }
+          }
+        })
+        .catch(() => {});
+    }
+
     return presentGroup(full, {}, me);
   } catch (error) {
     if (newAvatar?.public_id) {
@@ -1162,7 +1192,25 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
     } catch (_e) {}
   }
 
-  if (!text && !file && !parsedGift?.name) {
+  let parsedSticker = null;
+  if (body.sticker) {
+    try {
+      parsedSticker =
+        typeof body.sticker === "string" ? JSON.parse(body.sticker) : body.sticker;
+    } catch (_e) {
+      if (typeof body.sticker === "string") {
+        parsedSticker = { url: body.sticker };
+      }
+    }
+    if (typeof parsedSticker === "string") {
+      parsedSticker = { url: parsedSticker };
+    }
+    if (parsedSticker && !parsedSticker.url && parsedSticker.imageUrl) {
+      parsedSticker.url = parsedSticker.imageUrl;
+    }
+  }
+
+  if (!text && !file && !parsedGift?.name && !parsedSticker?.url) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Message cannot be empty.");
   }
   if (
@@ -1246,7 +1294,15 @@ export const validateGroupMessageInput = async (group, me, body, file) => {
     cipher = { e2ee: true, iv: body.iv, keyVersion };
   }
 
-  return { text, cipher, wantsE2EE, isVoice, isVideo, gift: parsedGift };
+  return {
+    text,
+    cipher,
+    wantsE2EE,
+    isVoice,
+    isVideo,
+    gift: parsedGift,
+    sticker: parsedSticker,
+  };
 };
 
 export const updateGroupForRequest = async ({
